@@ -12,10 +12,10 @@ Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
 - `src/` — WebView 前端（Vue 3 + Vite + PIXI）。入口 [src/main.ts](mdc:src/main.ts) → [src/App.vue](mdc:src/App.vue)。
 - `src-tauri/` — Rust 系统外壳。[src-tauri/src/lib.rs](mdc:src-tauri/src/lib.rs) 构建应用并注册 command；[src-tauri/src/main.rs](mdc:src-tauri/src/main.rs) 为薄二进制入口。
 - `src-tauri/capabilities/default.json` — **IPC 权限闸门**；前端可调用的 API 必须在此声明。
-- `docs/design/` — [桌宠.md](mdc:docs/design/桌宠.md)（技术规格）、[rule.md](mdc:docs/design/rule.md)（开发规则）、`pet-design/`（设置窗口设计稿 + Jelly-Toy 设计令牌）。
+- `.codebuddy/rules/` — [design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc) 是 `docs/design/` 下两份设计文档的**规范性快照**，规则一律引用它；原始设计文档仅供背景阅读。
 - 配置真源见 CODEBUDDY.md 的「Configuration Management」表。
 
-**当前状态**：仓库是脚手架（仅 `greet` command + 默认 `App.vue`）；`桌宠.md` 描述的是目标形态，两者差距即待办。
+**当前状态**：仓库是脚手架（仅 `greet` command + 默认 `App.vue`）；[design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc) 描述的是目标形态，两者差距即待办。
 
 ## 2. 开发流程
 
@@ -24,7 +24,7 @@ Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
    只调 UI 时用 `pnpm dev`（Vite，端口 1420）。
 3. **先设计后写代码**：先确认架构/伪代码（多模块或改数据库时必须），再写实现。
 4. 实现后跑 `pnpm lint`、`pnpm typecheck`；涉及 Rust 再跑 `pnpm lint:rust`。
-5. 按 CODEBUDDY.md Phase 路线推进：Phase 0 透明窗口与点击穿透 → Phase 1 MVP 闭环（DB + LLM + 好感度）→ Phase 2 语音与系统感知 → Phase 3 自定义形象。
+5. 按 baseline §M 的 Phase 路线推进：Phase 0 透明窗口与点击穿透 → Phase 1 MVP 闭环（DB + LLM + 好感度）→ Phase 2 语音与系统感知 → Phase 3 自定义形象。
 
 ## 3. 新增一个 IPC 能力的清单
 
@@ -38,7 +38,7 @@ Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
 
 ## 4. 数据库迁移规则（严格）
 
-依据 rule.md：
+依据 [design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc) §E：
 
 1. schema 版本只用 `PRAGMA user_version`，**禁止**自建 version 表。
 2. 任何表结构变更都新增一条 `rusqlite_migration` 脚本，**禁止**改动已有历史建表 SQL。
@@ -64,12 +64,12 @@ Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
 
 ## 6. 分支策略
 
-单人全栈 + AI 结对（见 `桌宠.md`），采用轻量 Git Flow：
+单人全栈 + AI 结对（见 baseline §A），采用轻量 Git Flow：
 
 - `main` — 始终可构建、可发布；**禁止直接 push**。
 - `feat/<module>-<desc>` / `fix/<desc>` / `chore/<desc>` / `docs/<desc>` — 短生命周期特性分支。
 - 流程：从 `main` 切分支 → 小步提交（单分支只做一件事）→ 跑 lint/typecheck → squash 合并回 `main` → 删分支。
-- 涉及 schema 变更或跨模块改动，先在 `docs/` 或 PR 描述里写清方案再动手。
+- 涉及 schema 变更或跨模块改动，先在 PR 描述里写清方案再动手。
 
 ## 7. 常见问题（FAQ）
 
@@ -80,7 +80,7 @@ A：沿用 `docs/design/pet-design/index.html` 的 Jelly-Toy 设计令牌（`--m
 A：检查该函数是否加入 `generate_handler!`；同时确认 `capabilities/default.json` 有对应 permission。
 
 **Q：拖不动 / 卡成 PPT？**
-A：拖拽必须用 Rust `window.start_dragging()`，不能移动 PIXI 精灵。若卡顿，多半是 PIXI 实例进了 `reactive`/`ref`，或 Ticker 里每帧 new 了对象，或多个 Ticker 并存。
+A：拖拽必须用 Rust `window.start_dragging()`，不能移动 PIXI 精灵（见 baseline §C）。若卡顿，多半是 PIXI 实例进了 `reactive`/`ref`，或 Ticker 里每帧 new 了对象，或多个 Ticker 并存。
 
 **Q：桌宠 PNG/图片资源放哪？为什么 MVP 不要美术资源？**
 A：MVP 用纯代码绘制（`CodeCatRenderer`），不做美术资产；后续 Phase 3 才引入 `CustomSpriteRenderer`。当前唯一图片资产是设计稿的 `docs/design/pet-design/assets/`，**不属于运行时资源**，不要引用到 `src/`。
@@ -95,4 +95,15 @@ A：Vite 忽略 `src-tauri` 变更（见 `vite.config.ts`）；改 Rust 需 `pnp
 A：统一由 [.editorconfig](mdc:.editorconfig) + [.prettierrc.json](mdc:.prettierrc.json) 约束（LF + 2 空格；Rust 4 空格）。
 
 **Q：要先写测试吗？**
-A：尚未配置测试框架（前端 Vitest、后端 `cargo test`）。按 rule.md，**AI 生成的数据库/IPC 代码应先在独立 `#[test]` 中跑通再集成**。
+A：尚未配置测试框架（前端 Vitest、后端 `cargo test`）。按 baseline §K，**AI 生成的数据库/IPC 代码应先在独立 `#[test]` 中跑通再集成**。
+
+## 8. 计划文件存放规则（Plan Mode）
+
+在 Plan Mode 下生成的**执行计划文件一律统一存放到项目内目录**，不保留在 IDE 全局存储中。
+
+- **目标目录**：`.codebuddy/plans/`（相对项目根目录 `qiqi/`；绝对路径 `d:\qiqi\qiqi\.codebuddy\plans`）。目录名 `plans`，已存在且纳入项目数据目录（`.codebuddy` 不是临时缓存，不得删除）。
+- **目标文件名**：**按任务命名**，不再统一使用 `plan.md`。名称取自「任务名称 / 功能模块 / 其他显著特征」，见名知义，例如 `pet-task-breakdown.md`（桌宠任务拆分与开发顺序规划）、`renderer-jelly-physics.md`（果冻物理渲染）。英文文件名用 `kebab-case`；任务本身以中文命名时可沿用中文描述名（与 `docs/design/` 的命名约定一致）。
+- **同名冲突处理**：**直接覆盖**（`-Force`），不做重命名、不生成副本、不保留历史版本。
+- **写入方式**：Plan Mode 生成计划时**直接写入**上述目录与文件名；**取消移动动作**——不再先落到 IDE 全局存储再复制/删除（无需关心 `%APPDATA%\CodeBuddy CN\User\globalStorage\tencent-cloud.coding-copilot\plans\<plan-id>\` 路径）。计划文件随项目走，可被 Git 追踪与回溯。
+- **生效范围**：**仅当前项目（qiqi / 七七）有效**。本规则写入项目级规则文件 `.codebuddy/rules/development-guide.mdc`，不写入用户级全局规则，不扩散到其他工程。
+- **变更本规则时**：同步更新本文件；不要把它写进 `docs/design/` 原始设计文档（那里是背景阅读，见 [design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc)）。

@@ -1,0 +1,152 @@
+---
+alwaysApply: true
+description: qiqi 设计基线——桌宠规格与开发规则的规范性自包含快照，其他规则文件一律依赖本文件而非原始设计文档
+---
+
+# qiqi 设计基线（自包含快照）
+
+本文件是 [docs/design/桌宠.md](mdc:docs/design/桌宠.md) 与 [docs/design/rule.md](mdc:docs/design/rule.md) 的**规范性快照**。
+
+- **所有规则文件一律依赖本文件**，不得把规范判断直接建立在原始设计文档之上。
+- 原始 `docs/design/` 文档降级为**背景阅读**；它们被删除、改名或修改**不会**导致规则失效。
+- 若原始文档发生变更，须经**人工审阅后**在此同步更新（保留来源章节号），提交类型为 `docs(design): ...`。
+
+## A. 产品定位与目标平台
+
+来源：`桌宠.md` §一
+
+- 产品定位：住在桌面上的数字生命，有性格、有记忆、有主动性。核心卖点是「会主动找你说话」。
+- 目标平台：Windows 10 及以上（x64）。
+- 开发模式：**单人全栈 + AI 结对编程**，极简架构、快速验证 MVP。
+- MVP 形态：**双窗口**（局部桌宠窗口 + 常规设置窗口），放弃全屏 Overlay；形象用纯代码绘制，不依赖美术资源。
+
+## B. 技术栈选型（锁定，不可漂移）
+
+来源：`桌宠.md` §二 + `rule.md` 开发语言使用规则
+
+- 桌面框架：**Tauri 2**（Rust + WebView2）。只用 `@tauri-apps/api/core` 的 `invoke`，**禁止 Tauri 1 API**。
+- 系统层：**Rust** —— 透明窗口、动态点击穿透、Win32 全局状态轮询、文件系统。
+- 表现层：**Vue 3 + TypeScript**（`<script setup lang="ts">`）。规格中出现的 React 字样已作废，仓库实际为 Vue。
+- 渲染：**PIXI.js**（`Graphics` 纯代码绘制），MVP 零美术资源。
+- 数据库：**SQLite + SQLCipher + sqlite-vec**，单文件、全库 AES 加密、本地向量检索。
+- AI 对话：**OpenAI 兼容流式接口（SSE）**，由 Rust 侧发起请求，前端不接触明文。
+- TTS：初期 Edge TTS。
+
+## C. 窗口与系统架构
+
+来源：`桌宠.md` §三
+
+- **窗口 A（桌宠层）**：局部窗口（≈400×400 逻辑像素）、无边框、全透明、置顶、不显示任务栏；只渲染 PIXI 角色与对话气泡。
+- **窗口 B（设置层）**：常规窗口，承载 API 配置、勿扰时段、好感度、记忆阅读区；关闭时仅 `hide`，**不销毁**。
+- **拖拽**：禁止前端拖拽 PIXI 精灵。`pointerdown` → IPC 通知 Rust → Rust 调 `window.start_dragging()`，由系统接管以保证 60fps；拖拽拉伸形变由 PIXI 依据鼠标相对偏移计算。
+- **动态点击穿透**：初始全透明穿透；前端上报角色包围盒（Hit Region），Rust 轮询 `GetCursorPos`，命中则 `set_ignore_cursor_events(false)`，否则 `true`。
+- **全局状态探针**：`GetLastInputInfo` 做空闲检测；获取**前台进程名**（仅进程名，不涉及屏幕内容）用于情境感知（工作/游戏时降低主动互动概率）。
+- **时间锚点**：主动互动采用**时间窗口**（如早安 08:30–09:30）而非绝对时刻，避免准点打卡。
+
+## D. 渲染器接口契约
+
+来源：`桌宠.md` §4.3
+
+所有渲染器（当前 `CodeCatRenderer`，未来 `CustomSpriteRenderer`）必须实现：
+
+```ts
+interface IPetRenderer {
+  mount(container: PIXI.Container): void;
+  playAction(actionName: string): void;       // 'idle' | 'click' | 'sleep' ...
+  setExpression(expressionName: string): void; // 'happy' | 'angry' ...
+  lookAt(x: number, y: number): void;
+  getHitRegion(): { x: number; y: number; width: number; height: number };
+  dispose(): void;
+}
+```
+
+果冻物理：点击瞬间 `scaleX = 1.15` / `scaleY = 0.85`，随后每帧阻尼回弹 `val += (1 - val) * 0.1`；待机呼吸用 `Math.sin` 驱动。
+
+## E. 数据库表结构与迁移规则
+
+来源：`桌宠.md` §五、§5.3 + `rule.md` 数据库结构与迁移规则
+
+**核心表**：`messages`、`summaries`、`facts`、`vec_memory`（sqlite-vec 虚拟表）、`pet_states`、`affection_logs`、`app_settings`、`diaries`。
+
+迁移铁律：
+
+1. schema 版本只用 `PRAGMA user_version`，**禁止**自建 version 表。
+2. 任何结构变更都新增一条 `rusqlite_migration` 脚本，**禁止**改动已有历史建表 SQL。
+3. 优先幂等加量操作（`CREATE TABLE IF NOT EXISTS`、`ALTER TABLE ADD COLUMN`）；**禁止** `DROP COLUMN` / 直接重命名表。
+4. 必须删列或改类型：新建临时表 → `INSERT INTO SELECT` → DROP 旧表 → RENAME，**全程独立事务包裹**。
+5. `vec_memory` 属**可重建的派生数据**：扩展升级致不兼容时直接 DROP 并从 `facts`/`messages` 重建，**禁止**改虚拟表结构。
+6. 迁移前**先备份** `.db`（如 `pet.db.bak`）。
+7. `user_version >` 期望版本 → 失败关闭；`<` → 备份后前向迁移。
+
+## F. 好感度与关系等级
+
+来源：`桌宠.md` §七
+
+| 等级 | 名称 | 积分区间 | 表现 |
+| :--- | :--- | :--- | :--- |
+| Lv.1 | 陌生 | 0–200 | 礼貌、克制 |
+| Lv.2 | 熟人 | 201–500 | 轻松，偶尔开玩笑 |
+| Lv.3 | 亲密 | 501–800 | 撒娇，表达想念 |
+| Lv.4 | 羁绊 | 801–1000 | 老夫老妻，直接指出不良习惯 |
+
+- 加分：每日打卡 +10；抚摸 +1（日上限 20）；深度对话 +5；共鸣 +10~20。
+- 减分：超过 3 天未互动每日 −5，**止于当前等级下限**；触犯禁忌 −10~30（LLM 异步判定）。
+- **禁止**向用户播报数值变化，必须转为「吃醋/委屈」等情绪表达。
+
+## G. 边界隔离与通用架构规则
+
+来源：`rule.md` 开发语言使用规则 + 通用开发与架构规则
+
+- 前端**绝不**直接调用系统底层 API，不引 Node.js 原生模块。
+- 文件系统、全局系统检测、窗口拖拽 / 透明穿透 → **必须 Rust 实现**，经 `#[tauri::command]` 暴露。
+- **API Key 绝不**写入前端 `.env` / `localStorage`；走 IPC → Rust → SQLCipher 加密存储。
+- 数据库 SQL 由 Rust 执行；前端仅通过 command 请求数据。
+- AI 幻觉防范：锁定 API 版本（Tauri 2）；AI 生成的第三方库调用须先查官方文档。
+
+## H. Rust 代码规范
+
+来源：`rule.md` §4.1
+
+- **禁止**滥用 `.unwrap()` / `.expect()`；定义统一 `AppError` 枚举，用 `?` 向上传播。
+- 异步 I/O（LLM 请求、文件读写）用 `tokio`，不阻塞主线程。
+- 命名：模块 `snake_case`、结构体/枚举 `PascalCase`、函数/变量 `snake_case`。
+- SQL **必须参数化**（`params![val]`），**禁止**字符串拼接。
+
+## I. TypeScript / Vue 规范
+
+来源：`rule.md` §4.2
+
+- 开启 strict，**严禁 `any`**；PIXI 实例、IPC 返回数据必须有明确 Interface。
+- 响应式隔离：PIXI 的 `Application` / `Sprite` / `Container` **不得**放入 `reactive` / `ref` / `useState`，须用 `useRef` 或独立类实例持有。
+- 清理副作用：`onUnmounted` / `useEffect` cleanup 中调用 `destroy(true)` 并移除事件监听。
+
+## J. PIXI 渲染规范
+
+来源：`rule.md` §4.3
+
+- **统一 Ticker**：全应用只有一个 ticker 循环，呼吸 / 果冻形变 / 视线跟随都在其中统一计算。
+- **防 GC 卡顿**：每帧禁止新建对象（如 `new Point()`），临时变量在循环外声明复用。
+
+## K. 工作流与审查清单
+
+来源：`rule.md` 工作流与开发规范
+
+- 先设计后生成：写代码前先给出架构设计或伪代码，确认无误后再写完整实现。
+- 隔离测试：AI 生成的 Rust 数据库 / IPC 代码，先在独立测试文件（如 `#[test]`）中跑通再集成。
+- 冷眼审查三问：① 有没有漏 `await` 或错误捕获？② 有没有把 PIXI 实例塞进响应式状态？③ 有没有在 Rust 里写死系统绝对路径？
+
+## L. 性能与隐私红线
+
+来源：`桌宠.md` §八
+
+- 性能指标：待机 CPU `< 2%`、内存 `< 150 MB`（待机可降至 30fps）。
+- 隐私底线：MVP **绝不接入主动截图**；记忆数据经 SQLCipher 本地加密；LLM 请求走用户自备 API Key 或内置额度。
+
+## M. 开发路线图
+
+来源：`桌宠.md` §九
+
+- **Phase 0**：Tauri 2 地基 —— 透明窗口、动态点击穿透、`IPetRenderer` 接口、PIXI 猫/狗绘制与果冻弹动。
+- **Phase 1**：MVP 闭环 —— 建表与向量检索、LLM 流式对话与记忆召回、好感度引擎基础版。
+- **Phase 2**：语音与系统感知 —— Edge TTS、空闲检测、异步 LLM 好感度 / 禁忌判定。
+- **Phase 3**：自定义形象扩展 —— `CustomSpriteRenderer`。

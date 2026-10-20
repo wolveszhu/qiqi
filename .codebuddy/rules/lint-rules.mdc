@@ -7,6 +7,7 @@ description: qiqi lint/format 规则清单——工具链、启用与禁用的�
 
 技术栈：Vue 3 + TypeScript + Vite（前端）、Rust（Tauri 2 后端）。
 **分工原则**：ESLint 管**正确性**，Prettier 管**格式化**，clippy/rustfmt 管 **Rust**。
+规范性依据统一来自 [design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc)，不直接依赖原始设计文档。
 
 ## 1. 工具链与配置位置
 
@@ -47,7 +48,7 @@ pnpm add -D @commitlint/cli @commitlint/config-conventional husky
 
 | 规则 | 级别 | 理由 |
 | :--- | :--- | :--- |
-| `@typescript-eslint/no-explicit-any` | error | rule.md：严禁 `any` |
+| `@typescript-eslint/no-explicit-any` | error | baseline §I：严禁 `any` |
 | `@typescript-eslint/consistent-type-imports` | error | 明确类型导入，减少运行时副作用 |
 | `@typescript-eslint/no-non-null-assertion` | warn | 鼓励显式判空 |
 | `@typescript-eslint/explicit-module-boundary-types` | warn | 导出 API 需有返回类型，呼应禁止隐式推断 |
@@ -92,7 +93,7 @@ panic = "warn"
 indexing_slicing = "warn"
 ```
 
-对应关系：rule.md 要求**禁止滥用 `.unwrap()/.expect()`**，改用 `AppError` + `?`；`panic` 警示避免 `panic = "abort"`（`Cargo.toml` release profile 已设 `panic = "abort"`）放大崩溃影响。
+对应关系：[design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc) §H 要求**禁止滥用 `.unwrap()/.expect()`**，改用 `AppError` + `?`；`panic` 警示避免 `panic = "abort"`（`Cargo.toml` release profile 已设 `panic = "abort"`）放大崩溃影响。
 
 运行：`cd src-tauri && cargo fmt && cargo clippy --all-targets -- -D warnings`
 
