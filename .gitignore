@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────
+# qiqi · Tauri 2 (Rust) + Vue 3 + TypeScript + Vite + pnpm
+# ─────────────────────────────────────────────────────────────
+
+# ── 依赖 ──────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.yarn/
+.pnp.*
+# Cargo 本地依赖副本
+vendor/
+
+# ── 构建产物 ──────────────────────────────────────────────────
+dist/
+dist-ssr/
+.vite/
+build/
+out/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Rust / Cargo 产物（src-tauri/target 下的 *.o / *.d / *.rlib / *.rmeta 等）
+target/
+**/target/
+**/*.rs.bk
+**/*.pdb
+
+# Tauri 生成物：能力自动补全 schema
+src-tauri/gen/schemas/
+
+# ── 日志 ──────────────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── 环境变量与本地密钥 ────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── 运行时数据（SQLCipher 本地库等） ──────────────────────────
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── 缓存与覆盖率 ──────────────────────────────────────────────
+.cache/
+.turbo/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.prettiercache
+coverage/
+.nyc_output/
+
+# ── 编辑器 / IDE ──────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.trae/
+.trae-html-share-packages/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.ntvs*
+*.njsproj
+*.sw?
+*.swp
+
+# ── 系统文件 ──────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── 本地临时 ──────────────────────────────────────────────────
+*.local
+*.tmp
+*.temp

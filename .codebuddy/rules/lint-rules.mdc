@@ -1,0 +1,102 @@
+---
+alwaysApply: true
+description: qiqi lint/format 规则清单——工具链、启用与禁用的规则、命令与 Rust clippy 配置
+---
+
+# qiqi Lint 与格式化规则
+
+技术栈：Vue 3 + TypeScript + Vite（前端）、Rust（Tauri 2 后端）。
+**分工原则**：ESLint 管**正确性**，Prettier 管**格式化**，clippy/rustfmt 管 **Rust**。
+
+## 1. 工具链与配置位置
+
+| 工具 | 配置文件 | 作用范围 |
+| :--- | :--- | :--- |
+| ESLint (flat) | [eslint.config.js](mdc:eslint.config.js) | `src/**/*.{ts,tsx,vue}` 与根目录 config |
+| Prettier | [.prettierrc.json](mdc:.prettierrc.json)、[.prettierignore](mdc:.prettierignore) | TS/JS/Vue/CSS/JSON（排除 `dist`、`docs`、`src-tauri`） |
+| TypeScript | [tsconfig.json](mdc:tsconfig.json)、[tsconfig.node.json](mdc:tsconfig.node.json) | 类型检查（strict + `noUnusedLocals/Parameters`） |
+| EditorConfig | [.editorconfig](mdc:.editorconfig) | 编辑器基线（TS/Vue 2 空格，Rust 4 空格） |
+| rustfmt | [rustfmt.toml](mdc:rustfmt.toml) | `src-tauri/**/*.rs` |
+| clippy | 建议写入 `src-tauri/Cargo.toml`（见 §5） | Rust 代码质量 |
+| commitlint | [commitlint.config.js](mdc:commitlint.config.js) | Git 提交信息 |
+
+## 2. 一次性安装（依赖尚未写入 package.json）
+
+```bash
+pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-vue prettier
+pnpm add -D @commitlint/cli @commitlint/config-conventional husky
+```
+
+> 注意：本仓库 TypeScript 版本为 `~6.0.3`（较新）。若 `typescript-eslint` 报版本不兼容，请升级 `typescript-eslint` 或锁到兼容版本后再提交。
+
+## 3. 命令
+
+| 命令 | 说明 |
+| :--- | :--- |
+| `pnpm lint` | ESLint 检查 `src/` 与配置文件 |
+| `pnpm lint:fix` | 自动修复可修复项 |
+| `pnpm format` | Prettier 写入格式化 |
+| `pnpm format:check` | 只检查不写入（CI 用） |
+| `pnpm typecheck` | `vue-tsc --noEmit` 类型检查 |
+| `pnpm lint:rust` | `cargo fmt --check` + `cargo clippy`（在 `src-tauri/` 下执行） |
+| `pnpm tauri build` | 构建前请让上述检查通过 |
+
+## 4. ESLint 规则清单
+
+**启用的核心 / TS 规则**
+
+| 规则 | 级别 | 理由 |
+| :--- | :--- | :--- |
+| `@typescript-eslint/no-explicit-any` | error | rule.md：严禁 `any` |
+| `@typescript-eslint/consistent-type-imports` | error | 明确类型导入，减少运行时副作用 |
+| `@typescript-eslint/no-non-null-assertion` | warn | 鼓励显式判空 |
+| `@typescript-eslint/explicit-module-boundary-types` | warn | 导出 API 需有返回类型，呼应禁止隐式推断 |
+| `@typescript-eslint/no-unused-vars` | warn（`^_` 豁免） | tsconfig 已有 `noUnusedLocals`，保持 warn |
+| `no-console` | warn（允许 warn/error） | 调试输出不应入 commit |
+| `no-var` / `prefer-const` | error | 现代写法 |
+| `eqeqeq` | error（`null` 豁免） | 避免隐式转换 |
+| `no-param-reassign` | error（含 props） | 防止副作用 |
+
+**启用的 Vue 规则**
+
+| 规则 | 级别 | 理由 |
+| :--- | :--- | :--- |
+| `vue/component-api-style` | error（script-setup） | 统一组件写法 |
+| `vue/component-name-in-template-casing` | error（PascalCase） | 统一模板风格 |
+| `vue/no-mutating-props` | error | 单向数据流 |
+| `vue/no-v-html` | error | XSS 防护 |
+| `vue/require-explicit-emits` | warn | 明确事件契约 |
+| `vue/html-indent` | warn（2） | 与 Prettier 对齐 |
+
+**明确禁用的规则（及原因）**
+
+| 规则 | 决策 | 理由 |
+| :--- | :--- | :--- |
+| `no-undef` | off | TS 已负责标识符解析；对 `window`/`document` 会误报，且可省去 `globals` 依赖 |
+| `vue/multi-word-component-names` | off | 根组件 `App.vue` 为单词命名，属既有约定 |
+| `vue/require-default-prop` | off | TS 类型化 props 已表达默认值意图，避免冗余 |
+| `@typescript-eslint/no-explicit-any`（config 内） | off | 构建配置文件放宽 |
+| `no-console`（config 内） | off | 构建脚本允许日志 |
+
+> `src-tauri/**`、`docs/**`、`dist/**`、`public/**` 已在 `ignores` 中排除，避免 ESLint 处理 Rust/构建产物。
+
+## 5. Rust 端建议配置
+
+将以下内容加入 `src-tauri/Cargo.toml`（当前尚未加入，以免破坏现有构建；由你确认后再应用）：
+
+```toml
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"
+```
+
+对应关系：rule.md 要求**禁止滥用 `.unwrap()/.expect()`**，改用 `AppError` + `?`；`panic` 警示避免 `panic = "abort"`（`Cargo.toml` release profile 已设 `panic = "abort"`）放大崩溃影响。
+
+运行：`cd src-tauri && cargo fmt && cargo clippy --all-targets -- -D warnings`
+
+## 6. 提交前检查
+
+建议启用 husky `pre-commit`：`pnpm lint`、`pnpm format:check`、`pnpm typecheck`；`commit-msg` 走 commitlint。
+在 CI 或本地跑通前，**不要**提交带 lint error 的代码。

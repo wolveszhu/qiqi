@@ -1,0 +1,98 @@
+---
+alwaysApply: false
+description: qiqi 开发指南——项目结构、开发流程、IPC 与数据库迁移清单、提交规范、分支策略、常见问题
+---
+
+# qiqi 开发指南
+
+## 1. 项目结构
+
+Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
+
+- `src/` — WebView 前端（Vue 3 + Vite + PIXI）。入口 [src/main.ts](mdc:src/main.ts) → [src/App.vue](mdc:src/App.vue)。
+- `src-tauri/` — Rust 系统外壳。[src-tauri/src/lib.rs](mdc:src-tauri/src/lib.rs) 构建应用并注册 command；[src-tauri/src/main.rs](mdc:src-tauri/src/main.rs) 为薄二进制入口。
+- `src-tauri/capabilities/default.json` — **IPC 权限闸门**；前端可调用的 API 必须在此声明。
+- `docs/design/` — [桌宠.md](mdc:docs/design/桌宠.md)（技术规格）、[rule.md](mdc:docs/design/rule.md)（开发规则）、`pet-design/`（设置窗口设计稿 + Jelly-Toy 设计令牌）。
+- 配置真源见 CODEBUDDY.md 的「Configuration Management」表。
+
+**当前状态**：仓库是脚手架（仅 `greet` command + 默认 `App.vue`）；`桌宠.md` 描述的是目标形态，两者差距即待办。
+
+## 2. 开发流程
+
+1. `pnpm install`
+2. **首选** `pnpm tauri dev`（拉起 Rust + 前端，热重载）；
+   只调 UI 时用 `pnpm dev`（Vite，端口 1420）。
+3. **先设计后写代码**：先确认架构/伪代码（多模块或改数据库时必须），再写实现。
+4. 实现后跑 `pnpm lint`、`pnpm typecheck`；涉及 Rust 再跑 `pnpm lint:rust`。
+5. 按 CODEBUDDY.md Phase 路线推进：Phase 0 透明窗口与点击穿透 → Phase 1 MVP 闭环（DB + LLM + 好感度）→ Phase 2 语音与系统感知 → Phase 3 自定义形象。
+
+## 3. 新增一个 IPC 能力的清单
+
+少一步就会在运行时报错，务必按顺序：
+
+1. 在 `src-tauri/src/commands/`（或 `lib.rs`）写 `#[tauri::command] fn xxx(...)`，返回 `Result<T, AppError>`。
+2. 在 `lib.rs` 的 `tauri::generate_handler![...]` 中注册。
+3. 在 `capabilities/default.json` 补充所需 permission（涉及插件时新 window 需单独 capability）。
+4. 在 `src/api/` 写 TS 封装（`invoke<Res>('xxx', { ... })`）+ 显式 Interface。
+5. 前端调用处必须 `try/catch`。
+
+## 4. 数据库迁移规则（严格）
+
+依据 rule.md：
+
+1. schema 版本只用 `PRAGMA user_version`，**禁止**自建 version 表。
+2. 任何表结构变更都新增一条 `rusqlite_migration` 脚本，**禁止**改动已有历史建表 SQL。
+3. 优先幂等加量操作（`CREATE TABLE IF NOT EXISTS`、`ALTER TABLE ADD COLUMN`）；**禁止** `DROP COLUMN` / 直接重命名表。
+4. 必须删列或改类型时：新建临时表 → `INSERT INTO SELECT` → DROP 旧表 → RENAME，**全程独立事务包裹**。
+5. `vec_memory` 属**可重建的派生数据**：sqlite-vec 升级/维度变更导致不兼容时，直接 DROP 并从 `facts`/`messages` 重建向量，禁止改虚拟表结构。
+6. 迁移前**先备份** `.db`（如 `pet.db.bak`）。
+7. `user_version >` 期望版本 → 失败关闭；`<` → 备份后前向迁移。
+
+## 5. 提交规范（Conventional Commits）
+
+配置见 [commitlint.config.js](mdc:commitlint.config.js)。格式：
+
+```
+<type>(<scope>): <subject>
+```
+
+- **type**：`feat` `fix` `refactor` `perf` `style` `docs` `test` `build` `ci` `chore` `revert`
+- **scope**：`renderer` `ui` `ipc` `window` `db` `ai` `memory` `affection` `probe` `deps` `docs`
+- subject ≤ 100 字符，小写开头，不加句号。
+
+示例：`feat(window): 实现窗口 A 的动态点击穿透`
+
+## 6. 分支策略
+
+单人全栈 + AI 结对（见 `桌宠.md`），采用轻量 Git Flow：
+
+- `main` — 始终可构建、可发布；**禁止直接 push**。
+- `feat/<module>-<desc>` / `fix/<desc>` / `chore/<desc>` / `docs/<desc>` — 短生命周期特性分支。
+- 流程：从 `main` 切分支 → 小步提交（单分支只做一件事）→ 跑 lint/typecheck → squash 合并回 `main` → 删分支。
+- 涉及 schema 变更或跨模块改动，先在 `docs/` 或 PR 描述里写清方案再动手。
+
+## 7. 常见问题（FAQ）
+
+**Q：UI 风格在哪里定义？**
+A：沿用 `docs/design/pet-design/index.html` 的 Jelly-Toy 设计令牌（`--matcha`、`--peach` 等）。真正做 UI 时应提取为共享 token 源，避免颜色漂移——不要在组件里写死色值。
+
+**Q：`invoke` 报 command not found？**
+A：检查该函数是否加入 `generate_handler!`；同时确认 `capabilities/default.json` 有对应 permission。
+
+**Q：拖不动 / 卡成 PPT？**
+A：拖拽必须用 Rust `window.start_dragging()`，不能移动 PIXI 精灵。若卡顿，多半是 PIXI 实例进了 `reactive`/`ref`，或 Ticker 里每帧 new 了对象，或多个 Ticker 并存。
+
+**Q：桌宠 PNG/图片资源放哪？为什么 MVP 不要美术资源？**
+A：MVP 用纯代码绘制（`CodeCatRenderer`），不做美术资产；后续 Phase 3 才引入 `CustomSpriteRenderer`。当前唯一图片资产是设计稿的 `docs/design/pet-design/assets/`，**不属于运行时资源**，不要引用到 `src/`。
+
+**Q：API Key 存哪？**
+A：只能经 IPC 交给 Rust 加密写入 SQLCipher 的 `app_settings`；**绝不**进前端 `.env`/`localStorage`。
+
+**Q：UI 改了但没生效？**
+A：Vite 忽略 `src-tauri` 变更（见 `vite.config.ts`）；改 Rust 需 `pnpm tauri dev` 重新编译。
+
+**Q：Windows 上换行/空格不一致？**
+A：统一由 [.editorconfig](mdc:.editorconfig) + [.prettierrc.json](mdc:.prettierrc.json) 约束（LF + 2 空格；Rust 4 空格）。
+
+**Q：要先写测试吗？**
+A：尚未配置测试框架（前端 Vitest、后端 `cargo test`）。按 rule.md，**AI 生成的数据库/IPC 代码应先在独立 `#[test]` 中跑通再集成**。

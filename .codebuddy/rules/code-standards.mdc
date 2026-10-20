@@ -1,0 +1,108 @@
+---
+alwaysApply: true
+description: qiqi 代码规范——命名约定、目录结构、注释要求、错误处理、PIXI/IPC/数据库边界约束
+---
+
+# qiqi 代码规范
+
+适用范围：`src/`（Vue 3 + TypeScript + PIXI）与 `src-tauri/`（Rust）。
+依据：[docs/design/桌宠.md](mdc:docs/design/桌宠.md)（产品与技术规格）、[docs/design/rule.md](mdc:docs/design/rule.md)（开发规则）。
+
+## 0. 技术栈锁定（不可漂移）
+
+- **Tauri 2 only**：只用 `@tauri-apps/api/core` 的 `invoke`，**禁止** Tauri 1 写法。
+- **前端框架是 Vue 3**（`<script setup lang="ts">`）。规格文档中出现过 React 字样，但仓库已搭建的是 Vue（见 [package.json](mdc:package.json)、[src/App.vue](mdc:src/App.vue)）——**新增 UI 一律 Vue，不用 React**。
+- **PIXI.js** 为渲染引擎；MVP 用纯代码绘制，不引入美术资源。
+- **数据库**：SQLite + SQLCipher + sqlite-vec，Rust 侧执行 SQL，前端只能通过 command 取数。
+
+## 1. 命名约定
+
+| 场景 | 约定 | 示例 |
+| :--- | :--- | :--- |
+| Rust 模块/文件 | `snake_case` | `commands/pet.rs`、`probe.rs` |
+| Rust 结构体/枚举 | `PascalCase` | `AppError`、`PetState` |
+| Rust 函数/变量 | `snake_case` | `start_dragging()` |
+| Rust Tauri 命令 | `snake_case`，动词开头 | `set_pet_name`、`get_app_settings` |
+| TS 变量/函数 | `camelCase` | `mount`、`lookAt` |
+| TS 接口/类型 | `PascalCase`，接口可 `I` 前缀 | `IPetRenderer`、`PetState` |
+| TS 常量 | `UPPER_SNAKE_CASE` | `DEFAULT_BASE_URL` |
+| Vue 组件文件 | `PascalCase.vue` | `PetCanvas.vue`、`BubbleMessage.vue` |
+| Composable | `useXxx.ts` | `usePetRenderer.ts` |
+| 英文文件名 | `kebab-case.ts` | `pet-renderer.ts` |
+| 中文设计文档 | 保留中文名 + 版本后缀 | `桌宠.md` v2.0 |
+| CSS 变量/Design Token | `--kebab-case` | `--matcha`、`--peach` |
+
+## 2. 目录结构（目标形态，按现有 [src/](mdc:src) 与 [src-tauri/src/](mdc:src-tauri/src) 演进）
+
+```
+src/
+  api/          # IPC 封装：每类能力一个文件，统一走 invoke
+  renderer/     # PIXI：IPetRenderer.ts + renderers/CodeCatRenderer.ts
+  components/   # Vue 组件（桌宠画布、气泡、设置 Tab）
+  stores/       # 如引入 Pinia，放响应式 UI 状态（禁止放 PIXI 实例）
+  types/        # 接口与 DTO（默认原样复用 Rust 返回的形状）
+  App.vue / main.ts
+src-tauri/src/
+  commands/     # #[tauri::command]，对外能力入口
+  db/           # 连接、迁移（rusqlite_migration）、DAO
+  window/       # 双窗口、拖拽、点击穿透
+  probe/        # 空闲检测、前台进程名
+  ai/           # LLM SSE 代理
+  lib.rs / main.rs
+```
+
+新增文件请归入上述目录，不要在 `lib.rs` 里堆业务逻辑。
+
+## 3. 注释要求
+
+- **公共函数必须有 JSDoc / Rust doc 注释**，说明目的、参数、返回。风格与现有 [docs/design/pet-design/index.html](mdc:docs/design/pet-design/index.html) 一致：**中文说明 + 英文标签**。
+  ```ts
+  /**
+   * 让猫娘看向指定坐标（全局鼠标坐标经 Rust 上报）。
+   * @param x - 目标 X 坐标
+   * @param y - 目标 Y 坐标
+   * @returns void
+   */
+  ```
+- **注释写「为什么」**，不要复述代码本身。
+- 复杂算法（果冻物理、阻尼回弹、微随机）必须注明**公式来源或对应文档章节**。
+- **禁止**保留 AI 生成的代码块未核验第三方 API；调用第三方库前查官方文档。
+
+## 4. 错误处理
+
+**Rust（依据 rule.md）：**
+
+- **禁止**滥用 `.unwrap()` / `.expect()` 处理业务错误。
+- 定义统一的 `AppError` 枚举，用 `?` 向上传播；Tauri command 返回 `Result<T, AppError>`（需实现 `serde::Serialize` 以便前端可读）。
+- 涉及 I/O（LLM 请求、文件读写）用 `tokio` 异步，不阻塞主线程。
+- SQL **必须参数化**（`params![val]`），严禁字符串拼接。
+
+**TypeScript：**
+
+- 不写 `any`、`@ts-ignore`；`no-explicit-any` 为 error。
+- 每个 `await invoke(...)` 必须 `try/catch` 并给出用户可见反馈；**绝不吞掉错误**。
+- IPC 返回值必须有明确 Interface，禁止隐式推断。
+- 提交前自查 rule.md 的三项：**是否漏 await / 是否错误捕获 / 是否写死绝对路径**。
+
+## 5. 边界隔离（硬性）
+
+- **前端绝不**直接调用系统底层 API，不引 Node 原生模块。
+- 文件系统、窗口拖拽/透明穿透、全局检测、LLM 请求、数据库 —— **全部 Rust 实现**，经 `#[tauri::command]` 暴露。
+- **API Key 绝不**写入前端 `.env`、`localStorage` 或代码；走 IPC → Rust → SQLCipher 加密存储。
+- 拖拽窗口用 Rust 的 `window.start_dragging()`，**禁止**前端移动 PIXI 精灵来模拟拖拽。
+
+## 6. PIXI 渲染规范
+
+- **单个 Ticker**：全应用只有一个 `app.ticker` 循环，呼吸/果冻形变/视线跟随都在其中统一计算。
+- **响应式隔离**：PIXI 的 `Application`/`Sprite`/`Container` **绝不能**放进 `ref`/`reactive`/`useState`，须由普通变量或独立类实例持有（防 Proxy 拦截导致性能灾难）。
+- **防 GC 卡顿**：每帧禁止 `new Point()` 之类新建对象；临时变量在循环外声明复用。
+- **清理副作用**：Vue `onUnmounted`（React `useEffect` cleanup）中调用 `.destroy(true)` 并移除事件监听。
+- 渲染器必须实现 `IPetRenderer` 接口（`mount`/`playAction`/`setExpression`/`lookAt`/`getHitRegion`/`dispose`），便于后续替换 `CustomSpriteRenderer`。
+
+## 7. Vue / TS 其他约定
+
+- 组件一律 `<script setup lang="ts">`（`vue/component-api-style` 为 error）。
+- 模板中组件名用 `PascalCase`；禁止 `v-html`（`vue/no-v-html` error）。
+- Props 用 `defineProps<Type>()` + `withDefaults`；emit 用 `defineEmits<...>` 显式声明。
+- 禁止直接修改 props（`vue/no-mutating-props` error）。
+- 类型尽量 `import type`（`consistent-type-imports` error）。

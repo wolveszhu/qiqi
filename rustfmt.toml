@@ -1,0 +1,15 @@
+# rustfmt config for the qiqi Tauri backend.
+# Only STABLE options are used (nightly-only keys would warn on stable toolchains).
+edition = "2024"
+max_width = 100
+tab_spaces = 4
+newline_style = "Windows"
+use_small_heuristics = "Max"
+use_field_init_shorthand = true
+use_try_shorthand = true
+remove_nested_parens = true
+match_block_trailing_comma = true
+trailing_comma = "Vertical"
+trailing_semicolon = true
+overflow_delimited_expr = true
+reorder_impl_items = false
