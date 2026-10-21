@@ -1,6 +1,7 @@
 ---
-alwaysApply: false
-description: qiqi 开发指南——项目结构、开发流程、IPC 与数据库迁移清单、提交规范、分支策略、常见问题
+description: 
+globs:
+alwaysApply: true
 ---
 
 # qiqi 开发指南
@@ -61,6 +62,8 @@ Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
 - subject ≤ 100 字符，小写开头，不加句号。
 
 示例：`feat(window): 实现窗口 A 的动态点击穿透`
+
+> **自动提交**：每轮命令执行后若修改了代码/文档，必须按 [auto-commit.mdc](mdc:.codebuddy/rules/auto-commit.mdc) 立即 `git commit`，防止成果丢失。
 
 ## 6. 分支策略
 

@@ -35,7 +35,7 @@ pnpm tauri dev      # 完整桌面应用：Rust + 前端热重载
 - `docs/design/桌宠.md` — 产品与技术规格 v2.0
 - `docs/design/rule.md` — 开发规则（Tauri 2 / Rust / PIXI / 数据库迁移）
 - `docs/design/pet-design/index.html` — 设置窗口设计稿与 Jelly-Toy 设计令牌
-- `.codebuddy/rules/*.mdc` — 代码规范、lint 规则、开发指南
+- `.codebuddy/rules/*.mdc` — 代码规范、lint 规则、开发指南、设计基线快照、自动提交纪律
 
 规范、lint 配置与提交约束以 `.codebuddy/rules/` 下的规则文件为准。
 

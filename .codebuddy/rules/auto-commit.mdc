@@ -1,0 +1,39 @@
+---
+alwaysApply: true
+description: qiqi 自动提交纪律——每轮命令执行后若产生代码/文档变更，必须立即 git commit，防止项目代码丢失
+---
+
+# qiqi 自动提交纪律（Auto Commit）
+
+**核心规则：每次执行命令之后，若本轮修改了代码或文档，必须用 `git commit` 提交当前修改，防止项目代码丢失。**
+
+仓库根目录：`D:/qiqi/qiqi`（git 仓库已初始化，提交者身份已配置）。
+
+## 1. 触发时机
+
+- 每完成一轮文件写入 / 编辑 / 删除（`write_to_file`、`replace_in_file`、`delete_file`、脚本生成或移动文件等），在**结束当前回合前**检查并提交。
+- 一轮内有多组逻辑独立的修改时，**按逻辑单元拆分为多个小提交**，不要攒成一个大提交。
+- 会话收尾时必须保证 `git status` 中不再有**本次任务**产生的未提交变更。
+
+## 2. 提交流程
+
+1. `git status --porcelain` + `git diff` 审查本次变更范围。
+2. 确认变更不含构建产物、临时文件与敏感信息（`.gitignore` 已忽略 `node_modules/`、`target/`、`dist/`、`.env`、`*.db` 等；若发现**未忽略**的敏感文件，先补 `.gitignore` 再提交）。
+3. `git add <本次任务相关文件>` 后提交；**禁止**在未审查的情况下 `git add -A` 一把梭。
+4. 提交信息遵循 Conventional Commits（格式见 [development-guide.mdc](mdc:.codebuddy/rules/development-guide.mdc) §5，校验配置 [commitlint.config.js](mdc:commitlint.config.js)），例如：
+   `feat(renderer): 实现 CodeCatRenderer 果冻物理`
+5. 提交后用 `git status` 确认工作区干净，或仅剩与本任务无关的遗留变更（见 §3 第 4 条）。
+
+## 3. 红线（禁止事项）
+
+- **禁止** `git commit --amend`、`git reset --hard`、`git push --force` 等改写历史的操作，除非用户明确要求。
+- **禁止**提交 `.env`、API Key、`*.db` 数据库文件、构建产物。
+- **禁止**把**非本次任务**产生的遗留变更擅自打包进本次提交——发现时应向用户报告并询问处理方式。
+- 用户明确说「先别提交 / 暂缓提交」时服从用户：本轮只修改不提交，并在回复中说明原因。
+
+## 4. 与现有规则的关系
+
+- 提交信息格式与 scope 限定：[development-guide.mdc](mdc:.codebuddy/rules/development-guide.mdc) §5
+- 分支策略（何时切分支、合并方式）：同文件 §6
+- Rust 侧改动同样适用：`src-tauri/` 变更后也必须提交
+- 规范性内容来源：[design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc)
