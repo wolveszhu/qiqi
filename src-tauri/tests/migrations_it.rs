@@ -266,3 +266,33 @@ fn case7_constraints() {
         conn.execute("INSERT INTO diaries (diary_date, content) VALUES ('2026-10-21', '重复')", []);
     assert!(dup.is_err(), "diary_date 重复应报 UNIQUE");
 }
+
+// ---------- 用例 8：密钥不匹配/文件损坏 → 隔离而非崩溃 ----------
+
+#[test]
+fn case8_undecryptable_db_is_quarantined() {
+    register_vec_extension().expect("vec 注册");
+    let dir = tempfile::tempdir().expect("临时目录");
+    let db_path = dir.path().join("pet.db");
+
+    // 1) 用密钥 A 正常建库
+    let first = init_with_key(&db_path, TEST_KEY).expect("以密钥 A 建库");
+    drop(first);
+
+    // 2) 换密钥 B 打开 → 应报 Config 且库被隔离（不静默删除数据）
+    let err =
+        init_with_key(&db_path, "FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210")
+            .expect_err("密钥不匹配应失败");
+    assert!(
+        matches!(err, qiqi_lib::error::AppError::Config(_)),
+        "应为可行动的 Config 错误: {err:?}"
+    );
+
+    // 3) 隔离文件存在（证据保留），原 pet.db 已移走 → 下次启动可重建
+    assert!(!db_path.exists(), "损坏库应被移走");
+    let quarantined = std::fs::read_dir(dir.path())
+        .expect("读取目录")
+        .filter_map(|e| e.ok())
+        .any(|e| e.file_name().to_string_lossy().starts_with("pet.db.corrupt-"));
+    assert!(quarantined, "应存在隔离文件（保留证据）");
+}

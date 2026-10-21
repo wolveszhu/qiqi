@@ -24,19 +24,76 @@ pub struct Db {
 /// 初始化入口：密钥 → vec 注册 → 打开加密连接 → 迁移。
 pub fn init(db_path: &Path) -> Result<Db, AppError> {
     let key = load_or_create_key()?;
+    let mut conn = open_encrypted(db_path, &key)?;
+    apply_migrations(&mut conn, db_path)?;
+    Ok(Db { conn: Mutex::new(conn) })
+}
+
+/// 打开加密连接（vec 注册 → open → `PRAGMA key` → 可解密性校验）。
+///
+/// 故障防御（B4 冷启动实测）：不可解密时**先关闭连接再隔离**——
+/// Windows 下文件句柄未释放时 `rename` 会报 os error 32（用例 8 实测坑）。
+fn open_encrypted(db_path: &Path, key: &str) -> Result<Connection, AppError> {
     register_vec_extension()?;
 
     if let Some(dir) = db_path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
     }
-    let mut conn = Connection::open(db_path).map_err(AppError::from)?;
+    let conn = Connection::open(db_path).map_err(AppError::from)?;
     // PRAGMA key 必须是连接上第一条语句；密钥为本地生成 hex（非用户输入），
     // 不适用参数化查询约束（rule.md §H 的参数化针对业务数据 SQL）。
     conn.execute_batch(&format!("PRAGMA key = \"x'{key}'\";")).map_err(AppError::from)?;
 
-    apply_migrations(&mut conn, db_path)?;
-    Ok(Db { conn: Mutex::new(conn) })
+    match ensure_decryptable(&conn) {
+        Ok(()) => Ok(conn),
+        Err(AppError::Config(msg)) => {
+            // 隔离前必须释放句柄（Windows 文件占用）
+            drop(conn);
+            let corrupt = quarantine_db(db_path)?;
+            Err(AppError::Config(format!(
+                "{msg} 已隔离为 {}，重启七七后将重建。",
+                corrupt.display()
+            )))
+        },
+        Err(e) => {
+            drop(conn);
+            Err(e)
+        },
+    }
 }
+
+/// 可解密性判定：读取 `PRAGMA user_version` 试探（不产生副作用）。
+///
+/// 起因（B4 冷启动真实故障）：keyring 未启用平台后端时"看似成功"但不持久化
+/// → 每次启动生成新随机密钥 → 旧库以新密钥打开报
+/// `NotADatabase(26) file is not a database`。
+fn ensure_decryptable(conn: &Connection) -> Result<(), AppError> {
+    match conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ffi::ErrorCode::NotADatabase =>
+        {
+            Err(AppError::Config("数据库无法用当前密钥打开（文件损坏或密钥已丢失）。".into()))
+        },
+        Err(e) => Err(AppError::from(e)),
+    }
+}
+
+/// 隔离打不开的库：重命名为 `pet.db.corrupt-<unix秒>`——**保留证据，绝不删除**。
+/// 调用前必须关闭该文件的连接句柄。
+fn quarantine_db(db_path: &Path) -> Result<std::path::PathBuf, AppError> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default();
+    let corrupt = db_path.with_file_name(format!("pet.db.corrupt-{stamp}"));
+    std::fs::rename(db_path, &corrupt).map_err(|e| AppError::Io(e.to_string()))?;
+    Ok(corrupt)
+}
+
+// 历史实现注释（已被 ensure_decryptable + quarantine_db 取代，保留原因说明）：
+// 初版在连接未关闭时直接 rename，Windows 报 os error 32（文件被占用），
+// 故改为"判定与隔离分离、隔离前 drop 连接"——见 open_encrypted 与用例 8。
 
 /// 版本三分支（附录 A §A.6）：版本读取以 rusqlite_migration 为准，禁止手工覆写。
 ///
@@ -120,12 +177,7 @@ pub fn register_vec_extension() -> Result<(), AppError> {
 /// 公开而非 `pub(crate)`：`tests/migrations_it.rs` 集成测试需调用（B4.7）。
 #[doc(hidden)]
 pub fn init_with_key(db_path: &Path, key: &str) -> Result<Db, AppError> {
-    register_vec_extension()?;
-    if let Some(dir) = db_path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| AppError::Io(e.to_string()))?;
-    }
-    let mut conn = Connection::open(db_path).map_err(AppError::from)?;
-    conn.execute_batch(&format!("PRAGMA key = \"x'{key}'\";")).map_err(AppError::from)?;
+    let mut conn = open_encrypted(db_path, key)?;
     apply_migrations(&mut conn, db_path)?;
     Ok(Db { conn: Mutex::new(conn) })
 }
