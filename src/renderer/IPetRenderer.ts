@@ -6,8 +6,11 @@
  * 单一 Ticker、帧内零 new、卸载必须 destroy(true)。
  */
 
-/** 动作名（C1 最小集 + 模块 6 睡/醒；后续 playAction 调用方只允许用这些名）。 */
-export type PetAction = "idle" | "drag" | "sleep" | "stretch" | "eat";
+/**
+ * 动作名（值域真源：`docs/design/接口契约.md` §5）。
+ * click = 点击果冻冲击（C1 交互核心）；drag/stretch/sleep 供 C2/C6 使用；eat 预留 Phase 2。
+ */
+export type PetAction = "idle" | "click" | "drag" | "sleep" | "stretch" | "eat";
 
 /** 表情名（C1 最小集 + 情绪反馈；affection:changed 驱动 happy/angry）。 */
 export type PetExpression = "neutral" | "happy" | "angry" | "sleepy";
