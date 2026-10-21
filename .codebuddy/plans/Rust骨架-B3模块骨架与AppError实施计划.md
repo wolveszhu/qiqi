@@ -7,7 +7,7 @@
 | 范围边界 | **只做骨架核对、收口与最小补全**。不含：DB 连接与迁移（B4）、命令实现（B5/C2）、任何业务逻辑 |
 | 现状（骨架任务已提前完成大部分） | ✅ 已落地：`lib.rs` 模块声明与组装（opener 插件 + greet）、`error.rs`（AppError 六变体 Db/Llm/Window/Probe/Io/Config + serde tag/content + `From<rusqlite::Error>`）、`config.rs`（EMBEDDING_DIM/PROBE_INTERVAL_MS）、`state.rs`（占位 `AppState`）、六域 `mod.rs`（db/llm/affection/proactive/probe/window，含职责与 TODO 注释）、`commands/` 六域占位；✅ `cargo clippy --all-targets -- -D warnings` 与 `cargo fmt --check` 已全绿 |
 | 剩余缺口 | ① `state.rs` 仍是占位结构（`AppState` 无字段）；② AppError 序列化无 `#[test]`（rule.md：先测后集成）；③ 骨架与规范 §4 的走查核对未留档；④ lib.rs 缺后续任务接入的注释锚位 |
-| 状态 | 待执行（小体量收口任务） |
+| 状态 | **已完成**（2026-10-21）——执行结果与走查留档见文末 |
 
 ---
 
@@ -73,3 +73,30 @@
 ## 六、执行顺序
 
 B3.1（走查核对）→ B3.2（AppState 正式化）→ B3.3（AppError 单测）→ B3.4（组装锚位）→ B3.5（门禁回写）→ DoD 收口。
+
+---
+
+## 执行结果与走查留档（2026-10-21）
+
+### 走查清单结果（B3.1）
+
+| # | 检查项 | 结果 |
+| :--- | :--- | :--- |
+| 1 | `#[tauri::command]` 位置 | ✅ `commands/window.rs`（B1）+ `lib.rs` greet（脚手架遗留）。**决策登记：greet 随 B5 一并移除**（命令层任务统一出口），本计划不实现 |
+| 2 | 领域模块无 I/O 越界 | ✅ db/llm/affection/proactive/probe/window 均为文档占位，天然合规 |
+| 3 | 常量真源唯一 | ✅ `config.rs` 单点（EMBEDDING_DIM/PROBE_INTERVAL_MS，grep 无第二定义） |
+| 4 | error 六变体 ↔ 前端 `AppErrorKind` | ✅ 一致；差异两项均已登记：前端多 `Unknown` 兜底、kind 小写口径（rename_all 对 tag 生效，骨架期勘误） |
+| 5 | 命名规范 | ✅ snake_case 模块 / PascalCase 类型 / SCREAMING_SNAKE 常量 |
+| 6 | `llm/` vs `ai/` 目录名 | ✅ 按目录规范 v1.1 用 `llm/`（规范 §9 已登记差异） |
+| 7 | 占位模块不触发告警 | ✅ clippy -D warnings 全绿 |
+
+### 任务对应
+
+| 任务 | 结果 | 对应 |
+| :--- | :--- | :--- |
+| B3.2 AppState 正式化 | `state.rs`：`pub struct AppState { pub db: Mutex<Connection> }`（doc 注明 app.manage 注册与 State 访问；C2 cursor/hit_region 缓存预留锚位）；clippy 无 unused 告警（pub 结构不触发 dead_code，计划风险表预判验证） | ✅ 对应 |
+| B3.3 AppError 单测 | 骨架期已落 3 个（序列化快照/Display/From rusqlite）——计划列 3 项全部满足，本次核对未重复添加；序列化断言采用小写 kind（勘误后口径） | ✅ 对应（提前完成） |
+| B3.4 组装锚位 | `lib.rs` 新增显式锚位块：`[B4] setup: connection::init + manage` / `[C2] 插件+托盘+probe 线程` / `[B5] invoke_handler 六域` / `[C6] 定时任务 spawn`——与各子计划接入点一一对应，组装点唯一 | ✅ 对应 |
+| B3.5 门禁回写 | cargo fmt/clippy -D warnings/cargo test 3 passed 全绿；pnpm typecheck 无影响；父计划 B3 行回写 | ✅ 对应 |
+
+**冷眼三问**：① AppState.db 有明确消费任务（B4）✅；② 锚位与子计划一一对应 ✅；③ 无越界实现（零新依赖、未动 commands/domain/config）✅。

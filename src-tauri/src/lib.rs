@@ -38,6 +38,9 @@ pub fn run() {
 }
 
 // TODO(B1): 窗口 B visible 开发期策略——C2.6 托盘到位后改 conf visible:false
-// TODO(B4): setup 内 db::connection::init + app.manage(AppState) + 启动衰减结算
-// TODO(C2): 插件 global-shortcut/autostart + 托盘 + probe 轮询线程
-// TODO(B5): invoke_handler 追加六域命令
+//
+// 组装锚位（B3.4）：后续任务只允许在以下锚位接线，保持组装点唯一——
+// [B4] .setup(): db::connection::init(&db_path)? + app.manage(AppState) + 启动衰减结算（C5）
+// [C2] .plugin(): global-shortcut / autostart + 托盘（tray.rs）+ probe 轮询线程（100ms 单点）
+// [B5] .invoke_handler(): 追加六域命令（settings/pet/chat/memory/probe/window 全量组）
+// [C6] .setup(): 蒸馏/日记定时任务 spawn（C7 扩展禁忌判定）
