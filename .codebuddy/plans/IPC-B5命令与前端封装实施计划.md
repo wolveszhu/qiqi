@@ -6,7 +6,7 @@
 | 规则依据 | `.codebuddy/rules/`：code-standards §4（错误处理/参数化/明文不落前端）、§5（边界）、design-baseline §H、development-guide（先测后集成）、lint-rules §5（门禁）；契约来源：父计划 §七 + 阶段0 子计划《接口契约.md》（若已产出） |
 | 范围边界 | **只做 settings/pet/memory(只读)/chat(桩) 四组命令 + 前端封装**。不含：窗口/探针命令（C2）、LLM 真实管道（C4）、好感度结算（C5）、记忆编辑删除与向量重建（C7）、任何 UI（D*） |
 | 现状 | `api/client.ts`（唯一 invoke 出口）+ `api/types.ts`（部分 DTO）已就位；`commands/{settings,pet,chat,memory}.rs` 为占位文档；`db/repositories/` 为空占位；`AppState { db: Mutex<Connection> }` 由 B3/B4 提供；greet 待移除（B3 已登记决策） |
-| 状态 | 待执行（前置：B4 完成） |
+| 状态 | **已完成**（2026-10-22，提交 d358643）——执行结果与实测修正见文末 |
 
 ---
 
@@ -127,3 +127,51 @@ chat_abort(sessionId: string) -> void
 ## 七、执行顺序
 
 B5.1（DTO 双端）→ B5.2（repositories）→ **B5.7 前置：repositories_it 先行跑通**（rule.md 先测后集成）→ B5.3/B5.4/B5.5（命令）→ B5.6（前端封装与注册）→ 手工清单 → DoD 收口。
+
+---
+
+## 执行结果与计划对应情况（2026-10-22，提交 d358643）
+
+| 计划任务 | 实际结果 | 对应 |
+| :--- | :--- | :--- |
+| B5.1 DTO 双端 | `db/models.rs`：行结构体 + 存储结构（三档/勿扰/旧格式）+ 出参 DTO + 入参 DTO，全部 `rename_all camelCase`；`src/api/types.ts` 增 `FactDto`/`DiaryDto`/`SaveTierPayload`/`UpdatePetPayload` | ✅ |
+| B5.2 repositories | `repositories/{app_settings,pet_states,facts,diaries}.rs`：全参数化 SQL；app_settings 支持 upsert 与额度模式、pet_states 单行兜底插入与字段级更新、facts/diaries 带 limit 列表 | ✅ |
+| B5.7 前置测试 | `repositories_it.rs` 6 用例**先跑通**（读写/额度/单行幂等/列表 limit/**注入负样例**/schema 漂移防护），随后才实装命令——先测后集成落地 | ✅ 顺序符合 |
+| B5.3 settings | `settings_get_typed`（脱敏：hasKey + 末 4 位指纹）、`settings_save_typed`（Key 空串不改存量）；**双格式兼容**（三档优先、回落 M1 扁平种子） | ✅ |
+| B5.4 pet | `pet_get_state` / `pet_update_state`（好感度只读透出，结算留 C5） | ✅ |
+| B5.5 memory/chat | memory 只读两项可用；三项写命令签名预留并返回 `[C7 接入]`；chat echo 桩（3 片 delta + done，UTF-8 安全分片）+ `chat_abort` 占位，标 `[C4 替换]` | ✅ |
+| B5.6 封装与注册 | `api/{settings,pet,chat,memory}.ts` 全经 `callCommand`；lib.rs 注册 11 个命令并**移除 greet**（B3 决策落地） | ✅ |
+
+### 实测修正（三处，均为测试/工具暴露的真实问题）
+
+1. **排序不确定**：同秒创建的 facts 因 `created_at` 相同导致 `ORDER BY` 结果不稳定 → 仓储加 `id DESC` 次级排序（生产健壮性 + 测试确定性）
+2. **旧格式被误判**（单测发现）：`TieredValue` 各字段 `#[serde(default)]`，旧扁平 JSON 会"解析成功"成三档全空 → 改为**先判结构（是否含 main/memory/fallback 键）再解析**；勿扰同理（是否含 dnd 键）
+3. **clippy 拦截**：手写向上取整 → `div_ceil`；嵌套 if → `match` 守卫
+
+### 门禁终态
+
+`cargo clippy -D warnings` ✅ / `cargo fmt --check` ✅ / **cargo test 29 passed** ✅ / `pnpm typecheck` ✅ / `pnpm build` ✅ / `pnpm test` 9 passed ✅ / `pnpm lint` 0 problems ✅ / `pnpm format:check` ✅ / husky 钩子链真实通过 ✅
+
+### 红线自查（DoD grep 项）
+
+| 项 | 结果 |
+| :--- | :--- |
+| `@tauri-apps/api/core`（invoke）命中范围 | **仅 `src/api/client.ts`** ✅ |
+| `repositories/` 内拼接宏 | **零命中**（注释措辞已调整以免自查误报）✅ |
+| 明文 Key 出参 | 出参仅 `hasKey`/`keyFingerprint`；`apiKey` 只存在于**入参** DTO ✅（有单测断言序列化后不含明文） |
+| greet | 已移除 ✅ |
+
+### 待用户手工验证（GUI，`pnpm tauri dev`）
+
+1. 保存带 Key 的配置 → 重启后 `hasKey=true`、指纹一致、**回包无明文**
+2. `pet_update_state` 改 pet_name → 重启持久
+3. `memory_list_facts` / `memory_list_diaries` 返回空集不报错
+4. `chat_send_stream("hi")` → 依次收到 3 片 `chat:stream:delta` + `chat:stream:done`（echo 桩链路通）
+5. DB 故障模拟 → 命令返回 `AppError::Db`，前端呈现错误不崩溃
+
+### 边界移交
+
+- **C4**：替换 `chat.rs` echo 桩（签名/事件名不变，前端零改动）
+- **C7**：接入 `memory_update_fact`/`memory_delete_fact`/`memory_regenerate_diary`（需同事务向量同步）
+- **C2/C6**：`probe.rs` 命令（探针快照、`proactive_generate`）
+- **C5**：好感度结算命令 `pet_settle_affection`（当前 pet 命令只透出、不结算）
