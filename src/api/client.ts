@@ -40,12 +40,10 @@ export function normalizeError(e: unknown): AppError {
  * @param cmd - 命令名（snake_case，契约见 docs/design/接口契约.md §2）
  * @param args - 参数对象（camelCase，serde rename_all 对齐）
  */
-export async function callCommand<T>(
-  cmd: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
+export async function callCommand<T>(cmd: string, args?: object): Promise<T> {
   try {
-    return await invoke<T>(cmd, args);
+    // invoke 需要 Record 形态；接口类型无索引签名，故在此处收敛一次
+    return await invoke<T>(cmd, args as Record<string, unknown> | undefined);
   } catch (e) {
     throw normalizeError(e);
   }

@@ -72,3 +72,35 @@ export interface ChatBubbleState {
   text: string;
   isStreaming: boolean;
 }
+
+/** 事实条目（memory_list_facts 返回）。 */
+export interface FactDto {
+  id: number;
+  category: number;
+  content: string;
+  confidence: number;
+  createdAt: string;
+}
+
+/** 日记条目（memory_list_diaries 返回）。 */
+export interface DiaryDto {
+  id: number;
+  diaryDate: string;
+  content: string;
+  mood: number | null;
+}
+
+/** 保存单档配置的入参（api_key 仅在新值时携带；空串 = 不改动存量 Key）。 */
+export interface SaveTierPayload {
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  modelCustom: string;
+}
+
+/** 更新桌宠资料的入参（好感度字段不接受修改——结算属 C5）。 */
+export interface UpdatePetPayload {
+  petName?: string;
+  activeRenderer?: string;
+  rendererConfig?: unknown;
+}

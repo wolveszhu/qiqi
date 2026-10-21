@@ -15,10 +15,7 @@ pub mod db;
 pub mod error;
 pub mod state;
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {name}! You've been greeted from Rust!")
-}
+// greet（脚手架遗留）已按 B3 决策移除：命令统一从 commands/ 出口，不留死代码。
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,7 +42,22 @@ pub fn run() {
             app.manage(crate::state::AppState { db: conn });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, commands::window::window_hide])
+        // [B5] 命令注册：window 组（B1 临时通道）→ C2 扩展；settings/pet/chat/memory 组本计划落位。
+        // 应用自定义命令**免 capability 授权**（B2 勘误#1）。
+        .invoke_handler(tauri::generate_handler![
+            commands::window::window_hide,
+            commands::settings::settings_get_typed,
+            commands::settings::settings_save_typed,
+            commands::pet::pet_get_state,
+            commands::pet::pet_update_state,
+            commands::chat::chat_send_stream,
+            commands::chat::chat_abort,
+            commands::memory::memory_list_facts,
+            commands::memory::memory_list_diaries,
+            commands::memory::memory_update_fact,
+            commands::memory::memory_delete_fact,
+            commands::memory::memory_regenerate_diary,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

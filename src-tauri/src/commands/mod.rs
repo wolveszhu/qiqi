@@ -5,7 +5,8 @@
 //! - 禁止业务规则、禁止直接拼 SQL（参数化在 repositories）、禁止 emit 事件（事件在领域模块）；
 //! - 错误一律 `AppError` + `?` 传播，不 unwrap。
 //!
-//! TODO(B5): settings/pet/chat/memory 命令实装；probe/window 归 C2/C6。
+//! 已实装：window（B1 临时通道，C2 扩展）、settings/pet/chat/memory（B5）；
+//! TODO(C2/C6): probe.rs 命令（探针快照、proactive_generate）落位。
 
 pub mod chat;
 pub mod memory;
