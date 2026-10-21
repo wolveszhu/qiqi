@@ -58,12 +58,14 @@ export default tseslint.config(
       "vue/no-mutating-props": "error",
       "vue/no-v-html": "error",
       "vue/require-explicit-emits": "warn",
-      "vue/html-indent": ["warn", 2],
       // Align with Prettier (formatting is delegated to Prettier, see header):
-      // Prettier emits self-closing void elements and keeps short tags single-line.
+      // Layout/indentation rules below conflict with Prettier output → disabled.
+      "vue/html-indent": "off",
+      "vue/html-closing-bracket-newline": "off",
+      // Prettier self-closes void elements and components; normal elements keep content.
       "vue/html-self-closing": [
         "warn",
-        { html: { void: "always", normal: "always", component: "always" } },
+        { html: { void: "always", normal: "never", component: "always" } },
       ],
       "vue/singleline-html-element-content-newline": "off",
 

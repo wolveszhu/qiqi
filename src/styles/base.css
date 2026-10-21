@@ -1,0 +1,24 @@
+/**
+ * 基础样式：只放"全局 reset + body 基线"，引用 tokens.css 变量。
+ * 组件样式一律在 .vue scoped 内（规范 §3 styles/ 职责）。
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
