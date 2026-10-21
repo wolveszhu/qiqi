@@ -1,0 +1,2 @@
+# 提交信息校验（development-guide §5：Conventional Commits）
+pnpm exec commitlint --edit "$1"

@@ -1,0 +1,4 @@
+# A3 提交前门禁（lint-rules §3 快速项）
+# typecheck 放 pre-push：vue-tsc 耗时 >10s，会话命令外壳会截断提交过程
+pnpm lint
+pnpm format:check
