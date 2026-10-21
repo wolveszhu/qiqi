@@ -57,8 +57,9 @@ mod tests {
 
     #[test]
     fn serializes_as_kind_content_camel_case() {
+        // rename_all="camelCase" 对邻接标签枚举的 tag 同样生效：Db → db
         let json = serde_json::to_string(&AppError::Db("boom".into())).expect("序列化");
-        assert_eq!(json, r#"{"kind":"Db","message":"boom"}"#);
+        assert_eq!(json, r#"{"kind":"db","message":"boom"}"#);
     }
 
     #[test]
