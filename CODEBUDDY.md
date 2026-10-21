@@ -4,7 +4,7 @@
 
 `七七` is a Windows desktop digital-pet app ("桌宠" — a desktop digital life that lives on your screen). It is built with **Tauri 2 (Rust + WebView2)** as the system shell and **Vue 3 + TypeScript + Vite** as the frontend, with **PIXI.js** for code-drawn pet rendering. The product spec lives in `docs/design/桌宠.md`, the dev/code-style rules in `docs/design/rule.md`, and the settings-window mockup in `docs/design/pet-design/index.html`.
 
-**Current state vs. target:** The repository is an early scaffold. The Rust side exposes only a `greet` command (`src-tauri/src/lib.rs`); the frontend is the default Tauri+Vue greeting template (`src/App.vue`). `Cargo.toml` already pre-includes `rusqlite` (with `bundled-sqlcipher-vendored-openssl`) and `sqlite-vec`, signaling the intended encrypted-DB architecture. The design docs describe the full target product; treat them as the specification, not the implemented state.
+**Current state vs. target:** The skeleton is rebuilt per `docs/design/项目目录结构规范.md` (v1.1): Rust domain modules + `commands/` thin layer + `AppError` are in place (`src-tauri/src/`), and the frontend follows the window-dispatched structure (`api/state/renderer/composables/components/views`). Dual windows are configured in `src-tauri/tauri.conf.json` (B1 done): window A is a transparent always-on-top 400×400 pet layer, window B a 1000×660 settings layer with a self-drawn title bar; close is intercepted as `hide` (process stays resident; exit goes through the tray, C2). `Cargo.toml` already pre-includes `rusqlite` (with `bundled-sqlcipher-vendored-openssl`) and `sqlite-vec`, signaling the intended encrypted-DB architecture. The design docs describe the full target product; treat them as the specification, and this file as the map — the gap is the backlog (B2/B4/B5/C*).
 
 ## Commands
 
@@ -71,7 +71,7 @@ To eliminate duplication and drift, configuration is **centralized by domain** w
 | Domain | Source of truth | Scope / fields |
 | :--- | :--- | :--- |
 | App identity & bundle | `src-tauri/tauri.conf.json` (`productName`, `identifier`, `version`, `bundle`) | Product name `七七`; identifier (currently placeholder `com.brave.七七`); icon set; build targets. |
-| Window definitions | `src-tauri/tauri.conf.json` `app.windows` | Window A (transparent pet) + Window B (settings). Currently a single 800×600 window — extend here, do not patch in code. |
+| Window definitions | `src-tauri/tauri.conf.json` `app.windows` | Window A (`main`: 400×400 transparent/always-on-top/skipTaskbar) + Window B (`settings`: 1000×660 self-drawn title bar, `decorations:false`). Labels are the front/back contract (`src/main.ts` dispatch + `window/manager.rs` constants). Window B is `visible:true` during dev (pre-tray); C2.6 flips it to `false`. Close→`hide` interception lives in `lib.rs` `on_window_event`. |
 | Security / CSP | `src-tauri/tauri.conf.json` `app.security` | CSP policy; currently `null` (permissive for dev). Tighten before release. |
 | IPC permissions | `src-tauri/capabilities/default.json` | Which commands/plugin APIs the window may call. Add entries when exposing new Rust APIs. |
 | Dev server | `vite.config.ts` | Port `1420` (strict), HMR, `src-tauri` watch-ignore. |
