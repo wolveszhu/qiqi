@@ -1,0 +1,41 @@
+/**
+ * Jelly-Toy 设计 token —— 全项目唯一样式真源
+ *
+ * 来源：docs/design/pet-design/index.html :root（阶段0/A3.4 逐值抽取，与设计稿一致）
+ * 规则：组件样式只允许引用本文件变量；禁止在组件内硬编码色值/圆角/阴影/字体
+ * 动效时长与缓动 token 由 E3 打磨阶段统一增补
+ */
+:root {
+  /* 底色 */
+  --bg-page: #efe7d8; /* 页面底色：暖奶油纸感 */
+  --bg-window: #fffef9; /* 设置窗口底色 */
+  --bg-soft: #fbf5ea; /* 卡片浅底 */
+  --bg-deep: #f4edde; /* 内嵌区块底 */
+
+  /* 文字与线条 */
+  --ink: #403a2e; /* 主文字：暖炭棕 */
+  --ink-soft: #948a75; /* 次级文字 */
+  --line: #ebe1ce; /* 分割线 */
+
+  /* 品牌色 */
+  --matcha: #7ca65b; /* 主色：抹茶绿 */
+  --matcha-deep: #5d8541; /* 主色深 */
+  --matcha-soft: #eaf1df; /* 主色浅底 */
+  --peach: #ff9e5e; /* 点缀：蜜桃橙 */
+  --peach-soft: #ffebdb;
+  --butter: #ffd98a; /* 点缀：奶油黄 */
+  --blush: #f5aeb9; /* 点缀：腮红粉 */
+
+  /* 圆角 */
+  --r-sm: 10px;
+  --r-md: 16px;
+  --r-lg: 22px;
+
+  /* 阴影 */
+  --shadow-card: 0 2px 6px rgba(93, 84, 60, 0.06), 0 10px 26px rgba(93, 84, 60, 0.07);
+  --shadow-window: 0 4px 12px rgba(64, 58, 46, 0.1), 0 34px 80px rgba(64, 58, 46, 0.22);
+
+  /* 字体 */
+  --font-disp: "ZCOOL QingKe HuangYou", "Noto Sans SC", sans-serif;
+  --font-body: "Noto Sans SC", -apple-system, "Microsoft YaHei", sans-serif;
+}

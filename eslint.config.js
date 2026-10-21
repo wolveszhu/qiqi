@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import pluginVue from "eslint-plugin-vue";
+import vueParser from "vue-eslint-parser";
 import tseslint from "typescript-eslint";
 
 // ESLint flat config for qiqi (Vue 3 + TypeScript + Vite).
@@ -20,9 +21,12 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   // Let <script lang="ts"> blocks inside .vue be parsed as TypeScript.
+  // Explicitly wire the SFC parser: under ESLint 10 + eslint-plugin-vue 10,
+  // the flat/recommended preset alone did not apply it (App.vue parse errors).
   {
     files: ["**/*.vue"],
     languageOptions: {
+      parser: vueParser,
       parserOptions: { parser: tseslint.parser },
     },
   },
@@ -38,21 +42,15 @@ export default tseslint.config(
       "no-console": ["warn", { allow: ["warn", "error"] }],
       "no-var": "error",
       "prefer-const": "error",
-      "eqeqeq": ["error", "always", { null: "ignore" }],
+      eqeqeq: ["error", "always", { null: "ignore" }],
       "no-param-reassign": ["error", { props: true }],
 
       // --- TypeScript ---
       "@typescript-eslint/no-explicit-any": "error",
-      "@typescript-eslint/consistent-type-imports": [
-        "error",
-        { prefer: "type-imports" },
-      ],
+      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports" }],
       "@typescript-eslint/explicit-module-boundary-types": "warn",
       "@typescript-eslint/no-non-null-assertion": "warn",
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
-        { argsIgnorePattern: "^_" },
-      ],
+      "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
 
       // --- Vue 3 ---
       "vue/component-api-style": ["error", ["script-setup"]],
@@ -61,6 +59,13 @@ export default tseslint.config(
       "vue/no-v-html": "error",
       "vue/require-explicit-emits": "warn",
       "vue/html-indent": ["warn", 2],
+      // Align with Prettier (formatting is delegated to Prettier, see header):
+      // Prettier emits self-closing void elements and keeps short tags single-line.
+      "vue/html-self-closing": [
+        "warn",
+        { html: { void: "always", normal: "always", component: "always" } },
+      ],
+      "vue/singleline-html-element-content-newline": "off",
 
       // --- Explicitly disabled (documented) ---
       // Off: root App.vue is a single-word component name by convention.
