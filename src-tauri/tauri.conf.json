@@ -12,9 +12,33 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "七七",
-        "width": 800,
-        "height": 600
+        "width": 400,
+        "height": 400,
+        "minWidth": 400,
+        "minHeight": 400,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "center": true,
+        "visible": true
+      },
+      {
+        "label": "settings",
+        "title": "七七 · 设置",
+        "width": 1000,
+        "height": 660,
+        "minWidth": 900,
+        "minHeight": 620,
+        "transparent": false,
+        "decorations": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "center": true,
+        "visible": true
       }
     ],
     "security": {

@@ -24,12 +24,20 @@ fn greet(name: &str) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .on_window_event(|window, event| {
+            // B1.2 关闭=hide 拦截（策略与理由见 window/manager.rs 文档）：
+            // A/B 均拦——桌宠常驻，退出统一走托盘（C2.6 app.exit）。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window::manager::hide_window(window);
+            }
+        })
+        .invoke_handler(tauri::generate_handler![greet, commands::window::window_hide])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-// TODO(B1): 窗口 B 关闭拦截（CloseRequested → prevent_close + hide）
+// TODO(B1): 窗口 B visible 开发期策略——C2.6 托盘到位后改 conf visible:false
 // TODO(B4): setup 内 db::connection::init + app.manage(AppState) + 启动衰减结算
 // TODO(C2): 插件 global-shortcut/autostart + 托盘 + probe 轮询线程
 // TODO(B5): invoke_handler 追加六域命令
