@@ -51,6 +51,12 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
+impl From<rusqlite_migration::Error> for AppError {
+    fn from(e: rusqlite_migration::Error) -> Self {
+        Self::Db(format!("迁移失败: {e}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

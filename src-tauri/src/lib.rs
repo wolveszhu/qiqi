@@ -4,7 +4,6 @@
 //! 业务规则一律放领域模块（db/llm/affection/proactive/probe/window），命令薄层放 commands/。
 
 mod affection;
-mod db;
 mod llm;
 mod proactive;
 mod probe;
@@ -12,6 +11,7 @@ mod window;
 
 pub mod commands;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod state;
 
@@ -32,6 +32,19 @@ pub fn run() {
                 let _ = window::manager::hide_window(window);
             }
         })
+        .setup(|app| {
+            // [B4] 数据层接线：SQLCipher 加密连接 + 迁移链 + 状态注册。
+            // 失败即启动失败（fail-fast：无库不应启动桌宠，B4 子计划决策）。
+            use tauri::Manager as _;
+            let db_path = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| error::AppError::Io(format!("解析 app_data_dir 失败: {e}")))?
+                .join("pet.db");
+            let db::Db { conn } = db::init(&db_path)?;
+            app.manage(crate::state::AppState { db: conn });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![greet, commands::window::window_hide])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -40,7 +53,7 @@ pub fn run() {
 // TODO(B1): 窗口 B visible 开发期策略——C2.6 托盘到位后改 conf visible:false
 //
 // 组装锚位（B3.4）：后续任务只允许在以下锚位接线，保持组装点唯一——
-// [B4] .setup(): db::connection::init(&db_path)? + app.manage(AppState) + 启动衰减结算（C5）
+// [B4] .setup(): 已接线（db::init + app.manage）；[C5] 同锚位追加启动衰减结算
 // [C2] .plugin(): global-shortcut / autostart + 托盘（tray.rs）+ probe 轮询线程（100ms 单点）
 // [B5] .invoke_handler(): 追加六域命令（settings/pet/chat/memory/probe/window 全量组）
 // [C6] .setup(): 蒸馏/日记定时任务 spawn（C7 扩展禁忌判定）
