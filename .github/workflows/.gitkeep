@@ -1,0 +1,1 @@
+# CI 工作流占位：pnpm typecheck / pnpm build / cargo clippy -D warnings / cargo test 门禁（任务 F2）
