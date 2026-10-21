@@ -6,7 +6,7 @@
 | 规则依据 | `.codebuddy/rules/`：code-standards §5（边界隔离与最小授权精神）、development-guide（查官方文档、先设计后落地）、lint-rules（门禁）；权限规格来源：`桌宠.md` §3（窗口/系统能力清单）+ 父计划 §七 命令分组 |
 | 范围边界 | **只做 capabilities 授权设计**：core 窗口/事件权限 + 插件权限策略。不含：插件依赖引入（随 C2 等任务）、命令实现（B5/C2）、窗口定义（B1） |
 | 现状 | `capabilities/default.json` 仅 `core:default` + `opener:default`；双窗口 label 约定 `main`/`settings`（B1 子计划已定）；C2 子计划已列其所需权限子集（C2.0） |
-| 状态 | 待执行 |
+| 状态 | **已完成**（2026-10-21）——执行结果见文末「执行结果与计划对应情况」 |
 
 ---
 
@@ -103,3 +103,21 @@ MVP 用**单文件 `default.json`、显式 `windows: ["main","settings"]`**；�
 ## 七、执行顺序
 
 B2.1（矩阵设计）→ B2.2（capabilities 落地）→ B2.3（最小化复查）→ B2.4（插件策略登记）→ 逐项验证（含负样例）→ B2.5（回写登记）→ DoD 收口。
+
+---
+
+## 执行结果与计划对应情况（2026-10-21）
+
+| 计划任务 | 实际结果 | 对应 |
+| :--- | :--- | :--- |
+| B2.1 矩阵设计 | 全量矩阵（8 条 core + 插件策略）并入 `docs/design/接口契约.md` §4.1–4.3（A2 已产出，按计划"并入权限映射小节"落实，单一真源） | ✅ 对应 |
+| B2.2 capabilities 落地 | `capabilities/default.json`：显式 `"windows":["main","settings"]`（原仅 `["main"]`）；权限 = core:default + opener:default + window×5 + event×3；description 承载分组说明与矩阵指针 | ✅ 对应 |
+| B2.3 最小化复查 | 无通配、无未启用插件条目、每条权限可追溯矩阵行；`core:window:allow-set-ignore-cursor-events` 标注"前端直调预留、主路径 Rust 命令"（B1 已按 Rust 命令实现显隐，未动用 JS API） | ✅ 对应 |
+| B2.4 插件策略 | global-shortcut/autostart 仅 Rust 侧（C2.7）无 JS 条目；store/dialog/fs 不预授权——策略入契约 §4.2 与 CODEBUDDY.md | ✅ 对应 |
+| B2.5 回写 | 父计划 B2 行（✅ + 勘误表述修正："命令不再因权限失败"→"core API 可用且最小化"）；CODEBUDDY.md 权限行同步矩阵要点；本计划执行结果 | ✅ 对应 |
+
+**勘误#1 落实**：自定义命令（window_* 等）不经 capability 门控——已写入父计划 B2 行、契约 §4.1、CODEBUDDY.md 三处，杜绝后续任务被误导做无效排查。
+
+**门禁**：`pnpm typecheck` / `build` / `test` / `lint` / `format:check` + cargo 四门禁全绿（capabilities 为配置文件，不影响编译）。
+
+**待用户手工验证**（`pnpm tauri dev`，GUI 项）：① 启动控制台零权限告警；② 窗口 B 标题栏拖拽生效（start-dragging）；③ TitleBar ✕ 隐藏进程存活（当前 Rust 命令路径，allow-hide 为 C2 前端直调预留）；④ 负样例：控制台调未授权 API（如 `window.setSize`）应被明确拒绝——证明门控生效。

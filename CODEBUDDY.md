@@ -73,7 +73,7 @@ To eliminate duplication and drift, configuration is **centralized by domain** w
 | App identity & bundle | `src-tauri/tauri.conf.json` (`productName`, `identifier`, `version`, `bundle`) | Product name `七七`; identifier (currently placeholder `com.brave.七七`); icon set; build targets. |
 | Window definitions | `src-tauri/tauri.conf.json` `app.windows` | Window A (`main`: 400×400 transparent/always-on-top/skipTaskbar) + Window B (`settings`: 1000×660 self-drawn title bar, `decorations:false`). Labels are the front/back contract (`src/main.ts` dispatch + `window/manager.rs` constants). Window B is `visible:true` during dev (pre-tray); C2.6 flips it to `false`. Close→`hide` interception lives in `lib.rs` `on_window_event`. |
 | Security / CSP | `src-tauri/tauri.conf.json` `app.security` | CSP policy; currently `null` (permissive for dev). Tighten before release. |
-| IPC permissions | `src-tauri/capabilities/default.json` | Which commands/plugin APIs the window may call. Add entries when exposing new Rust APIs. |
+| IPC permissions | `src-tauri/capabilities/default.json` | B2 权限矩阵（v1.0）：显式 `windows:["main","settings"]`；core 权限 = default + window(start-dragging/hide/show/set-focus/set-ignore-cursor-events) + event(listen/emit/unlisten)；插件仅 `opener:default`。**自定义命令免授权**（勘误#1）；global-shortcut/autostart 仅 Rust 侧无 JS 条目；store/dialog/fs 不预授权。矩阵全表见接口契约 §4.1，最小授权红线：禁通配禁预授权，新增前端 API 时在子计划中逐项申请 |
 | Dev server | `vite.config.ts` | Port `1420` (strict), HMR, `src-tauri` watch-ignore. |
 | TypeScript | `tsconfig*.json` | Strict mode; unused-local/param checks. |
 | Frontend deps & scripts | `package.json` | Single authority for versions and `dev`/`build`/`tauri`/`preview` scripts. |
