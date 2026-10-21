@@ -1,7 +1,10 @@
-//! 窗口域：窗口 A/B 句柄管理、拖拽、穿透、托盘、快捷键（规范 §4.1）。
+//! 窗口域：窗口 A/B 句柄管理、拖拽、点击穿透、托盘（规范 §4.1）。
 //!
-//! TODO(C2): `drag.rs`（系统接管拖拽）、`click_through.rs`（穿透状态机，
-//! 仅翻转调用系统 API）、`tray.rs`、`shortcut.rs`；
-//! TODO(B1): 窗口 B CloseRequested → prevent_close + hide（接线在 lib.rs）。
+//! C2 已实装：manager（label 常量 + 显隐）、drag（系统接管拖拽）、
+//! click_through（命中判定 + 翻转驱动）、tray（托盘菜单）。
+//! TODO(C2.7): shortcut.rs（快捷键处理）落位后由 lib.rs 统一装配。
 
+pub mod click_through;
+pub mod drag;
 pub mod manager;
+pub mod tray;

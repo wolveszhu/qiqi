@@ -6,7 +6,7 @@
 
 import { ref } from "vue";
 
-import { callCommand } from "../../api/client";
+import { hide } from "../../api/window";
 import SideNav from "../../components/window/SideNav.vue";
 import TitleBar from "../../components/window/TitleBar.vue";
 import AffectionPanel from "./panels/AffectionPanel.vue";
@@ -20,12 +20,12 @@ type PanelKey = "avatar" | "llm" | "dnd" | "affection" | "memory";
 const active = ref<PanelKey>("avatar");
 
 /**
- * B1.4 临时关闭通道：✕ → Rust `window_hide("settings")`（关闭=hide，进程存活）。
- * 登记：C2/B5 落 `api/window.ts` 完整命令组后替换（避免提前动 capabilities）。
+ * ✕ → `window_hide("settings")`（关闭=hide，进程存活；B1.4 临时通道已由
+ * C2 的 `api/window.ts` 正式命令组转正）。
  */
 async function closeWindow(): Promise<void> {
   try {
-    await callCommand("window_hide", { target: "settings" });
+    await hide("settings");
   } catch (e) {
     console.error("[settings] 隐藏窗口失败", e);
   }

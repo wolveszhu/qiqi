@@ -19,14 +19,41 @@ pub mod state;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let shortcuts = tauri_plugin_global_shortcut::Builder::new()
+        // Ctrl+Shift+P：唤起对话输入（D1 消费 `window:chat:toggle`）
+        .with_shortcut("CommandOrControl+Shift+P")
+        .expect("注册快捷键 Ctrl+Shift+P 失败（可能与其他软件冲突）")
+        .with_handler(|app, _shortcut, event| {
+            if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                use tauri::Emitter as _;
+                let _ = app.emit("window:chat:toggle", ());
+            }
+        })
+        // Ctrl+Shift+H：窗口 A 显隐切换（C2.7）
+        .with_shortcut("CommandOrControl+Shift+H")
+        .expect("注册快捷键 Ctrl+Shift+H 失败（可能与其他软件冲突）")
+        .with_handler(|app, _shortcut, event| {
+            if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                toggle_main_window(app);
+            }
+        })
+        .build();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(shortcuts)
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .on_window_event(|window, event| {
             // B1.2 关闭=hide 拦截（策略与理由见 window/manager.rs 文档）：
             // A/B 均拦——桌宠常驻，退出统一走托盘（C2.6 app.exit）。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window::manager::hide_window(window);
+                // 隐藏时复位穿透（避免隐藏态残留"不穿透"，恢复显示时误判）
+                let _ = window::click_through::reset_to_passthrough(window);
             }
         })
         .setup(|app| {
@@ -39,13 +66,24 @@ pub fn run() {
                 .map_err(|e| error::AppError::Io(format!("解析 app_data_dir 失败: {e}")))?
                 .join("pet.db");
             let db::Db { conn } = db::init(&db_path)?;
-            app.manage(crate::state::AppState { db: conn });
+            app.manage(crate::state::AppState::new(conn));
+
+            // [C2] 桌面融合装配：托盘 + 探针单点轮询 + 穿透同步循环
+            window::tray::build_tray(app)?;
+            let handle = app.handle().clone();
+            probe::scheduler::start_cursor_probe(handle.clone());
+            start_click_through_sync(handle);
             Ok(())
         })
-        // [B5] 命令注册：window 组（B1 临时通道）→ C2 扩展；settings/pet/chat/memory 组本计划落位。
+        // [B5] 命令注册：settings/pet/chat/memory 组（B5）；window/probe 组（C2 全量）。
         // 应用自定义命令**免 capability 授权**（B2 勘误#1）。
         .invoke_handler(tauri::generate_handler![
             commands::window::window_hide,
+            commands::window::window_show,
+            commands::window::window_start_drag,
+            commands::window::window_set_ignore_cursor_events,
+            commands::window::window_set_hit_region,
+            commands::window::window_set_click_through_enabled,
             commands::settings::settings_get_typed,
             commands::settings::settings_save_typed,
             commands::pet::pet_get_state,
@@ -57,9 +95,44 @@ pub fn run() {
             commands::memory::memory_update_fact,
             commands::memory::memory_delete_fact,
             commands::memory::memory_regenerate_diary,
+            commands::probe::probe_get_cursor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// 穿透同步循环（C2.4）：独立线程按探针间隔驱动，复用 cursor 缓存与状态机。
+/// 与 cursor 探针**同一节奏**（100ms），零额外定时器。
+fn start_click_through_sync(app: tauri::AppHandle) {
+    use tauri::Manager as _;
+    std::thread::spawn(move || {
+        loop {
+            if let Some(window) = app.get_webview_window(window::manager::LABEL_MAIN) {
+                // 窗口隐藏时不做穿透切换（避免无谓系统调用）
+                if window.is_visible().unwrap_or(false) {
+                    let _ = window::click_through::sync_click_through(&app, &window);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(config::PROBE_INTERVAL_MS));
+        }
+    });
+}
+
+/// 快捷键处理：窗口 A 显隐切换。
+fn toggle_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager as _;
+    if let Some(window) = app.get_webview_window(window::manager::LABEL_MAIN) {
+        match window.is_visible() {
+            Ok(true) => {
+                let _ = window.hide();
+            },
+            Ok(false) => {
+                let _ = window.show();
+                let _ = window.set_focus();
+            },
+            Err(_) => {},
+        }
+    }
 }
 
 // TODO(B1): 窗口 B visible 开发期策略——C2.6 托盘到位后改 conf visible:false

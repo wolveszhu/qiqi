@@ -4,7 +4,7 @@
 //! TODO(C2): `drag.rs`（系统接管拖拽）、`click_through.rs`（穿透状态机）、
 //! `tray.rs`、`shortcut.rs` 落位后由本模块统一出口。
 
-use tauri::{WebviewWindow, Window};
+use tauri::Window;
 
 use crate::error::AppError;
 
@@ -16,12 +16,6 @@ pub const LABEL_SETTINGS: &str = "settings";
 /// 隐藏窗口（关闭=hide 策略的核心动作；错误映射 `AppError::Window`）。
 /// 参数为 `&Window`：`on_window_event` 传入的即 `&Window`。
 pub fn hide_window(window: &Window) -> Result<(), AppError> {
-    window.hide().map_err(|e| AppError::Window(e.to_string()))
-}
-
-/// WebviewWindow 路径的隐藏（命令层经 `get_webview_window` 取到的是 WebviewWindow；
-/// `on_window_event` 取到的是 Window——两个入口各一个函数，系统调用仍收敛在本域）。
-pub fn hide_webview_window(window: &WebviewWindow) -> Result<(), AppError> {
     window.hide().map_err(|e| AppError::Window(e.to_string()))
 }
 

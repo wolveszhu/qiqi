@@ -57,6 +57,12 @@ impl From<rusqlite_migration::Error> for AppError {
     }
 }
 
+impl From<tauri::Error> for AppError {
+    fn from(e: tauri::Error) -> Self {
+        Self::Window(format!("Tauri 调用失败: {e}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -104,3 +104,17 @@ export interface UpdatePetPayload {
   activeRenderer?: string;
   rendererConfig?: unknown;
 }
+
+/** 命中区域（窗口局部坐标，逻辑像素；与 Rust `state::HitRegion` 对齐）。 */
+export interface HitRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 鼠标坐标事件负载（probe:cursor:move，屏幕坐标）。 */
+export interface CursorPayload {
+  x: number;
+  y: number;
+}

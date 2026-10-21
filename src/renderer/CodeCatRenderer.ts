@@ -104,10 +104,8 @@ export class CodeCatRenderer implements IPetRenderer {
     }
   };
 
-  /** 开发期视线数据源：window 级 mousemove（B5 probe 事件接入后一行替换）。 */
-  private readonly onMouseMove = (ev: MouseEvent): void => {
-    this.lookAt(ev.clientX, ev.clientY);
-  };
+  // 视线数据源：`probe:cursor:move` 事件（C2 单点轮询）→ useSystemProbe → lookAt。
+  // 开发期的 window mousemove 直连已移除，避免双数据源。
 
   async mount(container: HTMLElement): Promise<void> {
     const app = new Application();
@@ -179,9 +177,8 @@ export class CodeCatRenderer implements IPetRenderer {
     this.hitRegion.width = rect.width;
     this.hitRegion.height = rect.height;
 
-    // ---- 单一 Ticker + 开发期数据源 ----
+    // ---- 单一 Ticker（视线数据源由外部事件驱动 lookAt，见类头注释） ----
     app.ticker.add(this.tick, this);
-    window.addEventListener("mousemove", this.onMouseMove);
   }
 
   playAction(name: PetAction): void {
@@ -253,7 +250,6 @@ export class CodeCatRenderer implements IPetRenderer {
   }
 
   dispose(): void {
-    window.removeEventListener("mousemove", this.onMouseMove);
     const app = this.app;
     this.app = null;
     this.petRoot = null;
