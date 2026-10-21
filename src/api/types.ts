@@ -98,6 +98,20 @@ export interface SaveTierPayload {
   modelCustom: string;
 }
 
+/** 服务商预设（C3：来自 Rust `config::PROVIDER_PRESETS`，经 IPC 下发——前端不复制列表）。 */
+export interface ProviderPreset {
+  id: string;
+  label: string;
+  baseUrl: string;
+  defaultModel: string;
+  required: boolean;
+  /** 成本档（展示用，不写死价格）。 */
+  costTier: string;
+}
+
+/** LLM 配置档位（C3 常量；与 `TierName` 白名单一致）。 */
+export type TierName = "main" | "memory" | "fallback";
+
 /** 更新桌宠资料的入参（好感度字段不接受修改——结算属 C5）。 */
 export interface UpdatePetPayload {
   petName?: string;

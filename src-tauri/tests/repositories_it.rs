@@ -159,5 +159,76 @@ fn case6_schema_matches_migration_chain() {
         assert!(exists, "列缺失: {}.{}", col.0, col.1);
     }
     let version: usize = chain().current_version(&conn).expect("版本").into();
-    assert_eq!(version, 2);
+    assert_eq!(version, 3, "M3（勘误 #7 tiered 迁移）应已注册");
+}
+
+// ---------- 用例 7（C3）：tiered 读写 / BYOK 校验 / 双格式兼容 ----------
+
+#[test]
+fn case7a_tiered_read_write_and_quota_roundtrip() {
+    let (_dir, conn) = fresh_conn();
+
+    // 种子即三档：main 默认 DeepSeek（勘误 #7 后的 M1 种子）
+    let main = app_settings::get_tier(&conn, "main").expect("读 main");
+    assert_eq!(main.base_url, "https://api.deepseek.com/v1");
+
+    // 保存 memory 档 → 读回一致；main 档不受影响
+    let mem = crate_tier("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-flash", "");
+    app_settings::save_tier(&conn, "memory", &mem).expect("保存 memory");
+    let back = app_settings::get_tier(&conn, "memory").expect("读 memory");
+    assert_eq!(back.model, "qwen-flash");
+    assert_eq!(
+        app_settings::get_tier(&conn, "main").expect("读 main").base_url,
+        "https://api.deepseek.com/v1",
+        "单档保存不应影响其他档"
+    );
+
+    // 额度模式往返
+    assert_eq!(app_settings::get_quota_mode(&conn).expect("读"), 1);
+    app_settings::set_quota_mode(&conn, 2).expect("设 BYOK");
+    assert_eq!(app_settings::get_quota_mode(&conn).expect("读"), 2);
+}
+
+#[test]
+fn case7b_byok_requires_main_key() {
+    let (_dir, conn) = fresh_conn();
+    // main 无 Key（种子为空）→ BYOK 前置校验失败
+    assert!(!app_settings::main_tier_has_key(&conn).expect("校验"), "种子无 Key");
+    // 配上 main Key 后校验通过
+    let with_key = crate_tier("https://api.deepseek.com/v1", "deepseek-chat", "sk-main");
+    app_settings::save_tier(&conn, "main", &with_key).expect("保存 main");
+    assert!(app_settings::main_tier_has_key(&conn).expect("校验"));
+}
+
+#[test]
+fn case7c_unknown_tier_rejected() {
+    let (_dir, conn) = fresh_conn();
+    assert!(app_settings::get_tier(&conn, "evil").is_err(), "未知档位应报错");
+    assert!(app_settings::save_tier(&conn, "evil", &crate_tier("", "", "")).is_err());
+}
+
+#[test]
+fn case7d_legacy_flat_value_still_readable() {
+    let (_dir, conn) = fresh_conn();
+    // 构造勘误 #7 前的旧库（M3 之前把 value 改回扁平 → 直接覆盖为扁平模拟旧数据）
+    conn.execute(
+        "UPDATE app_settings SET value = '{\"llm_base_url\":\"https://api.deepseek.com/v1\",\"llm_api_key\":\"sk-old\",\"llm_model\":\"deepseek-chat\",\"llm_model_custom\":\"\"}' WHERE type = 1",
+        [],
+    )
+    .expect("写回扁平");
+    // 双格式兼容：扁平整体视为 main 档
+    let main = app_settings::get_tier(&conn, "main").expect("兼容读取");
+    assert_eq!(main.base_url, "https://api.deepseek.com/v1");
+    assert_eq!(main.api_key, "sk-old");
+    assert!(app_settings::get_tier(&conn, "memory").expect("读").model.is_empty());
+}
+
+/// 构造单档配置（测试辅助）。
+fn crate_tier(base_url: &str, model: &str, api_key: &str) -> qiqi_lib::db::models::LlmTierValue {
+    qiqi_lib::db::models::LlmTierValue {
+        base_url: base_url.into(),
+        model: model.into(),
+        api_key: api_key.into(),
+        model_custom: String::new(),
+    }
 }

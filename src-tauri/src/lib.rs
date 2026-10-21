@@ -86,6 +86,8 @@ pub fn run() {
             commands::window::window_set_click_through_enabled,
             commands::settings::settings_get_typed,
             commands::settings::settings_save_typed,
+            commands::settings::settings_list_providers,
+            commands::settings::settings_set_quota_mode,
             commands::pet::pet_get_state,
             commands::pet::pet_update_state,
             commands::chat::chat_send_stream,

@@ -6,9 +6,12 @@
 
 use tauri::State;
 
+use crate::config::{
+    PROVIDER_PRESETS, QUOTA_MODE_BYOK, QUOTA_MODE_EMBEDDED, TIER_FALLBACK, TIER_MAIN, TIER_MEMORY,
+};
 use crate::db::models::{
-    DndValue, LegacyDndValue, LegacyFlatValue, LlmTierSettingsDto, LlmTierValue, SaveTierPayload,
-    SettingsDndValue, SettingsSnapshotDto, TieredValue,
+    DndValue, LegacyDndValue, LlmTierSettingsDto, LlmTierValue, ProviderPresetDto, SaveTierPayload,
+    SettingsDndValue, SettingsSnapshotDto,
 };
 use crate::db::repositories::app_settings;
 use crate::error::AppError;
@@ -26,12 +29,46 @@ impl TierName {
     /// 解析前端传入的档位名；非法值返回错误（薄层参数校验职责）。
     pub fn parse(raw: &str) -> Result<Self, AppError> {
         match raw {
-            "main" => Ok(Self::Main),
-            "memory" => Ok(Self::Memory),
-            "fallback" => Ok(Self::Fallback),
+            TIER_MAIN => Ok(Self::Main),
+            TIER_MEMORY => Ok(Self::Memory),
+            TIER_FALLBACK => Ok(Self::Fallback),
             other => Err(AppError::Config(format!("未知档位: {other}"))),
         }
     }
+}
+
+/// 服务商预设列表（C3：经 IPC 下发，**前端不复制列表**——单一真源防漂移）。
+///
+/// 回包**不含任何 Key 信息**（preset 本就是公开配置）。
+#[tauri::command]
+pub fn settings_list_providers() -> Vec<ProviderPresetDto> {
+    PROVIDER_PRESETS
+        .iter()
+        .map(|p| ProviderPresetDto {
+            id: p.id.into(),
+            label: p.label.into(),
+            base_url: p.base_url.into(),
+            default_model: p.default_model.into(),
+            required: p.required,
+            cost_tier: p.cost_tier.into(),
+        })
+        .collect()
+}
+
+/// 切换额度模式（1=内置额度 / 2=BYOK）。
+///
+/// BYOK 校验：main 档必须已配置 Key，否则 `AppError::Config`——
+/// 无主对话 Key 时切 BYOK 会导致对话全链路不可用（父计划选型方案约束）。
+#[tauri::command]
+pub fn settings_set_quota_mode(mode: i64, state: State<'_, AppState>) -> Result<(), AppError> {
+    if mode != QUOTA_MODE_EMBEDDED && mode != QUOTA_MODE_BYOK {
+        return Err(AppError::Config(format!("未知额度模式: {mode}")));
+    }
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    if mode == QUOTA_MODE_BYOK && !app_settings::main_tier_has_key(&conn)? {
+        return Err(AppError::Config("切换自带 Key 前请先配置主对话档（main）的 API Key".into()));
+    }
+    app_settings::set_quota_mode(&conn, mode)
 }
 
 /// 读取设置快照（Key 脱敏回传）。
@@ -40,11 +77,10 @@ pub fn settings_get_typed(state: State<'_, AppState>) -> Result<SettingsSnapshot
     // 锁的生命周期：单次获取、用完即释（禁嵌套，防死锁）
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
 
-    let llm_row = app_settings::get_row(&conn, 1)?;
     let dnd_row = app_settings::get_row(&conn, 2)?;
     let quota_mode = app_settings::get_quota_mode(&conn)?;
 
-    let tiered = parse_tiered(llm_row.as_ref().and_then(|r| r.value.as_deref()))?;
+    let tiered = app_settings::get_tiered(&conn)?;
     let dnd = parse_dnd(dnd_row.as_ref().and_then(|r| r.value.as_deref()))?;
 
     Ok(SettingsSnapshotDto {
@@ -63,59 +99,25 @@ pub fn settings_save_typed(
     payload: SaveTierPayload,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let tier_name = TierName::parse(&tier)?;
+    // 档位合法性校验（与仓储白名单同一常量；错误口径一致）
+    TierName::parse(&tier)?;
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
 
-    let existing = app_settings::get_row(&conn, 1)?;
-    let mut tiered = parse_tiered(existing.as_ref().and_then(|r| r.value.as_deref()))?;
-
-    let target = match tier_name {
-        TierName::Main => &mut tiered.main,
-        TierName::Memory => &mut tiered.memory,
-        TierName::Fallback => &mut tiered.fallback,
-    };
-    target.base_url = payload.base_url;
-    target.model = payload.model;
-    target.model_custom = payload.model_custom;
+    // 读-改-写经仓储单点（tiered 解析/双格式兼容只存在于仓储层）
+    let mut current = app_settings::get_tier(&conn, &tier)?;
+    current.base_url = payload.base_url;
+    current.model = payload.model;
+    current.model_custom = payload.model_custom;
     // Key 仅在用户实际输入新值时覆盖；空串视为"不改动"
     match payload.api_key {
-        Some(key) if !key.is_empty() => target.api_key = key,
+        Some(key) if !key.is_empty() => current.api_key = key,
         _ => {},
     }
-
-    let json = serde_json::to_string(&tiered)?;
-    app_settings::upsert_value(&conn, 1, &json)
-}
-
-/// 读取 type=1 的 value：优先三档结构，回落旧扁平格式（M1 种子兼容）。
-fn parse_tiered(raw: Option<&str>) -> Result<TieredValue, AppError> {
-    let Some(raw) = raw else {
-        return Ok(TieredValue::default());
-    };
-    // 先判定结构再解析：TieredValue 各字段带 `#[serde(default)]`，
-    // 若直接尝试解析，旧扁平 JSON 会被误判为"三档全空"（单测实测坑）。
-    let value: serde_json::Value = serde_json::from_str(raw)?;
-    if value.get("main").is_some()
-        || value.get("memory").is_some()
-        || value.get("fallback").is_some()
-    {
-        return Ok(serde_json::from_value::<TieredValue>(value)?);
-    }
-    // 旧格式（扁平单档）：映射为 main 档，其余为空
-    let legacy: LegacyFlatValue = serde_json::from_value(value)
-        .map_err(|e| AppError::Config(format!("app_settings(type=1) 格式无法识别: {e}")))?;
-    Ok(TieredValue {
-        main: LlmTierValue {
-            base_url: legacy.llm_base_url,
-            model: legacy.llm_model,
-            api_key: legacy.llm_api_key,
-            model_custom: legacy.llm_model_custom,
-        },
-        ..Default::default()
-    })
+    app_settings::save_tier(&conn, &tier, &current)
 }
 
 /// 读取勿扰配置：优先 `{"dnd":{...}}`，回落旧单段格式。
+/// （type=1 的 tiered 解析已下沉至仓储层 `app_settings::get_tiered`，勿留双实现。）
 fn parse_dnd(raw: Option<&str>) -> Result<DndValue, AppError> {
     let Some(raw) = raw else {
         return Ok(DndValue::default());
@@ -165,9 +167,9 @@ mod tests {
 
     #[test]
     fn tier_name_parses_known_values() {
-        assert_eq!(TierName::parse("main").expect("解析"), TierName::Main);
-        assert_eq!(TierName::parse("memory").expect("解析"), TierName::Memory);
-        assert_eq!(TierName::parse("fallback").expect("解析"), TierName::Fallback);
+        assert_eq!(TierName::parse(TIER_MAIN).expect("解析"), TierName::Main);
+        assert_eq!(TierName::parse(TIER_MEMORY).expect("解析"), TierName::Memory);
+        assert_eq!(TierName::parse(TIER_FALLBACK).expect("解析"), TierName::Fallback);
         assert!(TierName::parse("other").is_err(), "非法档位应报错");
     }
 
@@ -195,20 +197,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_tiered_falls_back_to_legacy_flat() {
-        let legacy = r#"{"llm_base_url":"https://api.openai.com/v1","llm_api_key":"sk-x","llm_model":"gpt-4o-mini","llm_model_custom":""}"#;
-        let tiered = parse_tiered(Some(legacy)).expect("兼容解析");
-        assert_eq!(tiered.main.base_url, "https://api.openai.com/v1");
-        assert_eq!(tiered.main.api_key, "sk-x");
-        assert!(tiered.memory.model.is_empty(), "旧格式其余档为空");
-    }
-
-    #[test]
     fn parse_dnd_falls_back_to_legacy_single_range() {
         let legacy = r#"{"dnd_enabled":true,"dnd_start_time":"09:00","dnd_end_time":"18:00"}"#;
         let dnd = parse_dnd(Some(legacy)).expect("兼容解析");
         assert!(dnd.enabled);
         assert_eq!(dnd.ranges.len(), 1);
         assert_eq!(dnd.ranges[0].start, "09:00");
+    }
+
+    #[test]
+    fn providers_dto_carries_no_key_material() {
+        // C3 红线：preset 经 IPC 下发但不含任何 Key 信息
+        let json = serde_json::to_string(&settings_list_providers()).expect("序列化");
+        assert!(!json.contains("apiKey"), "preset 不应含 Key 字段: {json}");
+        assert!(!json.contains("api_key"), "preset 不应含 Key 字段: {json}");
     }
 }

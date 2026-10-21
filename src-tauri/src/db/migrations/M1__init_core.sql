@@ -80,7 +80,7 @@ INSERT INTO pet_states (id)
 SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM pet_states WHERE id = 1);
 
 INSERT INTO app_settings (type, value)
-SELECT 1, '{"llm_base_url":"https://api.openai.com/v1","llm_api_key":"","llm_model":"gpt-4o-mini","llm_model_custom":""}'
+SELECT 1, '{"main":{"baseUrl":"https://api.deepseek.com/v1","model":"deepseek-chat","apiKey":"","modelCustom":""},"memory":{"baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","model":"qwen-flash","apiKey":"","modelCustom":""},"fallback":{"baseUrl":"https://open.bigmodel.cn/api/paas/v4","model":"glm-4-flash","apiKey":"","modelCustom":""}}'
 WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE type = 1);
 
 INSERT INTO app_settings (type, value)

@@ -9,7 +9,12 @@
  */
 
 import { callCommand } from "./client";
-import type { SaveTierPayload, SettingsSnapshot } from "./types";
+import type {
+  ProviderPreset,
+  SaveTierPayload,
+  SettingsSnapshot,
+  TierName,
+} from "./types";
 
 /** 读取设置快照（回包含 hasKey 与末 4 位指纹，绝无明文 Key）。 */
 export async function getTyped(): Promise<SettingsSnapshot> {
@@ -17,9 +22,16 @@ export async function getTyped(): Promise<SettingsSnapshot> {
 }
 
 /** 保存单档配置（main / memory / fallback）。 */
-export async function saveTyped(
-  tier: "main" | "memory" | "fallback",
-  payload: SaveTierPayload,
-): Promise<void> {
+export async function saveTyped(tier: TierName, payload: SaveTierPayload): Promise<void> {
   await callCommand("settings_save_typed", { tier, payload });
+}
+
+/** 服务商预设列表（C3：Rust 单一真源经 IPC 下发，禁止前端硬编码 URL）。 */
+export async function listProviders(): Promise<ProviderPreset[]> {
+  return callCommand<ProviderPreset[]>("settings_list_providers");
+}
+
+/** 切换额度模式（1=内置额度 / 2=BYOK；BYOK 需 main 档已配 Key，否则报 Config 错误）。 */
+export async function setQuotaMode(mode: 1 | 2): Promise<void> {
+  await callCommand("settings_set_quota_mode", { mode });
 }

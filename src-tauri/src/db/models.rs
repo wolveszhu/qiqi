@@ -191,6 +191,20 @@ pub struct SaveTierPayload {
     pub model_custom: String,
 }
 
+/// 服务商预设（C3；经 IPC 下发，前端不复制列表）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderPresetDto {
+    pub id: String,
+    pub label: String,
+    pub base_url: String,
+    /// 默认预填模型（可改；`modelCustom` 兜底）。
+    pub default_model: String,
+    pub required: bool,
+    /// 成本档（展示用，不写死价格）。
+    pub cost_tier: String,
+}
+
 /// 更新桌宠资料（好感度字段不接受修改——结算属 C5）。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

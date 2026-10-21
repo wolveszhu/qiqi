@@ -63,9 +63,9 @@ fn case1_empty_db_migrates_full_chain() {
         assert!(exists, "索引缺失: {index}");
     }
 
-    // user_version == 2（M1+M2）
+    // user_version == 3（M1+M2+M3；M3 为勘误 #7 数据迁移）
     let version: usize = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).expect("版本");
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 
     // 种子：pet_states 仅 id=1 一行
     let pet_count: i64 =
@@ -79,6 +79,14 @@ fn case1_empty_db_migrates_full_chain() {
             .expect("settings 行");
         serde_json::from_str::<serde_json::Value>(&value).expect("value 应可 JSON 解析");
     }
+    // 勘误 #7：type=1 种子应为三档 tiered 结构（新库直接匹配 B5 DTO）
+    let tiered: String = conn
+        .query_row("SELECT value FROM app_settings WHERE type = 1", [], |row| row.get(0))
+        .expect("settings 行");
+    let parsed: serde_json::Value = serde_json::from_str(&tiered).expect("JSON 解析");
+    assert!(parsed.get("main").is_some(), "种子应含 main 档: {tiered}");
+    assert!(parsed.get("memory").is_some(), "种子应含 memory 档: {tiered}");
+    assert!(parsed.get("fallback").is_some(), "种子应含 fallback 档: {tiered}");
     let settings_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM app_settings", [], |row| row.get(0)).expect("查询");
     assert_eq!(settings_count, 2);
@@ -145,7 +153,7 @@ fn case3b_db_version_below_target_backs_up_then_migrates() {
     let conn = db.conn.lock().expect("锁");
     assert!(db_path.with_extension("db.bak").exists(), "应产生备份");
     let version: usize = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).expect("版本");
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
     let name: String = conn
         .query_row("SELECT pet_name FROM pet_states WHERE id = 1", [], |row| row.get(0))
         .expect("数据");
@@ -267,8 +275,55 @@ fn case7_constraints() {
     assert!(dup.is_err(), "diary_date 重复应报 UNIQUE");
 }
 
-// ---------- 用例 8：密钥不匹配/文件损坏 → 隔离而非崩溃 ----------
+// ---------- 用例 9：勘误 #7 M3 数据迁移（扁平 → 三档，含幂等） ----------
 
+#[test]
+fn case9_m3_migrates_legacy_flat_settings_to_tiered() {
+    register_vec_extension().expect("vec 注册");
+    let dir = tempfile::tempdir().expect("临时目录");
+    let db_path = dir.path().join("pet.db");
+
+    // 1) 构造"勘误 #7 前的旧库"：迁移到 v2 后把 type=1 value 改回扁平结构
+    {
+        let mut conn = Connection::open(&db_path).expect("打开");
+        conn.execute_batch(&format!("PRAGMA key = \"x'{TEST_KEY}'\";")).expect("密钥");
+        qiqi_lib::db::migrations::chain().to_version(&mut conn, 2).expect("迁移到 v2");
+        conn.execute(
+            "UPDATE app_settings SET value = '{\"llm_base_url\":\"https://api.deepseek.com/v1\",\"llm_api_key\":\"sk-legacy\",\"llm_model\":\"deepseek-chat\",\"llm_model_custom\":\"\"}' WHERE type = 1",
+            [],
+        )
+        .expect("写回扁平结构");
+    }
+
+    // 2) 正式初始化：M3 应把扁平结构升级为三档，且 main 档保留存量配置
+    // （锁的借用限制在块内，使后续 drop(db) 合法——E0505 实测坑）
+    let value: String = {
+        let db = init_with_key(&db_path, TEST_KEY).expect("初始化");
+        let conn = db.conn.lock().expect("锁");
+        let value: String = conn
+            .query_row("SELECT value FROM app_settings WHERE type = 1", [], |row| row.get(0))
+            .expect("settings 行");
+        let parsed: serde_json::Value = serde_json::from_str(&value).expect("JSON 解析");
+        assert_eq!(parsed["main"]["baseUrl"], "https://api.deepseek.com/v1");
+        assert_eq!(parsed["main"]["apiKey"], "sk-legacy", "存量 Key 不得丢失");
+        assert_eq!(parsed["main"]["model"], "deepseek-chat");
+        assert!(parsed.get("memory").is_some(), "memory 档应已建");
+        assert!(parsed.get("fallback").is_some(), "fallback 档应已建");
+        value
+    }; // db 与锁在此释放
+
+    // 3) 幂等：再次初始化不重复改写（main 档配置保持）
+    let db2 = init_with_key(&db_path, TEST_KEY).expect("二次初始化");
+    let value2: String = {
+        let conn2 = db2.conn.lock().expect("锁");
+        conn2
+            .query_row("SELECT value FROM app_settings WHERE type = 1", [], |row| row.get(0))
+            .expect("settings 行")
+    };
+    assert_eq!(value2, value, "M3 应幂等（重复执行无副作用）");
+}
+
+// ---------- 用例 8：密钥不匹配/文件损坏 → 隔离而非崩溃 ----------
 #[test]
 fn case8_undecryptable_db_is_quarantined() {
     register_vec_extension().expect("vec 注册");

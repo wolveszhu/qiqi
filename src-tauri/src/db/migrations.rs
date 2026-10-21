@@ -15,9 +15,9 @@ use crate::config::EMBEDDING_DIM;
 
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1；`connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 2;
+pub const TARGET_VERSION: usize = 3;
 
-/// 应用支持的迁移链（当前：M1 + M2）。
+/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -38,6 +38,9 @@ pub fn chain() -> Migrations<'static> {
         // M2：vec0 虚拟表；维度必须与 config::EMBEDDING_DIM 单点一致（勘误#6）——
         // 由代码渲染而非 SQL 文件，杜绝两处维度定义漂移。
         M::up(m2_sql),
+        // M3：勘误 #7 数据迁移（app_settings 扁平结构 → 三档 tiered）；
+        // 仅影响勘误 #7 前创建的旧库，新库种子已正确（迁移内幂等）。
+        M::up(include_str!("migrations/M3__llm_tiers.sql")),
     ])
 }
 
