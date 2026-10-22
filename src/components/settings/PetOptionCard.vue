@@ -56,8 +56,8 @@ const emit = defineEmits<{ (e: "select"): void }>();
   cursor: pointer;
   text-align: left;
   transition:
-    border-color 160ms ease,
-    background 160ms ease;
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .pet-opt:hover:not(.is-disabled) {
   border-color: var(--matcha);

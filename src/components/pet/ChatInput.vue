@@ -109,8 +109,8 @@ function submit(): void {
 .slide-up-enter-active,
 .slide-up-leave-active {
   transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .slide-up-enter-from,
 .slide-up-leave-to {

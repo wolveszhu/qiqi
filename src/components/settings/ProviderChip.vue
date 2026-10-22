@@ -72,8 +72,8 @@ function costLabel(t: string): string {
   font-weight: 700;
   color: var(--ink);
   transition:
-    background 160ms ease,
-    border-color 160ms ease,
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
     color 160ms ease;
 }
 .p-chip:hover {

@@ -63,8 +63,8 @@ const queue = useToastQueue();
 .toast-enter-active,
 .toast-leave-active {
   transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 .toast-enter-from,
 .toast-leave-to {

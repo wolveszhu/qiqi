@@ -111,7 +111,7 @@ const style = computed(() => ({
 /* 进入/离开过渡（轻量，不影响逐字打字机） */
 .bubble-enter-active,
 .bubble-leave-active {
-  transition: opacity 0.18s ease;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 .bubble-enter-from,
 .bubble-leave-to {

@@ -41,8 +41,14 @@ export const proactiveBubble = reactive<{ text: string; isStreaming: boolean }>(
 const TYPEWRITER_STEP_MS = 40;
 /** 每步出字数（长句加速，保证 <8s 完整展示）。 */
 const TYPEWRITER_CHUNK = 2;
-/** 气泡自动消失时长（毫秒）。 */
-const BUBBLE_TTL_MS = 8_000;
+/** 气泡自动消失时长（毫秒）：按字数（min 2s / +0.05s·字，上限 12s）；禁忌/傲娇情绪话术停留加长 1.5×（E3.3）。 */
+function bubbleTtlMs(text: string, mood: string): number {
+  const chars = [...text].length;
+  const base = Math.min(12_000, Math.max(2_000, 2_000 + chars * 50));
+  if (mood === "angry" || mood === "tsundere")
+    return Math.min(12_000, Math.round(base * 1.5));
+  return base;
+}
 
 const unlisteners: UnlistenFn[] = [];
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -141,10 +147,13 @@ function showBubble(p: ProactiveShowPayload): void {
     if (i >= full.length) {
       stopTypewriter();
       proactiveBubble.isStreaming = false;
-      ttlTimer = setTimeout((): void => {
-        proactiveBubble.text = "";
-        ttlTimer = null;
-      }, BUBBLE_TTL_MS);
+      ttlTimer = setTimeout(
+        (): void => {
+          proactiveBubble.text = "";
+          ttlTimer = null;
+        },
+        bubbleTtlMs(full, p.mood),
+      );
       return;
     }
     proactiveBubble.text += full.slice(i, i + TYPEWRITER_CHUNK);

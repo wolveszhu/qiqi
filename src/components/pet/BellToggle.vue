@@ -61,8 +61,8 @@ function onPress(): void {
   cursor: pointer;
   box-shadow: 0 1px 4px var(--shadow-soft);
   transition:
-    transform 0.12s ease,
-    color 0.15s ease;
+    transform var(--dur-instant) var(--ease-out),
+    color var(--dur-instant) var(--ease-out);
 }
 .bell:hover {
   transform: scale(1.08);

@@ -49,7 +49,7 @@ const emit = defineEmits<{ (e: "update:modelValue", value: boolean): void }>();
   background: var(--line);
   padding: 3px;
   cursor: pointer;
-  transition: background 200ms cubic-bezier(0.3, 1.4, 0.5, 1);
+  transition: background var(--dur-fast) var(--ease-spring);
 }
 
 .app-toggle__track.is-on {
@@ -62,7 +62,7 @@ const emit = defineEmits<{ (e: "update:modelValue", value: boolean): void }>();
   height: 20px;
   border-radius: 50%;
   background: var(--bg-window);
-  transition: transform 200ms cubic-bezier(0.3, 1.4, 0.5, 1);
+  transition: transform var(--dur-fast) var(--ease-spring);
 }
 
 .app-toggle__track.is-on .app-toggle__thumb {

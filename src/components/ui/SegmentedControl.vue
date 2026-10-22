@@ -73,8 +73,8 @@ function select(value: T): void {
   color: var(--ink-soft);
   font-family: var(--font-body);
   transition:
-    background 160ms var(--ease-out, ease),
-    color 160ms ease;
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .seg--small .seg__item {
   min-width: 56px;

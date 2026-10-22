@@ -32,6 +32,6 @@ defineProps<{ ratio: number }>();
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--butter), var(--peach));
-  transition: width 400ms var(--ease-out, ease);
+  transition: width var(--dur-slow) var(--ease-out);
 }
 </style>
