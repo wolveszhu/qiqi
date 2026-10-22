@@ -59,12 +59,59 @@
 
 ## 登记项裁决清单（E1b.5，三选一：本阶段做 / 转 F4 / 转 E3-Phase2）
 
-| 登记项 | 来源 | 建议 |
+| 登记项 | 来源 | 裁决（三选一结论） |
 | :--- | :--- | :--- |
 | idle 长离开即时补日记 | C7 | **转 Phase 2**（启动补漏已覆盖主场景） |
 | 全屏检测降频 | D4/C6 | **转 Phase 2**（进程名名单已覆盖主场景） |
 | 日记口吻/mood 映射调优 | C7/D3 | **转 E3** |
 | 双格式兼容读取清理 | C3/C7 | **转 F4**（发布前清理） |
+
+---
+
+## 八、执行结果（2026-10-22）
+
+### E1b.1 增量事件/命令核对（全过）
+
+- `affection:changed`（禁忌变体）：`chat.rs` 结算 `Taboo(delta)` → emit `{delta, newPoints, newLevel, mood:"angry"}` → 窗口 A 表情 / 窗口 B 看板流水。
+- `proactive:show`（禁忌话术变体）：emit `{sessionId, text: emotion_hint, mood:"angry"}`；`parse_taboo` 经 `strip_digits` 兜底，**数字红线零泄漏**（冷眼三问①）。
+- `settings:dnd:changed`：BellToggle / DndPanel 双发，A/B 双订阅（E1a 已闭环）。
+- D4 三命令 + `memory_*` 六命令：全部注册 `lib.rs`，前端 `api/memory.ts` 封装齐备，`MemoryPanel.vue` 已挂载于 `SettingsWindow`（M3 满足）。
+
+### E1b.2–E1b.4 剧本走查（代码态全过）
+
+- S1 日记：手动 regenerate（upsert 覆盖）/ 定时(00:05) / 启动补漏(近 7 天) 链路齐备；卡片 mood 徽标（0/1/2）+ 日期锚点导航已接线。
+- S2 禁忌：扣分入账（taboo_violation）→ 窗口 A 情绪话术（无数字）+ angry；正常对话不误伤（宁漏勿误）。
+- S3 记忆修正：`update`/`delete`/`add` 同事务写 facts+vec_memory；`MemoryPanel` 乐观更新+失败回滚，编辑后重读 → 对话召回随之变（M3 核心）。
+- S4 D4 组合：铃铛勿扰 ↔ DndPanel/C6 三方同步；吸附休眠 + 对话/主动组合；穿透不被休眠破坏（E1a 勘误 #15）。
+
+### E1b.5 竞态 5 项（全过）
+
+1. 日记 vs 对话 → `AppState.db` Mutex 串行；2. 禁忌 vs chat done → 各自独立流水；3. 编辑 embed 回滚 vs KNN → 同事务无中间态；4. regenerate 双击 → `regeneratingDate` 防重；5. **休眠期 `proactive:show` 策略裁决**：吸附休眠仅跳过 `useProactive` 引擎主动生成，禁忌/对话触发的 `proactive:show` 仍展示（用户交互中），0.6 alpha 下可见无冲突（非缺陷）。
+
+### 冷眼三问
+
+- ① 禁忌话术无数字：`strip_digits` 兜底 ✅；② 向量/facts 四写路径（增/删/改/重建）同事务：`add_fact_with_embedding` 原为顺序写 → **已强化为同事务**（`13e1f30 fix(memory)`）✅；③ dnd 双窗口双方向闭环 ✅。
+
+### 门禁（全绿）
+
+- `cargo test`：lib 65 + 集成 4/8/10/10 全过；`cargo check --lib` 0。
+- 前端：`vue-tsc --noEmit` / `eslint .` / `prettier --check .` / `vitest run`（48 项）全 0。
+- husky（eslint + prettier）提交门禁通过；`.gitignore` 覆盖 `*.db`/备份（预检通过，工作区无库文件入库）。
+
+### 缺陷清单（`.codebuddy/plans/E1b-联调问题清单.md`）
+
+- P0=0、P1=0；P2：闭环 1（E1b-001 增路径同事务）+ 结转 3（E1a-003/004/005）。
+
+### 提交
+
+- `13e1f30 fix(memory): C7 新增事实路径纳入同事务，闭合向量/facts 写一致性（冷眼三问②）`
+- 文档回写（父计划 E1b 行 ✅ + 本计划 §八 + 问题清单）随后续 docs 提交
+
+### DoD 收口状态
+
+- 增量事件/命令核对全过并回填；剧本 S1–S4 + 组合无阻断；竞态 5 项全过且休眠期策略已裁决；M3 验收 4 条全 ✅。
+- **E2（性能与隐私实测）可衔接**。
+
 
 ---
 
