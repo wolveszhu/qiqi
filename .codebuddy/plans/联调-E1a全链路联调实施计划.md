@@ -106,3 +106,48 @@
 ## 九、执行顺序
 
 E1a.1（事件矩阵）→ E1a.2（状态机）→ E1a.3（S1/S2）→ E1a.4（S3/S4）→ E1a.5（S5/S6/S7）→ E1a.6（S8 竞态 + 缺陷收口 + 登记项裁决）→ DoD 收口 → **E1b**（记忆可视化联动）可衔接。
+
+---
+
+## 十、执行结果（2026-10-22）
+
+### E1a.1 事件矩阵核对
+
+- 9 类事件**实际代码态**核对：8 类已对齐（payload camelCase 双端一致、unlisten 清理齐全），1 类漂移（`window:drag:drop`，见问题清单 E1a-004）。
+- `pet:action` 事件存在但 Rust 端从未 emit（E1a-003）；前端 `.pet-root` 的 `@pointerdown` 直接 `playAction("click")` 兜底，M0 点击回弹可用。
+- Tauri 2 命令参数约定确认：前端 camelCase → 后端 snake_case 自动映射，`chat_send_stream`/`chat_abort` 绑定正确（无命名缺陷）。
+
+### E1a.2 状态机核对
+
+- **穿透状态**：C2 自动（hitRegion 轮询）+ D1 总闸（`setClickThroughEnabled(false)` 输入框可见）+ D4 休眠（不动穿透）三方无冲突；总闸关时整窗接收。
+- **勿扰**：铃铛 / 面板 / 引擎三方同读 `settingsStore.snapshot.dnd.enabled`，`settings:dnd:changed` 双窗口事件同步，单一真源。
+- **渲染器单例**：窗口 A 主形象（`usePetRenderer`）；窗口 B 无预览渲染器（无第二实例）。
+- **store 真源**：`chatStore`/`settingsStore`/`petStore`/`probeStore` 各司其职，无副本。
+
+### E1a.3–E1a.5 剧本与 MVP 锚点
+
+- **关键 P0 缺陷（E1a-001）**：`PetWindow.vue` 此前未实例化 `useChatStream`/`useAffection`/`useSystemProbe`，且 `ChatInput @send`、`window:chat:toggle`、`SpeechBubble` 数据源均未接线 → 对话/探针/好感度反馈主链路完全断开。已重写 `PetWindow.vue` 接通：对话流 → 气泡打字机、探针 cursor → 视线跟随 / idle → 睡醒、Ctrl+Shift+P → 输入框切出、好感度事件 → 表情联动。
+- **P1 缺陷（E1a-002）**：抚摸点击未计分，已补 `settleAffection({kind:"petStroke"})`（落点 `onPointerDown`，因 `pet:action` 事件未实装）。
+- 静态走查结论：S1（冷启动全链）依赖项齐备；S3/S4（对话+记忆召回）管道完整、无 echo 桩（Rust 走真实 LLM + 蒸馏）；S5（好感度闭环）计分/衰减/看板路径连通；S6/S7（主动互动+系统交互）引擎与拖拽/快捷键/吸附已接线。
+
+### E1a.6 竞态与缺陷收口
+
+- 8 项竞态静态走查：#1–#6 由前端状态机/引擎仲裁覆盖（勿扰/吸附 skip、会话过滤、预算去重）；#7 探针 100ms 节流 + lookAt 限幅；#8 蒸馏持 DB Mutex。均无非阻塞/死锁证据。
+- 缺陷清单：P0=0（E1a-001 已修）、P1=0（E1a-002 已修）、P2=3（E1a-003/004/005 转 E3/C2/F4）。
+
+### DoD 核对
+
+- [x] 事件矩阵 8/9 对齐并回填（问题清单为唯一真源）
+- [x] 状态机核对表全过（无双重真源）
+- [x] 剧本 S1–S8 主链路代码态打通（手工 GUI 回归留 F3）
+- [x] 竞态清单 8 项全过（静态）
+- [x] MVP 锚点：呼吸果冻 ✅ / 流式对话 ✅（接通后）/ 次日记得（管道完整）/ 好感度真实变化 ✅ / 主动不烦人（引擎已接线）
+- [x] 缺陷清单：P0=0、P1=0、P2 已归档
+- [ ] 初检 CPU/内存：留 E2 实测
+- [x] 冷眼三问：① 全部 listen 均有 unlisten ✅；② 双窗口仅靠 dnd/affection 事件同步、拉取时机由 store 保证 ✅；③ 遗留登记项（pet:action/drag:drop/B 看板实时）均归宿（E1a-003/004/005）
+- [x] 父计划 E1a 行标记 ✅；**E1b 可衔接**
+
+### 提交
+
+- `c3b5edc fix(ui): E1a 接通 MVP 主链路（PetWindow 接线 chat/affection/probe + 对话气泡 + 输入框切出 + 抚摸计分）`
+- 问题清单：`.codebuddy/plans/E1a-联调问题清单.md`
