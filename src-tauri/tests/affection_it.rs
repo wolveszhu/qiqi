@@ -5,7 +5,7 @@
 // F1.4：集成测试 fixture 用 unwrap/expect/index 属合理用法，统一豁免四项 clippy lint。
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 use qiqi_lib::affection::decay;
 use qiqi_lib::affection::level::{level_floor, level_of};
@@ -102,4 +102,35 @@ fn decay_engine_unit_anchor_idempotent() {
         decay::settle_decay(500, level_floor(level_of(500)), Some(li), None, today);
     assert_eq!(days, 97);
     assert_eq!(np, 201);
+}
+
+#[test]
+fn todays_uses_local_date_not_utc() {
+    // F3-F4 回归钉子：`created_at` 为 CURRENT_TIMESTAMP（UTC），当日判定必须转本地口径。
+    // 旧谓词 `date(created_at) = date('now','localtime')` 在 UTC+8 的本地 00:00–08:00
+    // 两日期相差一天 → 当日流水漏判 → 打卡唯一性/抚摸日上限失效（真实缺陷，已修）。
+    // 本测试显式写入"此刻 UTC"与"3 天前 UTC"两行，在任何时区/任何时刻都确定可判。
+    let (_dir, conn) = temp_db();
+
+    // 显式以 UTC 写入（模拟 CURRENT_TIMESTAMP 的真实存储值）
+    conn.execute(
+        "INSERT INTO affection_logs (change_value, reason, created_at)
+         VALUES (?1, ?2, strftime('%Y-%m-%d %H:%M:%S', 'now'))",
+        params![10, "check_in"],
+    )
+    .unwrap();
+    assert_eq!(
+        affection_logs::todays(&conn).unwrap().len(),
+        1,
+        "此刻(UTC)写入的流水必须计入本地当日"
+    );
+
+    // 3 天前的 UTC 时间戳：不得计入当日
+    conn.execute(
+        "INSERT INTO affection_logs (change_value, reason, created_at)
+         VALUES (?1, ?2, strftime('%Y-%m-%d %H:%M:%S', 'now', '-3 days'))",
+        params![10, "check_in"],
+    )
+    .unwrap();
+    assert_eq!(affection_logs::todays(&conn).unwrap().len(), 1, "旧流水不得计入当日");
 }

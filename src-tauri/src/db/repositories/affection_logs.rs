@@ -21,12 +21,18 @@ pub fn insert(conn: &Connection, change_value: i64, reason: &str) -> Result<(), 
 ///
 /// 与 `affection::settle_signal` 使用的 `today_str()` 同为本地日期口径
 /// （SQLite `date('now','localtime')`），跨时区一致。
+///
+/// ⚠️ `created_at` 默认值为 `CURRENT_TIMESTAMP`（**UTC**），故左值必须先
+/// `,'localtime'` 转本地再与本地今日比较——否则 UTC+8 用户在本地 00:00–08:00
+/// 两日期相差一天，当日流水漏判 → 打卡唯一性与抚摸日上限失效（F3-F4 回归缺陷，
+/// 见 `tests/affection_it.rs::todays_uses_local_date_not_utc` 钉子）。
+/// 同口径约定见 `messages::by_date`（注释已明示 UTC 存储 + localtime 过滤）。
 pub fn todays(conn: &Connection) -> Result<Vec<AffectionLogRow>, AppError> {
     let mut stmt = conn
         .prepare(
             "SELECT id, change_value, reason, created_at
              FROM affection_logs
-             WHERE date(created_at) = date('now','localtime')",
+             WHERE date(created_at, 'localtime') = date('now','localtime')",
         )
         .map_err(AppError::from)?;
     let rows = stmt
