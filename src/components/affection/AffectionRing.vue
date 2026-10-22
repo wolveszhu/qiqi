@@ -5,10 +5,12 @@
  */
 import { computed } from "vue";
 
+import { AFFECTION_MAX, ringAngle } from "../../utils/affection";
+
 const props = defineProps<{ points: number }>();
 
-const pct = computed(() => Math.max(0, Math.min(1000, props.points)) / 1000);
-const angle = computed(() => pct.value * 360);
+// 进度/角度计算抽纯函数（utils/affection；边界由 F2.2 单测固化）
+const angle = computed(() => ringAngle(props.points));
 </script>
 
 <template>
@@ -18,7 +20,7 @@ const angle = computed(() => pct.value * 360);
       background: `conic-gradient(var(--peach) ${angle}deg, #EDE2CB ${angle}deg 360deg)`,
     }"
     role="img"
-    :aria-label="`好感度 ${points} / 1000`"
+    :aria-label="`好感度 ${points} / ${AFFECTION_MAX}`"
   >
     <div class="aff-ring__inner">
       <span class="aff-ring__num">{{ points }}</span>

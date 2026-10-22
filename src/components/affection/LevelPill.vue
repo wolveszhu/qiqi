@@ -5,12 +5,12 @@
  */
 import { computed } from "vue";
 
+import { levelLabel } from "../../utils/affection";
+
 const props = defineProps<{ level: number }>();
 
-// baseline §F 等级命名（1–4）；未知等级回退 "Lv.N"。
-const NAME = ["", "陌生", "熟人", "亲密", "羁绊"];
-
-const name = computed(() => NAME[props.level] ?? `Lv.${props.level}`);
+// 等级文案单一真源（utils/affection；未知等级回退 "Lv.N"）
+const name = computed(() => levelLabel(props.level));
 </script>
 
 <template>

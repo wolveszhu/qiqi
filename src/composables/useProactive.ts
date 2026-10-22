@@ -26,8 +26,9 @@ import {
 import { applyPetState, petStore } from "../state/petStore";
 import { probeStore } from "../state/probeStore";
 import { settingsStore } from "../state/settingsStore";
-import { setExpression } from "./usePetRenderer";
 import { isTsundere, shouldFire, type ProactiveCtx } from "../utils/microRandom";
+import { TYPEWRITER_CHUNK, TYPEWRITER_STEP_MS, bubbleTtlMs } from "../utils/bubbleRhythm";
+import { setExpression } from "./usePetRenderer";
 import type { ProactiveShowPayload } from "../api/types";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
@@ -36,19 +37,6 @@ export const proactiveBubble = reactive<{ text: string; isStreaming: boolean }>(
   text: "",
   isStreaming: false,
 });
-
-/** 打字机出字节奏（ms/步）。 */
-const TYPEWRITER_STEP_MS = 40;
-/** 每步出字数（长句加速，保证 <8s 完整展示）。 */
-const TYPEWRITER_CHUNK = 2;
-/** 气泡自动消失时长（毫秒）：按字数（min 2s / +0.05s·字，上限 12s）；禁忌/傲娇情绪话术停留加长 1.5×（E3.3）。 */
-function bubbleTtlMs(text: string, mood: string): number {
-  const chars = [...text].length;
-  const base = Math.min(12_000, Math.max(2_000, 2_000 + chars * 50));
-  if (mood === "angry" || mood === "tsundere")
-    return Math.min(12_000, Math.round(base * 1.5));
-  return base;
-}
 
 const unlisteners: UnlistenFn[] = [];
 let tickTimer: ReturnType<typeof setInterval> | null = null;

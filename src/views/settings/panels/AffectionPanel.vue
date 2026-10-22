@@ -13,28 +13,13 @@ import LevelPill from "../../../components/affection/LevelPill.vue";
 import LogItem from "../../../components/affection/LogItem.vue";
 import { listAffectionLogs } from "../../../api/pet";
 import { petStore, setPetLogs } from "../../../state/petStore";
+import { nextLevelInfo } from "../../../utils/affection";
 import type { LogItem as LogItemDto } from "../../../api/types";
 
-/** 等级阈值（展示近似：0–1000 四等分布；与 C5 等级映射视觉对齐）。 */
-const LEVEL_THRESHOLDS = [0, 250, 500, 750, 1000];
-/** 下档表现文案（情绪化，非数值）。 */
-const LEVEL_SUB = [
-  "",
-  "刚认识，有点拘谨",
-  "熟悉了，会主动搭话",
-  "亲密，会撒娇会想念",
-  "羁绊，形影不离",
-];
-
-const nextInfo = computed(() => {
-  const lvl = petStore.relationshipLevel;
-  if (lvl >= 4) return { diff: 0, sub: "已抵达最高羁绊" };
-  const next = LEVEL_THRESHOLDS[lvl];
-  return {
-    diff: Math.max(0, next - petStore.affectionPoints),
-    sub: LEVEL_SUB[lvl + 1] ?? "",
-  };
-});
+/** 下一档信息（阈值/文案/差值计算抽 utils/affection，F2.2 单测固化）。 */
+const nextInfo = computed(() =>
+  nextLevelInfo(petStore.relationshipLevel, petStore.affectionPoints),
+);
 
 const RULES: Array<{ title: string; delta: string; plus: boolean }> = [
   { title: "每日打卡", delta: "+10", plus: true },
