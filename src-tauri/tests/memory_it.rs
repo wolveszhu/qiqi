@@ -8,7 +8,10 @@ use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
 use qiqi_lib::db::repositories::{diaries, facts, vec_memory};
 use qiqi_lib::llm::client::{LlmClient as _, MockLlmClient, ReqwestLlmClient};
 use qiqi_lib::llm::diary::{DiaryDraft, parse_diary, store_diary};
-use qiqi_lib::llm::distill::{apply_fact_embedding, rebuild_vec_memory, remove_fact};
+use qiqi_lib::llm::distill::{
+    add_fact_with_embedding, apply_fact_embedding, rebuild_vec_memory, remove_fact,
+    validate_fact_content,
+};
 
 /// 固定测试密钥（64 hex，同生产 32 字节 hex 形态）。
 const TEST_KEY: &str = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
@@ -121,6 +124,49 @@ fn rebuild_vec_memory_preserves_knn_results() {
     let after = vec_memory::knn(&conn, &vec_memory::embedding_bytes(&q), 3).expect("knn");
     assert_eq!(before, after, "重建前后 KNN 结果一致");
     assert_eq!(after[0].0, ids[2], "最近邻仍为目标事实");
+}
+
+#[test]
+fn add_fact_writes_vector_and_knn_hits() {
+    let (_dir, conn) = temp_db();
+    let client = MockLlmClient::ok().with_embed_dim(EMBEDDING_DIM);
+    let target = mock_target();
+    let content = "我喜欢吃香菜";
+
+    // 正向入口：校验 → embed → 写库 + 向量
+    let validated = validate_fact_content(content).expect("校验通过");
+    let emb = futures_block_on(client.embed(&target, vec![validated.clone()]))
+        .expect("embed")
+        .into_iter()
+        .next()
+        .expect("向量");
+    let id = add_fact_with_embedding(&conn, 0, &validated, &emb).expect("新增事实");
+
+    // KNN：新增内容可召回，source_text 一致
+    let q = futures_block_on(client.embed(&target, vec![validated.clone()]))
+        .expect("embed")
+        .into_iter()
+        .next()
+        .expect("向量");
+    let hits = vec_memory::knn(&conn, &vec_memory::embedding_bytes(&q), 1).expect("knn");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].0, id, "新增后向量命中该行");
+    assert_eq!(hits[0].1, content, "source_text 已同步");
+}
+
+#[test]
+fn fact_content_validation_rejects_dirty_input() {
+    assert!(validate_fact_content("   ").is_err(), "纯空白 → 拒绝");
+    assert!(validate_fact_content("").is_err(), "空串 → 拒绝");
+    assert!(
+        validate_fact_content(&"x".repeat(201)).is_err(),
+        "超长（>200 字）→ 拒绝"
+    );
+    assert_eq!(
+        validate_fact_content("  我喜欢猫  ").unwrap(),
+        "我喜欢猫",
+        "正常内容去空白返回"
+    );
 }
 
 #[test]

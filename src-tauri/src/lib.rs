@@ -122,6 +122,7 @@ pub fn run() {
             commands::memory::memory_list_diaries,
             commands::memory::memory_update_fact,
             commands::memory::memory_delete_fact,
+            commands::memory::memory_add_fact,
             commands::memory::memory_regenerate_diary,
             commands::probe::probe_get_cursor,
             commands::probe::probe_get_snapshot,

@@ -151,6 +151,33 @@ pub struct DistillOutcome {
     pub taboo: Option<TabooHit>,
 }
 
+/// 校验事实内容（D3.1 正向入口）：去空白、非空、≤200 字；越界/脏输入返回 `Config`。
+pub fn validate_fact_content(content: &str) -> Result<String, AppError> {
+    let c = content.trim().to_string();
+    if c.is_empty() {
+        return Err(AppError::Config("记忆内容不能为空".into()));
+    }
+    if c.chars().count() > 200 {
+        return Err(AppError::Config("记忆内容过长（≤200 字）".into()));
+    }
+    Ok(c)
+}
+
+/// 新增事实并同步写入向量（D3.1：用户正向入口，复用 C7.3 同事务模式）。
+///
+/// `embedding` 由调用方 embed 得到（无锁段，失败不触碰库）；confidence 给较高默认
+/// （手动记忆比蒸馏更可信）。返回新 fact id。
+pub fn add_fact_with_embedding(
+    conn: &rusqlite::Connection,
+    category: i64,
+    content: &str,
+    embedding: &[f32],
+) -> Result<i64, AppError> {
+    let id = facts::insert(conn, category, content, 0.9)?;
+    vec_memory::insert(conn, id, &vec_memory::embedding_bytes(embedding), content)?;
+    Ok(id)
+}
+
 /// 执行沉淀（在 async 上下文中调用；DB 阻塞段由调用方 spawn_blocking 包裹）。
 ///
 /// 步骤：① facts 抽取（memory 档）→ 落库 + embed + 向量写入

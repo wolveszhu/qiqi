@@ -82,6 +82,48 @@ pub fn memory_delete_fact(app: AppHandle, id: i64) -> Result<(), AppError> {
     crate::llm::distill::remove_fact(&conn, id)
 }
 
+/// 新增事实（D3.1 正向入口：用户在设置窗主动补记）。
+///
+/// 链路（同 C7.3）：校验 → embed（无锁段，失败不触碰库）→ 同事务 insert facts + 写 vec_memory。
+/// category 越界归 0；embed 失败返回 `Llm`；内容保留在前端供重试。
+#[tauri::command]
+pub async fn memory_add_fact(
+    app: AppHandle,
+    content: String,
+    category: i64,
+) -> Result<(), AppError> {
+    use tauri::Manager as _;
+    let content = crate::llm::distill::validate_fact_content(&content)?;
+    let category = if (0..=2).contains(&category) { category } else { 0 };
+
+    let state = app.state::<AppState>();
+    let (tiered, quota_embedded) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+        let tiered = app_settings::get_tiered(&conn)?;
+        let quota = app_settings::get_quota_mode(&conn)?;
+        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED)
+    };
+
+    let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
+    let memory_target = crate::llm::router::memory_target(&tiered, quota_embedded);
+    let embedding = client
+        .embed(&memory_target, vec![content.clone()])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Llm("embed 返回空结果".into()))?;
+
+    let conn = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    crate::llm::distill::add_fact_with_embedding(&conn, category, &content, &embedding)?;
+    Ok(())
+}
+
 /// 重新生成指定日期的日记（upsert 覆盖；memory 档短生成）。
 #[tauri::command]
 pub async fn memory_regenerate_diary(app: AppHandle, date: String) -> Result<(), AppError> {
