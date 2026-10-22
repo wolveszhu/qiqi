@@ -9,6 +9,7 @@ import {
   lookAt,
   playAction,
   setExtraHitRegion,
+  setIdleMode,
   setPetSleeping,
   usePetRenderer,
 } from "../../composables/usePetRenderer";
@@ -34,6 +35,13 @@ const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
 const sleepSnap = ref(false);
 
+// ---- E2.3① 待机降帧：PIXI maxFPS 单一真源（probeIdle || sleepSnap → 30fps，否则 60fps）----
+let probeIdle = false;
+function refreshIdleFps(): void {
+  // 入睡(C6 idle)或吸附休眠(D4)任一成立即降帧；唤醒交互即时回升 60fps
+  setIdleMode(probeIdle || sleepSnap.value);
+}
+
 // ---- 主链路接线（E1a：此前三个 composable 未在窗口 A 实例化，MVP 链路断裂） ----
 usePetRenderer();
 useProactive();
@@ -42,10 +50,12 @@ useAffection();
 useSystemProbe({
   // 鼠标坐标 → 视线跟随（C2/C6 探针 → 渲染器 lookAt）
   onMove: (x: number, y: number) => lookAt(x, y),
-  // 空闲翻转 → 睡/醒动作（C6：30min 无操作睡、回归伸懒腰）
+  // 空闲翻转 → 睡/醒动作 + 待机降帧（C6：30min 无操作睡、回归伸懒腰）
   onIdleChange: (idle: boolean) => {
+    probeIdle = idle;
     if (idle) playAction("sleep");
     else playAction("stretch");
+    refreshIdleFps();
   },
 });
 
@@ -81,11 +91,13 @@ async function onDragEnd(): Promise<void> {
       sleepSnap.value = true;
       settingsStore.sleepSnap = true;
       setPetSleeping(true); // 角色变暗（D4.4 视觉休眠；窗口级 opacity 在 tauri 2.12.4 不可用）
+      refreshIdleFps(); // 吸附休眠 → 待机帧率（E2.3①）
     } else if (sleepSnap.value) {
       await restoreFromSnap();
       sleepSnap.value = false;
       settingsStore.sleepSnap = false;
       setPetSleeping(false); // 唤醒恢复不透明
+      refreshIdleFps(); // 拖离 → 恢复（仍受 probeIdle 影响）
     }
   } catch (e: unknown) {
     console.warn("[pet] 贴边检测失败（降级：不吸附）", e);

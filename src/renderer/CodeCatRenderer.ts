@@ -252,16 +252,12 @@ export class CodeCatRenderer implements IPetRenderer {
     if (this.app) this.app.ticker.maxFPS = enabled ? 30 : 60;
   }
 
-  /** 吸附休眠视觉（D4.4）：角色整体 alpha 0.6 + 睡姿 + 降帧；唤醒恢复 1.0。 */
+  /** 吸附休眠视觉（D4.4）：角色整体 alpha 0.6 + 睡姿；唤醒恢复 1.0。
+   *  帧率（maxFPS）不在此管理——由 PetWindow 以 `probeIdle || sleepSnap` 单一真源统一驱动（E2.3①）。 */
   setSleeping(sleeping: boolean): void {
     if (this.petRoot) this.petRoot.alpha = sleeping ? 0.6 : 1;
-    if (sleeping) {
-      this.setExpression("sleepy");
-      this.setIdleMode(true);
-    } else {
-      this.setIdleMode(false);
-      this.setExpression("neutral");
-    }
+    if (sleeping) this.setExpression("sleepy");
+    else this.setExpression("neutral");
   }
 
   dispose(): void {

@@ -3,7 +3,7 @@
  *
  * C2 接线：挂载后按 500ms 低频比对 `getHitRegion()`，变化才 invoke
  * `window_set_hit_region`（Rust 穿透状态机的输入；省 IPC）。
- * TODO(C6): probe:idle:changed → setIdleMode / playAction("sleep" | "stretch")。
+ * E2.3①：待机降帧由 PetWindow 以 `probeIdle || sleepSnap` 单一真源调 `setIdleMode` 驱动 maxFPS。
  */
 
 import { onMounted, onUnmounted, reactive } from "vue";
