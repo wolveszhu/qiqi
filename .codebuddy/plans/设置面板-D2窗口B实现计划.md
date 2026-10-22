@@ -6,7 +6,7 @@
 | 规则依据 | `.codebuddy/rules/`：code-standards §0/§7（Vue 约定/单向数据流）、design-baseline §G（Key 边界）；**权威实现蓝图**：[`docs/design/窗口B-设置界面设计方案.md`](../../docs/design/窗口B-设置界面设计方案.md) v1.0——布局（§3）、五面板规格（§4.1–4.5）、组件细节（§5）、全局交互状态（§6）、验收清单（§8）；**模型选型**：父计划「阶段 3 补充：LLM 大模型配置」小节（必选/可选两级暴露、三档路由规则、计费说明入口） |
 | 范围边界 | **做**：ui 控件补齐 + 五个 Panel 实装 + 数据流绑定。**不含**：MemoryPanel 业务（D3，本计划保持占位）、测试连接按钮（登记 E 期，依赖 C4 client）、托盘唤起（C2 已备） |
 | 现状（骨架已就位） | ✅ `SettingsWindow.vue` + `TitleBar` + `SideNav` + 五 Panel 占位；✅ `ui/` 已有 AppButton/AppCard/AppToggle/AppInput/StatusBadge/HintBox；✅ `api/settings.ts`（getTyped/saveTyped/listProviders/setQuotaMode 契约）、`api/pet.ts`（get/update/logs）、`stores/{settings,pet}Store`。**缺口**：ui 缺 SegmentedControl/TimeChip/KbdChip/AppToast；`components/{settings,affection}/` 全部占位；五 Panel 为骨架文案 |
-| 状态 | 待执行（前置：C3、C5；D3 依赖本计划完成） |
+| 状态 | **已完成**（2026-10-22，提交 `1cf8c35`；M1 闭环最后一块：设置持久化达成） |
 
 ---
 
@@ -104,3 +104,71 @@
 ## 七、执行顺序
 
 D2.1（ui 控件）→ D2.2（LlmPanel）→ D2.3（DndPanel）→ D2.4（AffectionPanel）→ D2.5（AvatarPanel）→ D2.6（MemoryPanel 空态）→ §五 走查 → D2.7 DoD 收口。
+
+---
+
+## 十、执行结果与计划对应（2026-10-22，提交 `1cf8c35`）
+
+### 各任务实装对照
+
+| 计划 | 文件 | 结果 |
+| :--- | :--- | :--- |
+| D2.1 ui 控件 | `ui/SegmentedControl.vue`（泛型单选项）、`ui/TimeChip.vue`（mono+内嵌时钟+hover✕+dashed 添加）、`ui/KbdChip.vue`（只读展示）、`ui/AppToast.vue` + `composables/useToast.ts`（单例队列 2.4s）、`ui/AppButton` 补 `loading` 态 | ✅ |
+| D2.2 LlmPanel | `panels/LlmPanel.vue` + `settings/ProviderChip.vue`（★必选+成本档+额度池角标）+ `settings/QuotaBar.vue` | 三档 SegmentedControl 独立表单；选 Chip 预填 Base URL/模型；Key 密码框+指纹回显+留空不改；必选约束引导 HintBox；fallback 回落提示；计费说明入口；成本档/额度池候选角标；显式保存→`settings_save_typed`→toast+快照刷新 |
+| D2.3 DndPanel | `panels/DndPanel.vue` | 勿扰开关 + 多段时段（TimeChip 增删改）+ 频率档位 SegmentedControl；**即改即存**（debounce 300ms→`settings_save_dnd`，乐观更新+失败回滚）；重叠/非法段阻止保存 |
+| D2.4 AffectionPanel | `panels/AffectionPanel.vue` + `affection/AffectionRing.vue`（conic-gradient）+ `LevelPill.vue` + `LogItem.vue` | 左 hero=圆环+等级+距下档差；右上规则卡（静态 5 行）；右下流水（`pet_list_affection_logs`）；数值仅看板可见，绝不进对话气泡 |
+| D2.5 AvatarPanel | `panels/AvatarPanel.vue` + `settings/PetOptionCard.vue` + `settings/PreviewStage.vue` | 名字即改即存（`pet_update_state`，截断 20 字）；PreviewStage 独立 PIXI 实例（普通变量持有、onBeforeUnmount/切换销毁、非 reactive）；code_cat 可选、code_dog/导入占位 |
+| D2.6 MemoryPanel | `panels/MemoryPanel.vue` | 接 `memory_list_diaries` 空态（"她还没写过日记——今晚见"）+ 轻量预览，避免走查空白报错（完整编辑留 D3） |
+
+### 关键 API 实态修正（勘误 #17：计划"Rust 零新增"假设不实）
+
+1. **新增 `settings_save_dnd` 命令**：原 `settings.rs` 仅有 `settings_get_typed`/`save_typed`/`set_quota_mode`，**无 dnd 保存命令**，验收"重启后配置持久"无法满足。实装 `settings_save_dnd(dnd, frequency)`，写 `app_settings` type=2 行。
+2. **frequency 持久化**：`SettingsDndValue`/`SettingsSnapshotDto` 扩 `frequency: String` 字段；`parse_dnd_full` 解析回填；前端 `SettingsSnapshot.frequency`、`settingsStore.applySnapshot` 同步、`saveDnd` 落库。C6 引擎经 `settingsStore.frequency` 即时读取。
+3. **自启 / 情境感知开关后端 IPC 命令缺失**：`autostart` 仅托盘菜单、`set_probe`/`set_autostart` 等命令不存在 → DndPanel/AvatarPanel 相关 toggle 仅 `disabled` 占位 + HintBox 说明，"不造假状态"。登记缺口（后续阶段补齐）。
+4. **额度条比例**：内置体验额度无真实计量接口 → `QuotaBar` 传 `ratio=1` 占位 + 标注"体验额度随后端开放"，**不编假数**。
+5. **等级阈值展示近似**：`AffectionPanel` 用 `LEVEL_THRESHOLDS=[0,250,500,750,1000]` 视觉等分，与 C5 等级映射对齐；非权威阈值（展示用）。
+6. **额度池候选角标**：`ProviderChip` 按 `costTier==='free'` 或已知 id 集合（`builtin`/`siliconflow`/`glm-flash`）推断，展示用。
+
+### 门禁终态
+
+`cargo clippy --all-targets -D warnings` ✅ / fmt ✅ / **cargo test 94 passed**；`pnpm typecheck` ✅ / `pnpm build` ✅ / `pnpm lint` 0 ✅ / `pnpm test` 40 passed ✅（D2 未增单测）/ `pnpm format:check` ✅
+
+### 冷眼三问
+
+| # | 项 | 结果 |
+| :--- | :--- | :--- |
+| ① | 即改即存失败是否回滚 UI | DndPanel/AvatarPanel 乐观更新 + 失败 `pushToast` + 从 snapshot 回滚该字段（含 frequency/dnd/enabled/name） |
+| ② | 三个面板并发保存互斥安全 | 不同 `type` 行隔离：LLM→type=1（按档 upsert_value）、dnd+frequency→type=2（upsert_value）、quota→`app_settings` 列；各自独立行无竞争 |
+| ③ | PreviewStage 销毁路径完整 | `onBeforeUnmount` + `watch(rendererId)` 重建均调 `dispose()`（renderer.dispose + 清空容器 innerHTML），PIXI 实例普通变量不进 reactive，杜绝泄漏 |
+
+### 红线自查
+
+| # | 项 | 结果 |
+| :--- | :--- | :--- |
+| ui/ 零业务 import | SegmentedControl/TimeChip/KbdChip/QuotaBar/AppToast 纯展示；AppToast 仅消费 `useToast` 队列（非 api/store 业务逻辑） | ✅ |
+| Key 无 localStorage/日志 | 仅经 `callCommand` 单向流向 Rust，前端零缓存、零日志 | ✅ |
+| grep invoke 仅 api/ | 全部 `callCommand` 集中于 `src/api/*`（settings/pet/memory/...） | ✅ |
+| 窗口 B 无 PIXI 泄漏 | PreviewStage 独立实例 + 销毁路径完整 | ✅ |
+
+### §8 / §五 验收清单勾选
+
+- 手工清单 1–8：三档还原/Key 指纹/勿扰重叠阻止+联动静默/频率即时生效/好感度看板一致/改名同步+预览无漏/隐藏保留/选型回落链 —— **代码层达标，待真机手工复验**
+- 选型验收 5 项（成本档徽标/必选约束引导/fallback 回落/计费说明入口/额度池候选角标）：✅ 落地
+- 设计方案 §8 验收清单 10 项：镜像到 §四 五面板规格逐条实装（详见各 Panel 对照）
+
+### 待用户手工验证（真机）
+
+1. 三档选 Chip 预填 → 保存 → **重启还原**；Key 仅指纹
+2. main 无 Key 切 BYOK → 错误 toast；配后成功
+3. 勿扰加两段 → 重启还原；重叠被阻止；关开关后 C6 静默
+4. 频率切档 → C6 引擎即时生效
+5. 好感度看板与 `affection_logs` 一致；互动后刷新
+6. 改名 → 窗口 A 称呼同步；预览反复切换 10 次内存平稳
+7. ✕=hide → 托盘唤起 → 表单保留
+8. 三档分别切模型 → 流式/沉淀链路正常；断网/失效 → fallback 不崩溃
+
+### 移交
+
+- **D3 记忆阅读区**：MemoryPanel 已接 `diaries` 空态，D3 实装日记卡片 + 事实标签编辑（C7 后端已就绪）
+- **E 期测试连接按钮**：登记 E 期，依赖 C4 client（本计划范围不含）
+- **自启 / 情境感知持久化**：后端命令缺口，后续阶段补齐（本计划已占位）
