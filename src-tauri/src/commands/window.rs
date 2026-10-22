@@ -82,3 +82,23 @@ fn resolve<R: tauri::Runtime>(
     }
     app.get_webview_window(target).ok_or_else(|| AppError::Window(format!("窗口不存在: {target}")))
 }
+
+/// 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。
+#[tauri::command]
+pub fn window_get_outer_position(
+    app: AppHandle,
+) -> Result<crate::window::manager::OuterPositionView, AppError> {
+    window::manager::outer_position_view(&app)
+}
+
+/// 贴边吸附休眠（edge ∈ top/left/right）：Rust 经 current_monitor 计算边界 + 半透明。
+#[tauri::command]
+pub fn window_snap_to_edge(edge: String, app: AppHandle) -> Result<(), AppError> {
+    window::manager::snap_to_edge(&app, &edge)
+}
+
+/// 解除吸附（恢复透明度 1.0；位置由用户拖动决定，不自动回中）。
+#[tauri::command]
+pub fn window_restore_from_snap(app: AppHandle) -> Result<(), AppError> {
+    window::manager::restore_from_snap(&app)
+}
