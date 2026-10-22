@@ -83,8 +83,8 @@ pub async fn proactive_generate(
 
     let tsundere = tsundere.unwrap_or(false);
     // 系统 Prompt：人设 + 等级指令 + 傲娇基调（复用 C4 prompt 单一真源）
-    let ctx = ConversationCtx { tsundere };
-    let view = RelationView { level: relation_level, pet_name: "喵喵" };
+    let ctx = ConversationCtx { tsundere, slow_reply: false };
+    let view = RelationView { level: relation_level, pet_name: crate::config::PET_NAME };
     let mut system = build_system_prompt(&RetrievedContext::default(), &view, &ctx);
     system.push_str("\n\n现在由你主动找用户说话（不是用户先开口）。用第一人称，不超过两句话，自然可爱，像突然想起来要搭话。");
     if tsundere {

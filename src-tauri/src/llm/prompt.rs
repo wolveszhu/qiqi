@@ -29,10 +29,16 @@ pub struct RelationView {
 pub struct ConversationCtx {
     /// 傲娇：距上次互动 ≥ `TSUNDERE_DAYS` 天 → true（连 N 天没理它，有点小别扭）。
     pub tsundere: bool,
+    /// 慢回复：上一轮响应 > `SLOW_REPLY_THRESHOLD_MS` → true（E3.5 轻量情绪反馈：
+    /// 下一句自然带一句"刚卡了一下"式歉意，但不反复道歉）。
+    pub slow_reply: bool,
 }
 
 /// 傲娇判定阈值（天）：距上次互动达到此值注入傲娇/幽怨基调（C6.6）。
 pub const TSUNDERE_DAYS: i64 = 3;
+
+/// 慢回复阈值（毫秒）：单轮响应超此值视为"卡顿"，下一轮注入轻量歉意基调（E3.5）。
+pub const SLOW_REPLY_THRESHOLD_MS: u64 = 8_000;
 
 /// 纯函数：距上次互动是否达傲娇阈值（无记录/解析失败 → false；不 panic）。
 pub fn is_tsundere(last_interaction: Option<&str>, now: chrono::DateTime<chrono::Local>) -> bool {
@@ -75,6 +81,14 @@ pub fn build_system_prompt(
         );
     }
 
+    // 慢回复轻量歉意（E3.5）：上一轮卡顿 → 自然带一句"刚卡了一下"，但不反复道歉
+    if ctx.slow_reply {
+        prompt.push_str(
+            "（情绪：上一句回得有点慢，你有点小歉意，这一句自然地提一句\"抱歉喵，刚卡了一下\"\
+             之类的话就好，别一直道歉，说完立刻恢复活泼）\n\n",
+        );
+    }
+
     // 记忆注入（有则注入，无则省略段落——保持 Prompt 精简）
     if !retrieved.memory_hits.is_empty() {
         prompt.push_str("【你记得的关于用户的事】\n");
@@ -103,7 +117,7 @@ mod tests {
     use super::*;
 
     fn view(level: i64) -> RelationView {
-        RelationView { level, pet_name: "喵喵" }
+        RelationView { level, pet_name: "七七" }
     }
 
     #[test]
@@ -170,9 +184,38 @@ mod tests {
         let tsu = build_system_prompt(
             &RetrievedContext::default(),
             &view(2),
-            &ConversationCtx { tsundere: true },
+            &ConversationCtx { tsundere: true, slow_reply: false },
         );
         assert!(tsu.contains("傲娇"), "tsundere=true 注入傲娇基调");
+    }
+
+    #[test]
+    fn slow_reply_directive_injected_only_when_flagged() {
+        let base = build_system_prompt(
+            &RetrievedContext::default(),
+            &view(2),
+            &ConversationCtx::default(),
+        );
+        assert!(!base.contains("卡了一下"), "默认无慢回复歉意");
+        let slow = build_system_prompt(
+            &RetrievedContext::default(),
+            &view(2),
+            &ConversationCtx { tsundere: false, slow_reply: true },
+        );
+        assert!(slow.contains("卡了一下"), "slow_reply=true 注入轻量歉意基调");
+    }
+
+    #[test]
+    fn persona_name_is_consistent() {
+        // E3.4：人设基线（七七）与注入的"你叫X"必须同名，避免身份自相矛盾
+        let p = build_system_prompt(
+            &RetrievedContext::default(),
+            &view(1),
+            &ConversationCtx::default(),
+        );
+        assert!(p.contains("你是「七七」"), "人设基线含七七");
+        assert!(p.contains("你叫七七"), "注入名与基线一致（无喵喵混用）");
+        assert!(!p.contains("喵喵"), "不允许残留喵喵自称");
     }
 
     #[test]

@@ -131,6 +131,14 @@ pub async fn chat_send_stream(
     .map_err(|e| AppError::Llm(format!("检索任务失败: {e}")))??;
 
     // ④ 组装请求（系统 Prompt + 摘要头 + 最近 N 条 + 本条）
+    // E3.5：慢回复基调——读取上一轮响应耗时，超阈值则本轮回注轻量歉意（下一轮生效）
+    let slow_reply = {
+        let m = state
+            .last_response_ms
+            .lock()
+            .map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))?;
+        m.map(|ms| ms > crate::llm::prompt::SLOW_REPLY_THRESHOLD_MS).unwrap_or(false)
+    };
     let request = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         build_chat_request(
@@ -140,6 +148,7 @@ pub async fn chat_send_stream(
             (relation.0, relation.1.as_str()),
             &text,
             &attachments,
+            slow_reply,
         )?
     };
 
@@ -255,6 +264,8 @@ async fn run_chat_task(
     quota_embedded: bool,
     abort_flag: Arc<AtomicBool>,
 ) {
+    // E3.5：计时起点（首 token 前到 done 的时长，用于下一轮 slow_reply 判定）
+    let started = std::time::Instant::now();
     // 蒸馏输入的用户文本先提取（request 将被 chat_with_fallback 消费）
     let user_text = request
         .messages
@@ -341,6 +352,14 @@ async fn run_chat_task(
     }
 
     let _ = app.emit("chat:stream:done", StreamDone { session_id: session_id.clone() });
+
+    // E3.5：记录本轮响应耗时（毫秒），供下一轮 slow_reply 判定（内存态，重启清零）
+    {
+        let state = app.state::<AppState>();
+        if let Ok(mut m) = state.last_response_ms.lock() {
+            *m = Some(started.elapsed().as_millis() as u64);
+        }
+    }
 
     // 蒸馏 spawn（不阻塞 done；memory 档失败静默——对话仍正常，计划 §七）
     let distill_input = crate::llm::distill::DistillInput {
@@ -474,8 +493,9 @@ fn build_chat_request(
     relation: (i64, &str),
     text: &str,
     attachments: &[FilePayload],
+    slow_reply: bool,
 ) -> Result<ChatRequest, AppError> {
-    let view = RelationView { level: relation.0, pet_name: "喵喵" };
+    let view = RelationView { level: relation.0, pet_name: crate::config::PET_NAME };
     // C6.6 傲娇：距上次互动 ≥3 天 → 注入傲娇基调（用户主动对话同样生效）
     let last_interaction =
         crate::db::repositories::pet_states::get(conn).ok().and_then(|p| p.last_interaction);
@@ -484,6 +504,7 @@ fn build_chat_request(
             last_interaction.as_deref(),
             chrono::Local::now(),
         ),
+        slow_reply,
     };
     let mut system = build_system_prompt(retrieved, &view, &ctx);
 

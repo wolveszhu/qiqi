@@ -40,6 +40,8 @@ pub struct AppState {
     pub idle_active: Mutex<bool>,
     /// 前台进程名缓存（C6：变化时才 emit `probe:foreground:changed`）。
     pub last_foreground: Mutex<Option<String>>,
+    /// 上一轮对话响应耗时（毫秒，E3.5：超时则下一轮注入慢回复歉意基调；内存态，重启清零）。
+    pub last_response_ms: Mutex<Option<u64>>,
 }
 
 impl AppState {
@@ -53,6 +55,7 @@ impl AppState {
             click_through_enabled: Mutex::new(true),
             idle_active: Mutex::new(false),
             last_foreground: Mutex::new(None),
+            last_response_ms: Mutex::new(None),
         }
     }
 }
