@@ -173,8 +173,12 @@ pub fn add_fact_with_embedding(
     content: &str,
     embedding: &[f32],
 ) -> Result<i64, AppError> {
-    let id = facts::insert(conn, category, content, 0.9)?;
-    vec_memory::insert(conn, id, &vec_memory::embedding_bytes(embedding), content)?;
+    // 同事务：行插入 + 向量写入同提交/回滚（冷眼三问②：增路径也闭合，无孤儿向量）。
+    // embed 已由调用方先于本函数完成（失败不触碰库）。
+    let tx = conn.unchecked_transaction()?;
+    let id = facts::insert(&tx, category, content, 0.9)?;
+    vec_memory::insert(&tx, id, &vec_memory::embedding_bytes(embedding), content)?;
+    tx.commit()?;
     Ok(id)
 }
 
