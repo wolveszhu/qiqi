@@ -89,3 +89,75 @@ fn pet_settle_is_idempotent() { /* 同参数两次结算 → logs 仅一笔 */ }
 ## 六、执行顺序
 
 F1.1（盘点矩阵）→ F1.2（IPC 命令验证补齐）→ F1.3（缺口补齐）→ F1.4（clippy lints）→ F1.5（全绿收口）→ DoD → F2/F3 衔接。
+
+---
+
+## 七、覆盖矩阵（F1.1 实态，2026-10-22 盘点）
+
+盘点口径：`grep -c "#[test]"` + `ls tests/`。实态 **lib 78**（较预期 60+ 增量来自 C6/E1b/E3 随做随测）+ 集成 `migrations_it 10 / repositories_it 10 / memory_it 8 / affection_it 4`。
+
+| 模块 | 位置 | 用例（实态） | 缺口/裁决 |
+| :--- | :--- | :--- | :--- |
+| B3 error | `error.rs #[cfg(test)]` | 序列化/Display/rusqlite From + **F1.3 全变体覆盖** | ✅ 补齐（全 6 变体序列化+Display） |
+| B4 迁移/加密 | `tests/migrations_it.rs` | 10（全链迁移/加密/版本三分支含 user_version=99 失败/种子/向量/约束/损坏隔离用例 8） | ✅ 迁移失败分支已覆盖 |
+| B5 仓储 | `tests/repositories_it.rs` | 10（settings/pet/facts CRUD + **case5 参数化注入负样例** `x'); DROP TABLE facts; --`） | ✅ 注入负样例已覆盖 |
+| C2 穿透 | `window/click_through.rs` | 7（命中判定/翻转去重） | ✅ |
+| C3 配置 | `config.rs` + `commands/settings.rs` | 4 + 10（preset/quota/双格式兼容 + **F1.2 save/get/quota/dnd 直测含 Key 脱敏红线**） | ✅ 命令层补齐 |
+| C4 LLM | `llm/{client,router,prompt,distill}.rs` | 5+4+8+10 | ✅ |
+| C5 好感度 | `affection/{rules,decay,level}.rs` + `affection_it.rs` | 4+4+4+4 | ✅ |
+| C6 探针 | `probe/{scheduler,foreground}.rs` | 1+（foreground 逻辑经命令/单测） | ✅ |
+| C7 记忆/日记 | `tests/memory_it.rs` + `llm/distill.rs` | 8 + 10（禁忌三态/向量同步/重建等价/add_fact/upsert 幂等） | ✅ |
+| **commands 直测** | `commands/{settings,pet,memory}.rs` | **F1.2 新增**：settings 6 / pet 3 / memory 2 | ✅ State-only 入口抽 `inner(conn)` 直测 |
+
+### commands 六文件验证/豁免登记（F1.2 DoD）
+
+| 命令文件 | 可直测（State-only）→ 抽 inner 直测 | 豁免（需 AppHandle/Win32/网络）→ 归属 |
+| :--- | :--- | :--- |
+| `settings.rs` | ✅ get/save/set_quota_mode/save_dnd（含 Key 脱敏、BYOK 守卫、频率白名单、空串 Key 保留） | — |
+| `pet.rs` | ✅ update_state、list_affection_logs（含 limit clamp、倒序） | `pet_get_state`/`pet_settle_affection` 需 AppHandle+emit → `tests/affection_it.rs`（域层 settle 事务） |
+| `memory.rs` | ✅ list_facts、list_diaries | `add/update/delete/regenerate` 需 AppHandle+embed/LLM 网络 → `tests/memory_it.rs`（向量一致/upsert 幂等） |
+| `chat.rs` | — | `chat_send_stream` 流式网络 + `retrieve_context` embed 网络 → C4 Mock 已覆盖管道逻辑；参数校验分支属纯逻辑（`is_image_path`/`detect_mime`）已在文件内覆盖；流式/中止归 F3 手工回归 |
+| `probe.rs` | — | Win32/系统状态 → F3 手工回归 |
+| `window.rs` | — | Win32 窗口 API → F3 手工回归 |
+
+## 八、执行结果（2026-10-22）
+
+### F1.4 clippy lints（落地）
+- `Cargo.toml` 增 `[lints.clippy]`：`unwrap_used/expect_used/panic/indexing_slicing = "warn"`。
+- lib 非测试存量逐项改造（**零 `#[allow]` 滥发**）：
+  - 7 处索引/切片 → `get`/`first_mut`/`as_object_mut().map()`（`level.rs`/`rules.rs`/`client.rs`/`router.rs`×2/`foreground.rs`/`chat.rs`）。
+  - `lib.rs run()` 2 处 `expect`（快捷键注册、`tauri::run`）为**启动致命、无恢复路径** → 函数级 `#[allow(expect_used)]` + 理由注释。
+  - `router.rs chat_with_fallback` 嵌套 if → 函数级 `#[allow(collapsible_if)]`（合并需引入 unwrap，保留清晰写法）。
+- 测试代码豁免：lib.rs crate 级 `#![cfg_attr(test, allow(四项))]` + 4 个 `tests/*.rs` 文件头 `#![allow(四项)]`（fixture 用 unwrap/expect/index 属合理用法）。
+- **`cargo clippy --all-targets -- -D warnings` 零告警**。
+
+### F1.2 命令独立验证
+- 模式（计划 §三降级路径，因 Tauri v2 `State` 无公开构造）：命令薄壳仅 `state.db.lock()` 后转发 **`inner(conn)` 纯函数**，测试经 `test_util::fresh_db()` 直测 `inner`（不启 runtime、不涉 `State`）。
+- 新增 `src/test_util.rs`（复用 `init_with_key` 固定密钥旁路 keyring，口径同 `tests/`）。
+- 覆盖：settings 6（含 **Key 脱敏红线**：save→get 序列化回包不含明文/主体；空串 Key 保留存量）、pet 3、memory 2。
+
+### F1.3 缺口补齐
+- 新增 AppError 全变体序列化/Display 覆盖（error.rs）。
+- 既有确认覆盖：参数化注入负样例（repositories_it case5）、迁移失败分支与损坏隔离（migrations_it 用例 7/8）。**无残留缺口**；豁免项均登记 F3 归属（见 §七）。
+
+### F1.5 全绿收口
+- `cargo test`：**lib 78 passed**（较 F1 前 +11）+ 集成 `migrations 10 / repositories 10 / memory 8 / affection 4` 全绿。
+- 运行时长：单测试套件最长 `memory_it` 2.26s、`migrations_it` 1.32s，无单个用例 >1s → **无需 `#[ignore]`**。
+- `cargo fmt --check` 0；`cargo clippy --all-targets -- -D warnings` 0。
+
+### 门禁与提交
+- 提交：`8f7eb37 refactor(ipc): F1 Rust 单测收口——clippy lints 落地 + commands 层可测化 + 命令/错误直测`（husky eslint+prettier 通过）。
+
+### 冷眼三问
+- ① 无弱断言：命令直测均断言具体 DB 效果（pet_name 回显、倒序、limit clamp、Key 脱敏、BYOK 守卫、空串保留），非"不 panic"。
+- ② Key 泄漏红线真实验证：`settings_command_roundtrip_never_leaks_key` 断言序列化回包既不含完整 Key 也不含 Key 主体。
+- ③ 豁免项均有 F3 手工回归归属（chat 流式/中止、probe、window）或域层集成测试归属（pet settle、memory 写）。
+
+### DoD 收口
+- [x] 覆盖矩阵留档（实态 vs 预期，差异：用例数增至 78+32，commands 层补齐）
+- [x] commands 六文件全部有直接验证或豁免登记
+- [x] 缺口清零（AppError 全变体补齐；注入/迁移失败既有已覆盖）；资金/隐私/数据完整性路径 100% 有测试
+- [x] `[lints.clippy]` 四项落地，`clippy --all-targets -- -D warnings` 零告警
+- [x] `cargo test` 全绿；时长记录（无 >1s 单用例，不加 ignore）
+- [x] auto-commit：`refactor(ipc)` 按模块拆分提交
+- [x] 父计划 F1 行回写 ✅（M4 组成部分达成）→ 可衔接 **F2（前端单测）/F3（手工回归）**
