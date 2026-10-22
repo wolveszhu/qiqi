@@ -1,7 +1,9 @@
 /**
  * 设置状态镜像（规范 §3：真源在 app_settings 表）。
  *
- * TODO(B5/C3): getTyped/saveTyped 接线；TODO(D4): settings:dnd:changed 双向同步。
+ * D4：新增 `sleepSnap`（边缘吸附休眠态，内存态、正交勿扰，主动引擎 skip）、
+ * `chatInputVisible`（窗口 A 输入框可见，运行时 UI 态）；
+ * `settings:dnd:changed` 双向同步由组件 emit/listen 驱动（双窗口独立 webview，前端 store 不共享）。
  */
 
 import { reactive } from "vue";
@@ -12,11 +14,17 @@ export interface SettingsState {
   snapshot: SettingsSnapshot | null;
   /** 主动频率档位（C6 引擎读取）。 */
   frequency: ProactiveFrequency;
+  /** 边缘吸附休眠态（D4：内存态，正交勿扰，主动引擎 skip）。 */
+  sleepSnap: boolean;
+  /** 窗口 A 输入框可见（运行时 UI 态，Ctrl+Shift+P 切换）。 */
+  chatInputVisible: boolean;
 }
 
 const state = reactive<SettingsState>({
   snapshot: null,
   frequency: "normal",
+  sleepSnap: false,
+  chatInputVisible: false,
 });
 
 /** 以 settings_get_typed 返回刷新（含 dnd + frequency 同步到本地即时读取态）。 */
@@ -36,6 +44,16 @@ export function applyDndLocal(dnd: DndConfig): void {
 
 export function setFrequency(frequency: ProactiveFrequency): void {
   state.frequency = frequency;
+}
+
+/** 边缘吸附休眠态切换（D4.4：仅内存态，重启复位）。 */
+export function setSleepSnap(value: boolean): void {
+  state.sleepSnap = value;
+}
+
+/** 窗口 A 输入框显隐切换（Ctrl+Shift+P 驱动）。 */
+export function setChatInputVisible(value: boolean): void {
+  state.chatInputVisible = value;
 }
 
 export const settingsStore = state;

@@ -252,6 +252,18 @@ export class CodeCatRenderer implements IPetRenderer {
     if (this.app) this.app.ticker.maxFPS = enabled ? 30 : 60;
   }
 
+  /** 吸附休眠视觉（D4.4）：角色整体 alpha 0.6 + 睡姿 + 降帧；唤醒恢复 1.0。 */
+  setSleeping(sleeping: boolean): void {
+    if (this.petRoot) this.petRoot.alpha = sleeping ? 0.6 : 1;
+    if (sleeping) {
+      this.setExpression("sleepy");
+      this.setIdleMode(true);
+    } else {
+      this.setIdleMode(false);
+      this.setExpression("neutral");
+    }
+  }
+
   dispose(): void {
     const app = this.app;
     this.app = null;

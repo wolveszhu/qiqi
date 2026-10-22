@@ -41,3 +41,24 @@ export async function setHitRegion(region: HitRegion): Promise<void> {
 export async function setClickThroughEnabled(enabled: boolean): Promise<void> {
   await callCommand("window_set_click_through_enabled", { enabled });
 }
+
+/** 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */
+export interface OuterPositionView {
+  x: number;
+  y: number;
+  monitor: { x: number; y: number; width: number; height: number };
+}
+
+export async function getOuterPosition(): Promise<OuterPositionView> {
+  return callCommand<OuterPositionView>("window_get_outer_position");
+}
+
+/** 贴边吸附休眠（edge ∈ top/left/right）。 */
+export async function snapToEdge(edge: "top" | "left" | "right"): Promise<void> {
+  await callCommand("window_snap_to_edge", { edge });
+}
+
+/** 解除吸附（恢复透明度 1.0）。 */
+export async function restoreFromSnap(): Promise<void> {
+  await callCommand("window_restore_from_snap");
+}

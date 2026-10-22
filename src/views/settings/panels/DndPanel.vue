@@ -1,30 +1,23 @@
 <script setup lang="ts">
-/**
- * 勿扰与频率面板（设计方案 §4.3，勘误 #13）：勿扰开关 + 多段时段 + 主动频率档位。
- * 即改即存（debounce 300ms → settings_save_dnd；乐观更新 + 失败回滚）。
- * 自启/情境感知：后端 IPC 命令缺失（D2 计划"Rust 零新增"不实），本面板仅占位，不造假功能。
- */
-import { computed, onMounted, reactive, ref, watch } from "vue";
-
+import { onMounted, onUnmounted, reactive, ref, computed, watch } from "vue";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import AppCard from "../../../components/ui/AppCard.vue";
-import AppToggle from "../../../components/ui/AppToggle.vue";
-import HintBox from "../../../components/ui/HintBox.vue";
+import TimeChip from "../../../components/ui/TimeChip.vue";
 import KbdChip from "../../../components/ui/KbdChip.vue";
 import SegmentedControl from "../../../components/ui/SegmentedControl.vue";
-import TimeChip from "../../../components/ui/TimeChip.vue";
-import { getTyped, saveDnd } from "../../../api/settings";
 import { pushToast } from "../../../composables/useToast";
 import {
-  applyDndLocal,
   applySnapshot,
-  setFrequency,
+  applyDndLocal,
   settingsStore,
+  setFrequency,
 } from "../../../state/settingsStore";
+import { getTyped, saveDnd } from "../../../api/settings";
 import type { DndConfig, ProactiveFrequency } from "../../../api/types";
 
-const FREQ_OPTIONS: Array<{ value: ProactiveFrequency; label: string; sub: string }> = [
-  { value: "quiet", label: "安静", sub: "1~2 次/天" },
-  { value: "normal", label: "正常", sub: "4~6 次/天" },
+const FREQ_OPTIONS = [
+  { value: "quiet", label: "安静", sub: "3-5 次/天" },
+  { value: "normal", label: "正常", sub: "5-8 次/天" },
   { value: "sticky", label: "粘人", sub: "10+ 次/天" },
 ];
 
@@ -116,6 +109,8 @@ async function doSave(): Promise<void> {
       { enabled: dnd.enabled, ranges: dnd.ranges.map((r) => ({ ...r })) },
       frequency.value,
     );
+    // 同步窗口 A 铃铛（D4.3 双向）
+    void emit("settings:dnd:changed", { enabled: dnd.enabled });
   } catch (e) {
     pushToast(e instanceof Error ? e.message : "保存失败", "error");
     rollback();
@@ -137,7 +132,20 @@ function updateRange(i: number, r: { start: string; end: string }): void {
 
 watch([() => dnd.enabled, () => dnd.ranges, frequency], persist, { deep: true });
 
-onMounted(ensureInit);
+let dndUnlisten: UnlistenFn | null = null;
+
+onMounted(async () => {
+  await ensureInit();
+  // 窗口 A 铃铛改勿扰 → B 同步（双窗口独立 webview，store 不共享，靠事件）
+  dndUnlisten = await listen<{ enabled: boolean }>("settings:dnd:changed", (e) => {
+    dnd.enabled = e.payload.enabled;
+    applyDndLocal({ enabled: dnd.enabled, ranges: dnd.ranges.map((r) => ({ ...r })) });
+  });
+});
+
+onUnmounted(() => {
+  dndUnlisten?.();
+});
 </script>
 
 <template>

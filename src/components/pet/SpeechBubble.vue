@@ -13,13 +13,13 @@ const CHAR_W = 7;
 const props = withDefaults(
   defineProps<{
     /** 气泡文本。 */
-    text: string;
+    text?: string;
     /** 是否处于流式（显示光标）。 */
     streaming?: boolean;
     /** 是否可见（空文本或 false → 不渲染）。 */
     visible?: boolean;
   }>(),
-  { streaming: false, visible: true },
+  { text: "", streaming: false, visible: true },
 );
 
 // 估算气泡期望宽度（防截断：真实宽度由文本长度估算，布局再按空间 clamp）

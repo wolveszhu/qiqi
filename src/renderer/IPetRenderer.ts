@@ -36,6 +36,8 @@ export interface IPetRenderer {
   getHitRegion(): HitRegion;
   /** 空闲降帧开关（E2 待机 30fps 优化，勘误#18）。 */
   setIdleMode?(enabled: boolean): void;
+  /** 吸附休眠视觉（D4.4）：角色 alpha 调到 0.6 + 睡姿 + 降帧；false 恢复。 */
+  setSleeping?(sleeping: boolean): void;
   /** 卸载：destroy(true) + 移除监听（usePetRenderer onUnmounted 调用）。 */
   dispose(): void;
 }

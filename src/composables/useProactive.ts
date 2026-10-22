@@ -103,6 +103,8 @@ function lastInteractionMs(): number | null {
 function tick(): void {
   const now = Date.now();
   rollDayIfNeeded(now);
+  // D4.4 边缘吸附休眠：主动引擎 skip（正交勿扰，内存态）
+  if (settingsStore.sleepSnap) return;
 
   const anchorIndex = hitAnchorIndex(now);
   const ctx: ProactiveCtx = {
