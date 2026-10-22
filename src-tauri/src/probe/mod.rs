@@ -7,4 +7,6 @@
 //! TODO(C6): idle.rs（GetLastInputInfo）、foreground.rs（前台进程名）。
 
 pub mod cursor;
+pub mod foreground;
+pub mod idle;
 pub mod scheduler;

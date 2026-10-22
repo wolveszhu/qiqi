@@ -9,8 +9,8 @@ import { onMounted, onUnmounted } from "vue";
 
 import { listen } from "@tauri-apps/api/event";
 
-import { settleAffection } from "../api/pet";
-import { petStore } from "../state/petStore";
+import { getState, settleAffection } from "../api/pet";
+import { applyPetState, petStore } from "../state/petStore";
 import { setExpression } from "./usePetRenderer";
 import type { AffectionChangedPayload } from "../api/types";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -19,10 +19,14 @@ const unlisteners: UnlistenFn[] = [];
 
 export function useAffection(): void {
   // 每日首次互动打卡（PetWindow mount 触发；结算引擎保证当日唯一 +10）
+  // 成功后拉最新状态刷新 lastInteraction 镜像（C6 傲娇判定数据源保持新鲜）
   onMounted((): void => {
-    void settleAffection({ kind: "checkIn" }).catch((e: unknown) => {
-      console.warn("[affection] 打卡结算失败", e);
-    });
+    void settleAffection({ kind: "checkIn" })
+      .then(() => getState())
+      .then(applyPetState)
+      .catch((e: unknown) => {
+        console.warn("[affection] 打卡结算失败", e);
+      });
   });
 
   void (async (): Promise<void> => {

@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use qiqi_lib::affection::decay;
 use qiqi_lib::affection::level::{level_floor, level_of};
 use qiqi_lib::affection::rules::AffectionSignal;
-use qiqi_lib::affection::{settle_decay_core, settle_signal_core, Mood};
+use qiqi_lib::affection::{Mood, settle_decay_core, settle_signal_core};
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
 use qiqi_lib::db::repositories::{affection_logs, pet_states};
 
@@ -95,7 +95,8 @@ fn decay_engine_unit_anchor_idempotent() {
     let today = NaiveDate::parse_from_str("2026-04-11", "%Y-%m-%d").unwrap();
     let li = NaiveDate::parse_from_str("2026-01-01", "%Y-%m-%d").unwrap();
     // 100 天未互动、Lv2（下限 201）：精确停在 201
-    let (np, _a, days) = decay::settle_decay(500, level_floor(level_of(500)), Some(li), None, today);
+    let (np, _a, days) =
+        decay::settle_decay(500, level_floor(level_of(500)), Some(li), None, today);
     assert_eq!(days, 97);
     assert_eq!(np, 201);
 }

@@ -231,6 +231,9 @@ export class CodeCatRenderer implements IPetRenderer {
       case "sleepy":
         eyes.scale.set(1, 0.08); // 闭合横线
         break;
+      case "tsundere":
+        eyes.scale.set(1.1, 0.55); // 眯眼别扭（happy 弯眼 × 微眯，C6 傲娇基调）
+        break;
     }
   }
 

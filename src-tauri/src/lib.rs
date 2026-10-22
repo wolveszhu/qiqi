@@ -116,6 +116,8 @@ pub fn run() {
             commands::memory::memory_delete_fact,
             commands::memory::memory_regenerate_diary,
             commands::probe::probe_get_cursor,
+            commands::probe::probe_get_snapshot,
+            commands::probe::proactive_generate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

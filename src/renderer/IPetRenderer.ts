@@ -12,8 +12,8 @@
  */
 export type PetAction = "idle" | "click" | "drag" | "sleep" | "stretch" | "eat";
 
-/** 表情名（C1 最小集 + 情绪反馈；affection:changed 驱动 happy/angry）。 */
-export type PetExpression = "neutral" | "happy" | "angry" | "sleepy";
+/** 表情名（C1 最小集 + 情绪反馈；affection:changed 驱动 happy/angry；C6 傲娇 tsundere）。 */
+export type PetExpression = "neutral" | "happy" | "angry" | "sleepy" | "tsundere";
 
 /** 角色包围盒（屏幕坐标，供 C2 命中判定/穿透）。 */
 export interface HitRegion {

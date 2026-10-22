@@ -146,7 +146,7 @@ mod tests {
         // memory 失败 → main 成功：主链序为 main 最前，故 main 直接成功
         let tiered = fixture();
         let client = crate::llm::client::MockLlmClient::ok();
-        let req = ChatRequest { messages: vec![] };
+        let req = ChatRequest { messages: vec![], max_tokens: None };
         let (result, log) = block_on(chat_with_fallback(&client, &tiered, false, req));
         // Stream 未实现 Debug：只断言 Ok 分支（is_ok 不要求 Debug）
         assert!(result.is_ok(), "main 成功则直接返回流");
@@ -157,7 +157,7 @@ mod tests {
     fn fallback_all_fail_yields_local_phrase() {
         let tiered = fixture();
         let client = crate::llm::client::MockLlmClient::failing(&["https://"]);
-        let req = ChatRequest { messages: vec![] };
+        let req = ChatRequest { messages: vec![], max_tokens: None };
         let (result, log) = block_on(chat_with_fallback(&client, &tiered, false, req));
         assert!(result.is_err(), "全失败返回本地话术（Err 携带文本）");
         // expect_err 需要 Stream: Debug（未实现）——用 match 解包

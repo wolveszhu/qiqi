@@ -156,3 +156,30 @@ export interface CursorPayload {
   x: number;
   y: number;
 }
+
+/** 空闲状态事件负载（probe:idle:changed；C6 翻转才 emit）。 */
+export interface IdlePayload {
+  state: "idle" | "active";
+  idleMs: number;
+}
+
+/** 前台进程事件负载（probe:foreground:changed；仅进程名，变化才 emit）。 */
+export interface ForegroundPayload {
+  process: string | null;
+}
+
+/** 探针快照（probe_get_snapshot；非订阅场景读缓存）。 */
+export interface ProbeSnapshot {
+  cursor: [number, number];
+  idleMs: number;
+  idle: boolean;
+  foreground: string | null;
+}
+
+/** proactive:show 事件负载（Rust 非流式短生成完毕；前端仅做本地打字机）。 */
+export interface ProactiveShowPayload {
+  sessionId: string;
+  text: string;
+  /** 表情指令（与 PetExpression 值域一致）。 */
+  mood: "happy" | "tsundere";
+}

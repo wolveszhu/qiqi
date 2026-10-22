@@ -22,6 +22,8 @@ pub struct ChatMessage {
 #[derive(Debug, Clone)]
 pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
+    /// 非流式短生成上限（主动话术用；None=不限）。仅传入时加入请求体。
+    pub max_tokens: Option<u32>,
 }
 
 /// LLM 目标（三档路由的解析结果；Key 只在此流转，不落日志）。
@@ -84,11 +86,16 @@ impl ReqwestLlmClient {
 
     /// OpenAI 兼容 chat/completions（stream）请求体。
     fn chat_body(target: &LlmTarget, request: &ChatRequest) -> serde_json::Value {
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": target.model,
             "messages": request.messages,
             "stream": true,
-        })
+        });
+        // 主动话术等非流式短生成：仅当显式设置 max_tokens 时加入（不影响对话主链路）
+        if let Some(mt) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(mt);
+        }
+        body
     }
     // 注：ChatRequest 不再携带 model（避免与 target.model 双源）；调用处构造时无需填 model。
 }
@@ -369,9 +376,10 @@ mod tests {
             api_key: "k".into(),
             model: "m".into(),
         };
-        let stream =
-            futures_executor_block_on(mock.chat_stream(&target, ChatRequest { messages: vec![] }))
-                .expect("mock 成功");
+        let stream = futures_executor_block_on(
+            mock.chat_stream(&target, ChatRequest { messages: vec![], max_tokens: None }),
+        )
+        .expect("mock 成功");
         // StreamExt::next 是 async——经 block_on 桥接逐项收取
         let got = futures_executor_block_on(async move {
             let mut stream = stream;

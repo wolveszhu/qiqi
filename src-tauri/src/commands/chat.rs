@@ -342,7 +342,16 @@ fn build_chat_request(
     text: &str,
 ) -> Result<ChatRequest, AppError> {
     let view = RelationView { level: relation.0, pet_name: "喵喵" };
-    let mut system = build_system_prompt(retrieved, &view);
+    // C6.6 傲娇：距上次互动 ≥3 天 → 注入傲娇基调（用户主动对话同样生效）
+    let last_interaction =
+        crate::db::repositories::pet_states::get(conn).ok().and_then(|p| p.last_interaction);
+    let ctx = crate::llm::prompt::ConversationCtx {
+        tsundere: crate::llm::prompt::is_tsundere(
+            last_interaction.as_deref(),
+            chrono::Local::now(),
+        ),
+    };
+    let mut system = build_system_prompt(retrieved, &view, &ctx);
 
     // 摘要头（会话超阈值后由蒸馏生成）
     if let Some(summary) = crate::db::repositories::summaries::get(conn, session_id)? {
@@ -362,7 +371,7 @@ fn build_chat_request(
         });
     }
     messages.push(ChatMessage { role: "user".into(), content: text.to_string() });
-    Ok(ChatRequest { messages })
+    Ok(ChatRequest { messages, max_tokens: None })
 }
 
 /// memory 档目标（蒸馏与 embedding 共用；勘误 #8）。

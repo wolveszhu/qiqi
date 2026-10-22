@@ -17,16 +17,31 @@ import { settleAffection } from "../../api/pet";
 import { useChatStream } from "../../composables/useChatStream";
 import { useAffection } from "../../composables/useAffection";
 import { usePetRenderer } from "../../composables/usePetRenderer";
+import { useProactive, proactiveBubble } from "../../composables/useProactive";
 import { useSystemProbe } from "../../composables/useSystemProbe";
-import { setExpression } from "../../composables/usePetRenderer";
+import { playAction, setExpression, setIdleMode } from "../../composables/usePetRenderer";
 import { chatStore } from "../../state/chatStore";
 
-const { playAction, lookAt } = usePetRenderer();
-useSystemProbe((x, y) => lookAt(x, y));
+const { lookAt } = usePetRenderer();
+useSystemProbe({
+  onMove: lookAt,
+  // C6.5 空闲接线：入睡（呼吸幅度减半 + 降帧）/ 回归伸懒腰
+  onIdleChange: (idle: boolean): void => {
+    if (idle) {
+      playAction("sleep");
+      setIdleMode(true);
+    } else {
+      playAction("stretch");
+      setIdleMode(false);
+    }
+  },
+});
 // 仅挂载事件订阅（send/abortCurrent 由 D1 的 ChatInput 组件消费）
 useChatStream();
 // 好感度：打卡（mount）+ 事件消费 + 表情联动（禁数值红线：窗口 A 只取 mood）
 useAffection();
+// C6.4 主动互动：5min tick 微随机仲裁 + proactive:show 气泡消费
+useProactive();
 
 /**
  * 按下即拖拽：透明区已被 Rust 穿透（点击不到本 DOM），
@@ -53,7 +68,8 @@ function onDoubleClick(): void {
 
 <template>
   <div class="pet-window">
-    <!-- 气泡占位（D1 换正式 SpeechBubble；单气泡覆盖式，勘误#12） -->
+    <!-- 气泡占位（D1 换正式 SpeechBubble；单气泡覆盖式，勘误#12）。
+         聊天流优先；否则显示主动互动气泡（C6.4，本地逐字打字机） -->
     <div
       v-if="chatStore.text || chatStore.isStreaming"
       class="pet-window__bubble"
@@ -61,6 +77,17 @@ function onDoubleClick(): void {
       {{ chatStore.text
       }}<span
         v-if="chatStore.isStreaming"
+        class="pet-window__cursor"
+        >▍</span
+      >
+    </div>
+    <div
+      v-else-if="proactiveBubble.text"
+      class="pet-window__bubble"
+    >
+      {{ proactiveBubble.text
+      }}<span
+        v-if="proactiveBubble.isStreaming"
         class="pet-window__cursor"
         >▍</span
       >

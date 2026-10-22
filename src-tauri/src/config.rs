@@ -7,6 +7,12 @@ pub const EMBEDDING_DIM: usize = 1536;
 /// 探针轮询间隔（毫秒）：`GetCursorPos` 单点轮询，CPU < 2% 红线的核心参数（C2/E2 实测取舍）。
 pub const PROBE_INTERVAL_MS: u64 = 100;
 
+/// 空闲阈值（毫秒）：超过视为 idle（C6 睡眠动作触发）。dev 期可临时调小验证。
+pub const IDLE_THRESHOLD_MS: u64 = 30 * 60 * 1000;
+
+/// 前台进程探查节流（探针循环每 N 次才查一次，降 `OpenProcess` 频率，守 CPU 红线）。
+pub const FOREGROUND_PROBE_EVERY_N: u64 = 10; // 100ms × 10 = 1s
+
 /// SQLCipher 密钥在 Windows 凭据管理器的服务名/用户名（B4）。
 pub const KEY_SERVICE: &str = "com.brave.qiqi";
 pub const KEY_USER: &str = "sqlcipher-key";
@@ -153,8 +159,9 @@ pub fn default_model_for_tier(preset_id: &str, tier: &str) -> Option<&'static st
     }
 }
 
-// TODO(C6): 空闲阈值（30min）、时间窗口锚点（08:30-09:30 / 22:00-23:30）、
-// 频率档位区间（1-2/4-6/10+）、工作/游戏进程名单。
+// C6 锚点窗口/频率档位区间/工作进程名单等"判定类常量"集中在前端
+// `src/constants/proactive.ts`（与 `utils/microRandom.ts` 同源，便于 Vitest 注入 now/rng）。
+// Rust 侧仅保留系统层阈值（IDLE_THRESHOLD_MS / FOREGROUND_PROBE_EVERY_N）。
 
 #[cfg(test)]
 mod tests {

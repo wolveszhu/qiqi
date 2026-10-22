@@ -38,6 +38,11 @@ export function setExpression(name: Parameters<IPetRenderer["setExpression"]>[0]
   renderer?.setExpression(name);
 }
 
+/** 空闲降帧开关（C6.5 入睡/唤醒时联动，勘误#18 待机 30fps）。 */
+export function setIdleMode(enabled: boolean): void {
+  renderer?.setIdleMode?.(enabled);
+}
+
 export function lookAt(x: number, y: number): void {
   renderer?.lookAt(x, y);
 }

@@ -142,6 +142,7 @@ async fn extract_facts(
                 content: format!("用户：{user_text}\n助手：{assistant_text}"),
             },
         ],
+        max_tokens: None,
     };
     let mut attempt = 0;
     loop {
@@ -173,6 +174,7 @@ async fn detect_resonance(
                 content: format!("用户：{user_text}\n助手：{assistant_text}"),
             },
         ],
+        max_tokens: None,
     };
     let mut attempt = 0;
     loop {
@@ -238,6 +240,7 @@ async fn summarize_session(
             },
             ChatMessage { role: "user".into(), content: transcript },
         ],
+        max_tokens: None,
     };
     collect_full_text(client, target, request).await
 }

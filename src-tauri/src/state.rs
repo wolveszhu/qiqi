@@ -36,6 +36,10 @@ pub struct AppState {
     pub last_ignore: Mutex<Option<bool>>,
     /// 穿透总闸：true=启用自动穿透（默认）；false=整窗接收点击（D1/D4 场景）。
     pub click_through_enabled: Mutex<bool>,
+    /// 空闲状态机当前值（C6：true=idle；scheduler 翻转时 emit，省事件洪泛）。
+    pub idle_active: Mutex<bool>,
+    /// 前台进程名缓存（C6：变化时才 emit `probe:foreground:changed`）。
+    pub last_foreground: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -47,6 +51,8 @@ impl AppState {
             cursor: Mutex::new((0, 0)),
             last_ignore: Mutex::new(None),
             click_through_enabled: Mutex::new(true),
+            idle_active: Mutex::new(false),
+            last_foreground: Mutex::new(None),
         }
     }
 }
