@@ -158,15 +158,8 @@ fn add_fact_writes_vector_and_knn_hits() {
 fn fact_content_validation_rejects_dirty_input() {
     assert!(validate_fact_content("   ").is_err(), "纯空白 → 拒绝");
     assert!(validate_fact_content("").is_err(), "空串 → 拒绝");
-    assert!(
-        validate_fact_content(&"x".repeat(201)).is_err(),
-        "超长（>200 字）→ 拒绝"
-    );
-    assert_eq!(
-        validate_fact_content("  我喜欢猫  ").unwrap(),
-        "我喜欢猫",
-        "正常内容去空白返回"
-    );
+    assert!(validate_fact_content(&"x".repeat(201)).is_err(), "超长（>200 字）→ 拒绝");
+    assert_eq!(validate_fact_content("  我喜欢猫  ").unwrap(), "我喜欢猫", "正常内容去空白返回");
 }
 
 #[test]

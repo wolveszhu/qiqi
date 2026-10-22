@@ -98,10 +98,7 @@ pub async fn memory_add_fact(
 
     let state = app.state::<AppState>();
     let (tiered, quota_embedded) = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+        let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = app_settings::get_tiered(&conn)?;
         let quota = app_settings::get_quota_mode(&conn)?;
         (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED)
@@ -116,10 +113,7 @@ pub async fn memory_add_fact(
         .next()
         .ok_or_else(|| AppError::Llm("embed 返回空结果".into()))?;
 
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     crate::llm::distill::add_fact_with_embedding(&conn, category, &content, &embedding)?;
     Ok(())
 }
