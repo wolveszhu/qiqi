@@ -1,25 +1,30 @@
 <script setup lang="ts">
 /**
  * 日记卡片（设计方案 §5.2 / §4.5）：📖 头 + 日期 + 超大引号水印；第一人称正文；
- * foot 心情 badge（green）+ 重新生成（ghost 小按钮，二次确认）。纯展示，重生成上抛事件。
+ * foot 心情 badge（green）+ 重新生成（ghost 小按钮，二次确认）；生成中 loading 防重复点击。
+ * mood 映射走 `constants/mood`（后端 0=开心/1=平静/2=低落，null=未记录）。
  */
 import { ref } from "vue";
 
 import AppButton from "../../components/ui/AppButton.vue";
 import StatusBadge from "../../components/ui/StatusBadge.vue";
 import type { DiaryDto, DiaryMood } from "../../api/types";
+import { moodView } from "../../constants/mood";
 
-const props = defineProps<{ diary: DiaryDto }>();
+const props = withDefaults(defineProps<{ diary: DiaryDto; loading?: boolean }>(), {
+  loading: false,
+});
 const emit = defineEmits<{ (e: "regenerate", date: string): void }>();
 
 const confirming = ref(false);
 
 function moodLabel(m: DiaryMood | null): string {
-  const map: Record<number, string> = { 0: "开心", 1: "平静", 2: "低落" };
-  return `心情 · ${m == null ? "平静" : (map[m] ?? "平静")}`;
+  const v = moodView(m);
+  return `${v.emoji} ${v.label}`;
 }
 
 function onRegen(): void {
+  if (props.loading) return;
   if (!confirming.value) {
     confirming.value = true;
     return;
@@ -48,6 +53,7 @@ function onRegen(): void {
       />
       <AppButton
         variant="ghost"
+        :loading="loading"
         :class="{ 'is-confirm': confirming }"
         @click="onRegen"
       >
@@ -100,6 +106,8 @@ function onRegen(): void {
   line-height: 2;
   color: var(--ink);
   white-space: pre-wrap;
+  max-height: 220px;
+  overflow-y: auto;
 }
 .diary-card__foot {
   display: flex;

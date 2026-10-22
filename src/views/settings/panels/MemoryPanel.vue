@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * 记忆面板（设计方案 §4.5，D3 实装）：左日记列（倒序 + 重新生成二次确认），右事实标签卡
- * （按 category 分组、conf 降序、行内编辑 + 删除二次确认）。编辑/删除走 memory_* 命令，
- * 后端同步重建 vec_memory 向量（C7）。乐观更新 + 失败回滚。
+ * 记忆面板（设计方案 §4.5，D3 实装）：
+ * 日记列（倒序 + 日期锚点条滚动定位 + mood 徽标 + 重新生成二次确认 + loading 防重复）
+ * + 事实标签卡（category 分组、conf 降序、行内编辑 / 删除二次确认 / 新增正向入口）。
+ * 编辑/删除/新增走 memory_* 命令（C7/D3.1），后端同步重建 vec_memory 向量；乐观更新 + 失败回滚。
  */
 import { computed, onMounted, ref } from "vue";
 
@@ -11,6 +12,7 @@ import FactChip from "../../../components/memory/FactChip.vue";
 import AppCard from "../../../components/ui/AppCard.vue";
 import HintBox from "../../../components/ui/HintBox.vue";
 import {
+  addFact,
   deleteFact,
   listDiaries,
   listFacts,
@@ -23,18 +25,24 @@ import type { DiaryDto, FactDto } from "../../../api/types";
 const diaries = ref<DiaryDto[]>([]);
 const facts = ref<FactDto[]>([]);
 const loading = ref(false);
+const regeneratingDate = ref<string | null>(null);
+const adding = ref(false);
+const addContent = ref("");
+const addCategory = ref(0);
 
 // category：0=喜好 / 1=日程 / 2=档案（后端 facts 表 TINYINT 约定）
 const GROUP_ORDER = [0, 1, 2];
-const GROUP_TITLE: Record<number, string> = {
-  0: "喜好",
-  1: "日程",
-  2: "档案",
-};
+const GROUP_TITLE: Record<number, string> = { 0: "喜好", 1: "日程", 2: "档案" };
+const today = new Date().toISOString().slice(0, 10);
 
 const sortedDiaries = computed(() =>
   [...diaries.value].sort((a, b) => b.diaryDate.localeCompare(a.diaryDate)),
 );
+
+const dateAnchors = computed(() => {
+  const s = new Set(diaries.value.map((d) => d.diaryDate));
+  return [...s].sort((a, b) => b.localeCompare(a));
+});
 
 const groupedFacts = computed<Record<number, FactDto[]>>(() => {
   const m: Record<number, FactDto[]> = {};
@@ -68,15 +76,15 @@ async function loadAll(): Promise<void> {
 }
 
 async function onEditFact(id: number, content: string): Promise<void> {
-  const target = facts.value.find((x) => x.id === id);
-  if (!target) return;
-  const before = target.content;
-  target.content = content; // 乐观
+  const t = facts.value.find((x) => x.id === id);
+  if (!t) return;
+  const before = t.content;
+  t.content = content; // 乐观
   try {
     await updateFact(id, content);
     pushToast("已更新记忆");
   } catch (e) {
-    target.content = before; // 回滚
+    t.content = before; // 回滚
     pushToast(e instanceof Error ? e.message : "更新失败", "error");
   }
 }
@@ -95,13 +103,45 @@ async function onDeleteFact(id: number): Promise<void> {
 }
 
 async function onRegenerate(date: string): Promise<void> {
+  regeneratingDate.value = date; // 防重复点击
   try {
     await regenerateDiary(date);
     await loadAll();
     pushToast("日记已重新生成");
   } catch (e) {
     pushToast(e instanceof Error ? e.message : "重新生成失败", "error");
+  } finally {
+    regeneratingDate.value = null;
   }
+}
+
+async function onAddFact(): Promise<void> {
+  const content = addContent.value.trim();
+  if (!content) {
+    pushToast("记忆内容不能为空", "error");
+    return;
+  }
+  if (content.length > 200) {
+    pushToast("记忆内容过长（≤200 字）", "error");
+    return;
+  }
+  adding.value = true;
+  try {
+    await addFact(content, addCategory.value);
+    addContent.value = "";
+    await loadAll();
+    pushToast("已添加记忆");
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "添加失败", "error");
+  } finally {
+    adding.value = false;
+  }
+}
+
+function scrollToDate(date: string): void {
+  document
+    .getElementById(`diary-${date}`)
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 onMounted(loadAll);
@@ -117,23 +157,44 @@ onMounted(loadAll);
           <span class="mem-col__count">{{ diaries.length }} 篇</span>
         </div>
         <div
+          v-if="dateAnchors.length"
+          class="date-anchors"
+        >
+          <button
+            v-for="d in dateAnchors"
+            :key="d"
+            class="date-anchor"
+            :class="{ 'is-today': d === today }"
+            type="button"
+            @click="scrollToDate(d)"
+          >
+            {{ d.slice(5) }}
+          </button>
+        </div>
+        <div
           v-if="loading"
           class="mem-loading"
         >
           正在读取日记…
         </div>
         <template v-else>
-          <DiaryCard
+          <div
             v-for="d in sortedDiaries"
+            :id="`diary-${d.diaryDate}`"
             :key="d.id"
-            :diary="d"
-            @regenerate="onRegenerate"
-          />
+            class="diary-anchor-wrap"
+          >
+            <DiaryCard
+              :diary="d"
+              :loading="regeneratingDate === d.diaryDate"
+              @regenerate="onRegenerate"
+            />
+          </div>
           <HintBox
             v-if="!diaries.length"
             tone="info"
           >
-            她还没写过日记——今晚见。
+            今天还没有日记，和我说说话吧。
           </HintBox>
         </template>
       </section>
@@ -170,6 +231,54 @@ onMounted(loadAll);
               />
             </div>
           </div>
+
+          <!-- 新增记忆入口（D3.1 正向入口） -->
+          <div class="mem-add">
+            <button
+              v-if="!adding"
+              class="mem-add__btn"
+              type="button"
+              @click="adding = true"
+            >
+              ＋ 添加记忆
+            </button>
+            <div
+              v-else
+              class="mem-add__form"
+            >
+              <input
+                v-model="addContent"
+                class="mem-add__input"
+                placeholder="记点什么…"
+                maxlength="200"
+                @keyup.enter="onAddFact"
+              />
+              <select
+                v-model.number="addCategory"
+                class="mem-add__select"
+              >
+                <option :value="0">喜好</option>
+                <option :value="1">日程</option>
+                <option :value="2">档案</option>
+              </select>
+              <button
+                class="mem-add__ok"
+                type="button"
+                :disabled="!addContent.trim()"
+                @click="onAddFact"
+              >
+                保存
+              </button>
+              <button
+                class="mem-add__cancel"
+                type="button"
+                @click="adding = false"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+
           <HintBox
             v-if="!facts.length"
             tone="info"
@@ -181,7 +290,7 @@ onMounted(loadAll);
     </div>
 
     <HintBox>
-      ✏️ 记忆可纠正：编辑 / 删除事实后，向量记忆会同步重建；纠正权始终在你手里。
+      ✏️ 记忆可纠正：编辑 / 删除 / 新增事实后，向量记忆会同步重建；纠正权始终在你手里。
     </HintBox>
   </AppCard>
 </template>
@@ -217,6 +326,31 @@ onMounted(loadAll);
   font-size: 13px;
   color: var(--ink-soft);
 }
+.date-anchors {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.date-anchor {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-window);
+  font-size: 11px;
+  font-family: Consolas, monospace;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.date-anchor.is-today {
+  border-color: var(--matcha);
+  color: var(--matcha-deep);
+  font-weight: 700;
+}
+.diary-anchor-wrap {
+  scroll-margin: 12px;
+}
 .mem-group {
   display: flex;
   flex-direction: column;
@@ -240,6 +374,70 @@ onMounted(loadAll);
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.mem-add {
+  margin-top: 4px;
+}
+.mem-add__btn {
+  width: 100%;
+  padding: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: none;
+  color: var(--matcha-deep);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mem-add__btn:hover {
+  border-color: var(--matcha);
+}
+.mem-add__form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.mem-add__input {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 10px;
+  border: 1px solid var(--matcha);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg-window);
+}
+.mem-add__select {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg-window);
+}
+.mem-add__ok {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--matcha);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.mem-add__ok:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.mem-add__cancel {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--bg-deep);
+  color: var(--ink-soft);
+  font-size: 12px;
+  cursor: pointer;
 }
 @media (max-width: 1080px) {
   .mem-grid {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
  * 事实标签（设计方案 §5.2 / §4.5）：内容 + conf 置信度微胶囊 + ✎ 编辑 + ✕ 删除（二次确认，hover 变腮红）。
- * 编辑=行内受控 input，回车/失焦保存；删除=点击转确认态（✕→「确认?」）防误删。均上抛事件，写操作在父级。
+ * 编辑=行内受控 input，回车/失焦保存、Esc 取消（零副作用）；删除=点击转确认态（✕→「确认?」）防误删。
+ * 均上抛事件，写操作在父级。
  */
 import { ref } from "vue";
 
@@ -31,6 +32,11 @@ function commitEdit(): void {
   const next = draft.value.trim();
   if (next && next !== props.fact.content) emit("edit", props.fact.id, next);
 }
+function cancelEdit(): void {
+  // Esc 取消：恢复草稿为原值，blur 时 next===content 不落库（零副作用）
+  draft.value = props.fact.content;
+  editing.value = false;
+}
 function onDel(): void {
   if (!confirming.value) {
     confirming.value = true;
@@ -50,6 +56,7 @@ function onDel(): void {
       v-model="draft"
       class="fact-chip__input"
       @keyup.enter="commitEdit"
+      @keyup.esc="cancelEdit"
       @blur="commitEdit"
     />
     <template v-else>

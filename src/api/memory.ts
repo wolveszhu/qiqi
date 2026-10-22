@@ -32,3 +32,8 @@ export async function deleteFact(id: number): Promise<void> {
 export async function regenerateDiary(date: string): Promise<void> {
   await callCommand("memory_regenerate_diary", { date });
 }
+
+/** 新增用户记忆（D3.1 正向入口）：content + category（0=喜好/1=日程/2=档案）。 */
+export async function addFact(content: string, category: number): Promise<void> {
+  await callCommand("memory_add_fact", { content, category });
+}
