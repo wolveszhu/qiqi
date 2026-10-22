@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 import FactChip from "../../components/memory/FactChip.vue";
 import type { FactDto } from "../../api/types";
 
-const FACT: FactDto = { id: 7, category: 0, content: "喜欢冰美式", confidence: 0.85, createdAt: "" };
+const FACT: FactDto = {
+  id: 7,
+  category: 0,
+  content: "喜欢冰美式",
+  confidence: 0.85,
+  createdAt: "",
+};
 
 describe("FactChip", () => {
   it("展示内容 + conf 百分比徽标", () => {
@@ -51,7 +57,9 @@ describe("FactChip", () => {
     expect(w.emitted("edit")).toBeUndefined();
     // 退出编辑且草稿已恢复（再次进入应仍是原值）
     await w.get('button[aria-label="编辑"]').trigger("click");
-    expect((w.get("input.fact-chip__input").element as HTMLInputElement).value).toBe("喜欢冰美式");
+    expect((w.get("input.fact-chip__input").element as HTMLInputElement).value).toBe(
+      "喜欢冰美式",
+    );
   });
 
   it("内容未变 → 提交不 emit edit", async () => {

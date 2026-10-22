@@ -30,7 +30,10 @@ describe("AffectionRing", () => {
 
   it("角度随分数线性变化（200/201/500/750 边界）", () => {
     for (const p of [200, 201, 500, 750]) {
-      expect(angleOf(mount(AffectionRing, { props: { points: p } }))).toBeCloseTo(ringAngle(p), 6);
+      expect(angleOf(mount(AffectionRing, { props: { points: p } }))).toBeCloseTo(
+        ringAngle(p),
+        6,
+      );
     }
   });
 

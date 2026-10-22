@@ -33,9 +33,11 @@ describe("AppToggle", () => {
   });
 
   it("label 传入才渲染标签文案", () => {
-    expect(mount(AppToggle, { props: { modelValue: false } }).find(".app-toggle__label").exists()).toBe(
-      false,
-    );
+    expect(
+      mount(AppToggle, { props: { modelValue: false } })
+        .find(".app-toggle__label")
+        .exists(),
+    ).toBe(false);
     const w = mount(AppToggle, { props: { modelValue: false, label: "勿扰" } });
     expect(w.get(".app-toggle__label").text()).toBe("勿扰");
   });
