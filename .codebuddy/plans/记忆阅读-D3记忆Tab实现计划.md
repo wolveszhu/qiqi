@@ -6,7 +6,7 @@
 | 规则依据 | `.codebuddy/rules/`：code-standards §7（组件约定/no-v-html）、design-baseline §F（模块 8"用户可修正记忆"）；实现蓝图：[`docs/design/窗口B-设置界面设计方案.md`](../../docs/design/窗口B-设置界面设计方案.md) §4.5（MemoryPanel 规格）+ §5.2（DiaryCard/FactChip 组件）+ §6（破坏性操作二次确认）；**选型关联**：日记/蒸馏/重建均走 memory 档（父计划选型方案：qwen-flash 等低成本模型），本计划无 LLM 配置交互、仅消费 C7 结果——无需对齐改动 |
 | 范围边界 | **做**：日记列表与日期导航、facts 标签云（分组/行内编辑/删除/新增）、重新生成。**不含**：日记生成与向量同步逻辑（C7 已备，本计划仅消费）、托盘/铃铛（D4） |
 | 现状 | D2 后：MemoryPanel 为空态骨架（`memory_list_diaries` 空态已接）；C7 已实装 `memory_update_fact`/`memory_delete_fact`/`memory_regenerate_diary`/`memory_list_facts`/`memory_list_diaries`；`components/memory/` 占位 |
-| 状态 | 待执行（前置：C7、D2）——小体量任务 |
+| 状态 | **已完成**（2026-10-22，后端 `1941f77` + 前端 `5d4c0e1`；C7 已备命令，本计划补齐 D3.1 正向入口 + 导航 + 编辑/新增 + 重生成 loading） |
 
 ---
 
@@ -97,3 +97,58 @@ MemoryPanel
 ## 七、执行顺序
 
 D3.1（新增记忆命令+单测）→ D3.2（日记列表）→ D3.3（标签云）→ D3.4（重新生成流程）→ 手工清单 → D3.5 DoD 收口。
+
+---
+
+## 十、执行结果与计划对应（2026-10-22，后端 `1941f77` + 前端 `5d4c0e1`）
+
+### 各任务实装对照
+
+| 计划 | 文件 | 结果 |
+| :--- | :--- | :--- |
+| D3.1 新增记忆命令 | `commands/memory.rs` `memory_add_fact` + `llm/distill.rs` `validate_fact_content`/`add_fact_with_embedding` + `lib.rs` 注册 + `tests/memory_it.rs` 2 单测 | ✅ 命令 + 向量一致性（KNN 命中）+ 脏输入拒绝全绿 |
+| D3.2 日记列表与导航 | `DiaryCard.vue` + `MemoryPanel.vue` 日期锚点条 + 空态 | ✅ 倒序 + 锚点条（今日高亮 + `scrollIntoView` 定位）+ 空态"今天还没有日记，和我说说话吧" |
+| D3.3 标签云与编辑 | `FactChip.vue` + `MemoryPanel.vue` 分组 + "＋ 添加记忆" | ✅ 三组（喜好/日程/档案）+ 行内编辑（Esc 取消）+ 删除二次确认 + 新增入口 + 乐观更新/回滚 |
+| D3.4 重新生成流程 | `DiaryCard.vue` loading + `MemoryPanel.vue` `regeneratingDate` | ✅ loading 防重复点击 + 二次确认态；确认日期文案待 E3 打磨（见勘误 #20） |
+| D3.5 走查收口 | 本回写 | ✅ 门禁全绿 + DoD 勾选 + 父计划 D3 行（已 `135bf2a` 回写，本计划补执行细节） |
+
+### 关键 API 实态修正（勘误登记）
+
+- **勘误 #18（mood 映射冲突）**：本计划 §一#2 / §六 草案写 `mood ∈ 0-4（0=未记录），1=😔低落/2=😌平静/3=😺开心/4=🥰雀跃`，但后端 `llm/diary.rs` 已落地契约为 `0=开心/1=平静/2=低落（null=未记录，越界→None）`。**以已落地后端为准**，实现用 `constants/mood.ts` 映射 `0=😺开心 / 1=😌平静 / 2=😔低落 / null=平静兜底`。子计划草稿为陈旧版本，已覆盖。
+- **勘误 #19（repository 未改动）**：§四 文件清单列 `repositories/{facts,vec_memory}.rs` MODIFY insert 路径，实际 C7 已有 `facts::insert`/`vec_memory::insert`，本计划在 `distill.rs` 新增 `add_fact_with_embedding` 复用既有 insert（不触碰 repository 文件），更契合"复用既有同步模式"。
+- **简化项（待 E3 打磨，登记 #20）**：
+  1. §三 三组标题写"你喜欢/发生过/关于你"，实现采用设计 §4.5 的"喜好/日程/档案"（与后端 category 语义一致）。
+  2. §四"仅显示近 30 天 + 加载更早"未做，锚点条全量横向滚动（chip 量少时足够，量大待 E3 折叠）。
+  3. §三/D3.4"确认弹层文案'将覆盖 X月X日 日记'"未显式实现，改为 `DiaryCard` 二次确认态"确认重写?"（已防误触，文案待 E3 打磨）。
+
+### 门禁终态
+
+`cargo clippy --all-targets -D warnings` ✅ / **`cargo test` 96 passed**（memory_it 增 2：add_fact 向量一致 + 脏输入拒绝）；`pnpm typecheck` ✅ / `pnpm build` ✅ / `pnpm lint` 0 ✅ / `pnpm test` 40 passed ✅ / `pnpm format:check` ✅（husky pre-commit 亦过）
+
+### 冷眼三问
+
+| # | 项 | 结果 |
+| :--- | :--- | :--- |
+| ① | add_fact 与蒸馏并发写 facts 安全 | 同 `state.db` Mutex 串行；embed 在无锁段（失败不触碰库），仅写库持锁——与 C7.3 同模式，无竞争 |
+| ② | 行内编辑取消零副作用 | `FactChip.cancelEdit` 恢复 draft 为原值，blur 时 `next===content` 不落库；Esc/失焦均安全 |
+| ③ | 事件/DTO 与 C7 契约对齐 | `memory_add_fact(content: String, category: i64)`；前端 `addFact(content, category:number)`；category 越界归 0（0=喜好/1=日程/2=档案）与后端 `facts` 表一致 |
+
+### 红线自查
+
+- 无 `v-html`（日记纯文本 + `pre-wrap`）✅
+- 破坏性操作（删除/重生成）二次确认 ✅
+- 乐观更新失败回滚 ✅
+- API Key 不涉及；记忆全经 `callCommand`（`src/api/memory`）✅
+
+### §五 DoD 勾选（代码层）
+
+- [x] `cargo test` 全绿（add_fact KNN 命中 + 脏输入拒绝）
+- [x] `pnpm typecheck` 零错误
+- [x] 红线自查通过
+- [x] 冷眼三问通过
+- [ ] 手工清单 1–6：代码层达标，待真机手工复验（日记生成需 C7 定时/主动触发；新增"我喜欢吃香菜"召回需次日对话）
+
+### 移交
+
+- 父计划 D3 行已于 `135bf2a` 回写；本计划补执行细节与勘误
+- E3 打磨项（#20）：确认弹层日期文案、锚点 30 天折叠、mood 文案微调
