@@ -24,8 +24,8 @@ pub const RESONANCE_POINTS: [i64; 3] = [0, 10, 20];
 ///
 /// - `CheckIn`：每日首次互动（PetWindow mount 触发）
 /// - `PetStroke`：抚摸（窗口 A 双击/长按，C1 联动）
-/// - `DeepChat`：深度对话（C4 done 携带字数/轮次调用）
-/// - `Resonance(strength)`：共鸣（C4 蒸馏管道判定，strength 1/2）
+/// - `DeepChat`：深度对话（C4 done 携带字数调用；**无日上限**，见 `apply` 注释）
+/// - `Resonance(strength)`：共鸣（C4 蒸馏管道判定，strength 1/2；**无日上限**）
 /// - `Taboo(value)`：禁忌扣分（C7 判定，value 为负）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AffectionSignal {
@@ -56,8 +56,9 @@ pub struct AffectionChange {
 ///
 /// - 打卡：当日已有 `daily_check_in` → 0；否则 +10
 /// - 抚摸：当日 pet_stroke 合计 < 20 → +1（满则 0，`capped=true`）
-/// - 深度对话：+5（每 session 去重在命令层保证）
-/// - 共鸣：strength 1→+10、2→+20、其它（含解析失败）→0（宁少不多）
+/// - 深度对话：**无日上限**，每轮回复 ≥ `DEEP_CHAT_MIN_CHARS` 即 +5（F3/F4 观察项结论：
+///   维持现状——伐分需每轮真实 LLM 交互，好感度非竞技经济；如需加上限见已知问题清单 P2-07）
+/// - 共鸣：**无日上限**，strength 1→+10、2→+20、其它（含解析失败）→0（宁少不多）
 /// - 禁忌：负值透传（不夹取下限，下限在结算/衰减层处理）
 pub fn apply(points: i64, signal: &AffectionSignal, todays: &[TodaysLog]) -> AffectionChange {
     let _ = points; // 上限夹取由调用方在落库前统一 clamp，规则引擎只产出 delta
@@ -152,5 +153,27 @@ mod tests {
     fn deep_chat_and_taboo() {
         assert_eq!(apply(0, &AffectionSignal::DeepChat, &[]).delta, DEEP_CHAT_POINTS);
         assert_eq!(apply(100, &AffectionSignal::Taboo(-15), &[]).delta, -15, "禁忌负值透传");
+    }
+
+    #[test]
+    fn deep_chat_and_resonance_have_no_daily_cap() {
+        // F3/F4 观察项结论钉子：深度对话/共鸣**无日上限**（每轮 +5 / 共鸣按强度）。
+        // 若未来要加上限，此测试会失败——强制同步改规则与文档（防无声漂移）。
+        let many_deep: Vec<TodaysLog> = (0..50)
+            .map(|_| TodaysLog { reason: "deep_chat".into(), change_value: 5 })
+            .collect();
+        assert_eq!(
+            apply(0, &AffectionSignal::DeepChat, &many_deep).delta,
+            DEEP_CHAT_POINTS,
+            "深度对话无日上限（F3/F4 结论：维持现状，见已知问题清单 P2-07）"
+        );
+        let many_res: Vec<TodaysLog> = (0..50)
+            .map(|_| TodaysLog { reason: "resonance".into(), change_value: 20 })
+            .collect();
+        assert_eq!(
+            apply(0, &AffectionSignal::Resonance(2), &many_res).delta,
+            20,
+            "共鸣无日上限（同上结论）"
+        );
     }
 }
