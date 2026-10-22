@@ -3,6 +3,13 @@
 //! 边界：本文件只做"组装"——插件初始化、invoke_handler 注册、setup 钩子接线；
 //! 业务规则一律放领域模块（db/llm/affection/proactive/probe/window），命令薄层放 commands/。
 
+// F1.4：测试代码（#[cfg(test)] 模块与 tests/ 集成测试）对 fixture 用 unwrap/expect 属合理用法，
+// 统一豁免四项 clippy lint，避免门禁误伤；lib 非测试代码仍强制。
+#![cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)
+)]
+
 pub mod affection;
 pub mod llm;
 mod proactive;
@@ -15,11 +22,16 @@ pub mod db;
 pub mod error;
 pub mod state;
 
+#[cfg(test)]
+mod test_util;
+
 use crate::state::AppState;
 
 // greet（脚手架遗留）已按 B3 决策移除：命令统一从 commands/ 出口，不留死代码。
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// F1.4：Tauri 启动装配的 `expect` 为启动期致命项错误、无恢复路径，豁免 expect_used。
+#[allow(clippy::expect_used)]
 pub fn run() {
     let shortcuts = tauri_plugin_global_shortcut::Builder::new()
         // Ctrl+Shift+P：唤起对话输入（D1 消费 `window:chat:toggle`）

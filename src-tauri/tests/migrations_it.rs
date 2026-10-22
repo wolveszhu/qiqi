@@ -3,6 +3,9 @@
 //! 基础设施：`tempfile` 临时目录 + 固定测试密钥（`init_with_key` 旁路 keyring）——
 //! 绝不触碰用户真实数据目录；每用例独立临时库，互不影响。
 
+// F1.4：集成测试 fixture 用 unwrap/expect/index 属合理用法，统一豁免四项 clippy lint。
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
 use rusqlite::Connection;
 
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};

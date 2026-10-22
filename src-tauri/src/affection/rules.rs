@@ -86,7 +86,11 @@ pub fn apply(points: i64, signal: &AffectionSignal, todays: &[TodaysLog]) -> Aff
         AffectionSignal::DeepChat => AffectionChange { delta: DEEP_CHAT_POINTS, capped: false },
         AffectionSignal::Resonance(strength) => {
             let idx = (*strength as usize).min(RESONANCE_POINTS.len() - 1);
-            AffectionChange { delta: RESONANCE_POINTS[idx], capped: false }
+            // idx 已 clamp 到有效范围；兜底 0 防御（不应发生）
+            AffectionChange {
+                delta: RESONANCE_POINTS.get(idx).copied().unwrap_or(0),
+                capped: false,
+            }
         },
         AffectionSignal::Taboo(value) => AffectionChange { delta: *value as i64, capped: false },
     }

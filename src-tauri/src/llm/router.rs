@@ -57,6 +57,8 @@ pub fn chain_order(tiered: &TieredValue) -> Vec<LlmTarget> {
 /// 沿回落链发起流式对话；全失败时返回本地兜底话术（`Err` 不外抛——应用不崩不卡）。
 ///
 /// 返回：(增量流 或 本地话术文本, 回落链日志)。
+// F1.4：嵌套 if（main 档覆盖）clippy 建议合并，但合并需引入 unwrap，保留清晰写法并豁免。
+#[allow(clippy::collapsible_if)]
 pub async fn chat_with_fallback(
     client: &dyn LlmClient,
     tiered: &TieredValue,
@@ -68,8 +70,11 @@ pub async fn chat_with_fallback(
     let mut targets = chain_order(tiered);
     // main 档按额度模式修正后放最前（去重：与 chain_order 的 main 重复时覆盖）
     if let Some(first) = targets.first() {
+        #[allow(clippy::collapsible_if)]
         if first.tier == "main" {
-            targets[0] = main;
+            if let Some(f) = targets.first_mut() {
+                *f = main;
+            }
         } else {
             targets.insert(0, main);
         }
@@ -101,7 +106,10 @@ pub fn local_fallback_phrase() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() as usize)
         .unwrap_or(0);
-    LOCAL_FALLBACK_PHRASES[nanos % LOCAL_FALLBACK_PHRASES.len()].to_string()
+    LOCAL_FALLBACK_PHRASES
+        .get(nanos % LOCAL_FALLBACK_PHRASES.len())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

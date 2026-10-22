@@ -70,7 +70,10 @@ pub fn detect_shift(old: Level, new: Level) -> LevelShift {
 /// 直接复用 `config::RELATION_LEVEL_DIRECTIVES`（四档常量），按等级索引取用。
 pub fn behavior_prompt(level: Level) -> &'static str {
     let idx = (level_index(level) - 1) as usize;
-    crate::config::RELATION_LEVEL_DIRECTIVES[idx]
+    // 等级索引恒在 0..=3（level_index 返回 1..=4）；越界兜底空串（不应发生）
+    let directives = crate::config::RELATION_LEVEL_DIRECTIVES;
+    debug_assert!(idx < directives.len());
+    directives.get(idx).copied().unwrap_or("")
 }
 
 #[cfg(test)]

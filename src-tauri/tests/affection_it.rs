@@ -2,6 +2,9 @@
 //!
 //! 复用 B4 测试夹具（`temp_db` 初始化 + 迁移 + 建表）。
 
+// F1.4：集成测试 fixture 用 unwrap/expect/index 属合理用法，统一豁免四项 clippy lint。
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
 use rusqlite::Connection;
 
 use qiqi_lib::affection::decay;

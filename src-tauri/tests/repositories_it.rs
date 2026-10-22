@@ -3,6 +3,9 @@
 //! 基础设施：临时目录 + 固定测试密钥 + **真实迁移链**（B4 的 M1/M2），
 //! 保证测试 schema 与生产完全一致（防 repositories SQL 与表结构漂移）。
 
+// F1.4：集成测试 fixture 用 unwrap/expect/index 属合理用法，统一豁免四项 clippy lint。
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
 use rusqlite::Connection;
 
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};

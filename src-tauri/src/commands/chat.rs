@@ -464,11 +464,12 @@ fn retrieve_context(
     // async_block 返回 Result<F::Output, AppError>，而 embed 的 F::Output 本身
     // 也是 Result（双层）——匹配内层即可，任何一层失败都走降级
     let memory_hits = match async_block(client.embed(memory_target, vec![query.to_string()])) {
-        Ok(Ok(vectors)) if vectors.len() == 1 => {
-            vec_memory::knn(conn, &vec_memory::embedding_bytes(&vectors[0]), 5)?
+        Ok(Ok(vectors)) if vectors.len() == 1 => match vectors.first() {
+            Some(v) => vec_memory::knn(conn, &vec_memory::embedding_bytes(v), 5)?
                 .into_iter()
                 .map(|(_, text)| text)
-                .collect()
+                .collect(),
+            None => Vec::new(),
         },
         _ => Vec::new(),
     };

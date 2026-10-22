@@ -6,6 +6,8 @@
 
 use tauri::State;
 
+use rusqlite::Connection;
+
 use crate::config::{
     PROVIDER_PRESETS, QUOTA_MODE_BYOK, QUOTA_MODE_EMBEDDED, TIER_FALLBACK, TIER_MAIN, TIER_MEMORY,
 };
@@ -61,14 +63,19 @@ pub fn settings_list_providers() -> Vec<ProviderPresetDto> {
 /// 无主对话 Key 时切 BYOK 会导致对话全链路不可用（父计划选型方案约束）。
 #[tauri::command]
 pub fn settings_set_quota_mode(mode: i64, state: State<'_, AppState>) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    set_quota_mode_inner(&conn, mode)
+}
+
+/// 纯逻辑（F1.2 可直测）：参数校验 + BYOK 前置检查 + 落库。
+fn set_quota_mode_inner(conn: &Connection, mode: i64) -> Result<(), AppError> {
     if mode != QUOTA_MODE_EMBEDDED && mode != QUOTA_MODE_BYOK {
         return Err(AppError::Config(format!("未知额度模式: {mode}")));
     }
-    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
-    if mode == QUOTA_MODE_BYOK && !app_settings::main_tier_has_key(&conn)? {
+    if mode == QUOTA_MODE_BYOK && !app_settings::main_tier_has_key(conn)? {
         return Err(AppError::Config("切换自带 Key 前请先配置主对话档（main）的 API Key".into()));
     }
-    app_settings::set_quota_mode(&conn, mode)
+    app_settings::set_quota_mode(conn, mode)
 }
 
 /// 读取设置快照（Key 脱敏回传）。
@@ -76,11 +83,14 @@ pub fn settings_set_quota_mode(mode: i64, state: State<'_, AppState>) -> Result<
 pub fn settings_get_typed(state: State<'_, AppState>) -> Result<SettingsSnapshotDto, AppError> {
     // 锁的生命周期：单次获取、用完即释（禁嵌套，防死锁）
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    settings_get_inner(&conn)
+}
 
-    let dnd_row = app_settings::get_row(&conn, 2)?;
-    let quota_mode = app_settings::get_quota_mode(&conn)?;
-
-    let tiered = app_settings::get_tiered(&conn)?;
+/// 纯逻辑（F1.2 可直测）：组装脱敏快照。
+fn settings_get_inner(conn: &Connection) -> Result<SettingsSnapshotDto, AppError> {
+    let dnd_row = app_settings::get_row(conn, 2)?;
+    let quota_mode = app_settings::get_quota_mode(conn)?;
+    let tiered = app_settings::get_tiered(conn)?;
     let dnd_full = parse_dnd_full(dnd_row.as_ref().and_then(|r| r.value.as_deref()))?;
 
     Ok(SettingsSnapshotDto {
@@ -100,12 +110,21 @@ pub fn settings_save_typed(
     payload: SaveTierPayload,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    // 档位合法性校验（与仓储白名单同一常量；错误口径一致）
-    TierName::parse(&tier)?;
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    save_tier_inner(&conn, &tier, payload)
+}
+
+/// 纯逻辑（F1.2 可直测）：档位校验 + 读-改-写（Key 空串视为不改动）。
+fn save_tier_inner(
+    conn: &Connection,
+    tier: &str,
+    payload: SaveTierPayload,
+) -> Result<(), AppError> {
+    // 档位合法性校验（与仓储白名单同一常量；错误口径一致）
+    TierName::parse(tier)?;
 
     // 读-改-写经仓储单点（tiered 解析/双格式兼容只存在于仓储层）
-    let mut current = app_settings::get_tier(&conn, &tier)?;
+    let mut current = app_settings::get_tier(conn, tier)?;
     current.base_url = payload.base_url;
     current.model = payload.model;
     current.model_custom = payload.model_custom;
@@ -114,7 +133,7 @@ pub fn settings_save_typed(
         Some(key) if !key.is_empty() => current.api_key = key,
         _ => {},
     }
-    app_settings::save_tier(&conn, &tier, &current)
+    app_settings::save_tier(conn, tier, &current)
 }
 
 /// 保存勿扰 + 频率档位（type=2 行；frequency 同段持久化，避免跨行并发）。
@@ -124,13 +143,18 @@ pub fn settings_save_dnd(
     frequency: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    save_dnd_inner(&conn, dnd, frequency)
+}
+
+/// 纯逻辑（F1.2 可直测）：频率档位白名单校验 + type=2 行 upsert。
+fn save_dnd_inner(conn: &Connection, dnd: DndValue, frequency: String) -> Result<(), AppError> {
     if !["quiet", "normal", "sticky"].contains(&frequency.as_str()) {
         return Err(AppError::Config(format!("未知频率档位: {frequency}")));
     }
-    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     let payload = SettingsDndValue { dnd, frequency };
     let json = serde_json::to_string(&payload)?;
-    app_settings::upsert_value(&conn, 2, &json)
+    app_settings::upsert_value(conn, 2, &json)
 }
 
 /// 读取勿扰配置（完整 type=2 行）：优先 `{"dnd":{...},"frequency":...}`，回落旧单段格式。
@@ -231,5 +255,111 @@ mod tests {
         let json = serde_json::to_string(&settings_list_providers()).expect("序列化");
         assert!(!json.contains("apiKey"), "preset 不应含 Key 字段: {json}");
         assert!(!json.contains("api_key"), "preset 不应含 Key 字段: {json}");
+    }
+
+    #[test]
+    fn settings_command_roundtrip_never_leaks_key() {
+        // F1.2：Key 脱敏红线——inner save→get，序列化回包绝不含明文 Key
+        let (_dir, conn) = crate::test_util::fresh_db();
+        save_tier_inner(
+            &conn,
+            TIER_MAIN,
+            SaveTierPayload {
+                base_url: "https://api.example/v1".into(),
+                model: "gpt-test".into(),
+                api_key: Some("sk-SECRET-1234".into()),
+                model_custom: String::new(),
+            },
+        )
+        .expect("保存 main 档");
+
+        let snap = settings_get_inner(&conn).expect("读取快照");
+        assert!(snap.main.has_key, "应识别已配置 Key");
+        assert_eq!(snap.main.key_fingerprint.as_deref(), Some("1234"));
+        let json = serde_json::to_string(&snap).expect("序列化");
+        assert!(!json.contains("sk-SECRET-1234"), "快照泄露明文 Key: {json}");
+        assert!(!json.contains("SECRET"), "连 Key 主体亦不得出现: {json}");
+    }
+
+    #[test]
+    fn save_tier_empty_key_preserves_existing() {
+        // 读-改-写红线：api_key 空串视为"不改动"，存量 Key 不被清空
+        let (_dir, conn) = crate::test_util::fresh_db();
+        save_tier_inner(
+            &conn,
+            TIER_MAIN,
+            SaveTierPayload {
+                base_url: "https://a/v1".into(),
+                model: "m".into(),
+                api_key: Some("sk-KEEP-9999".into()),
+                model_custom: String::new(),
+            },
+        )
+        .expect("首次保存");
+        save_tier_inner(
+            &conn,
+            TIER_MAIN,
+            SaveTierPayload {
+                base_url: "https://a/v2".into(),
+                model: "m2".into(),
+                api_key: None, // 未提供 → 保留
+                model_custom: String::new(),
+            },
+        )
+        .expect("二次保存");
+        let snap = settings_get_inner(&conn).expect("读取");
+        assert_eq!(snap.main.base_url, "https://a/v2", "base_url 应更新");
+        assert!(snap.main.has_key, "空串 Key 不应清空存量");
+        assert_eq!(snap.main.key_fingerprint.as_deref(), Some("9999"));
+    }
+
+    #[test]
+    fn save_tier_rejects_unknown_tier() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        let err = save_tier_inner(
+            &conn,
+            "bogus",
+            SaveTierPayload {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                model_custom: String::new(),
+            },
+        );
+        assert!(err.is_err(), "未知档位应报错");
+    }
+
+    #[test]
+    fn settings_set_quota_mode_guards_byok_without_key() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        // 未知模式 → 拒绝
+        assert!(set_quota_mode_inner(&conn, 99).is_err(), "未知额度模式应报错");
+        // 未配置 main Key → 切 BYOK 被拒（避免对话链路不可用）
+        assert!(set_quota_mode_inner(&conn, QUOTA_MODE_BYOK).is_err(), "无 main Key 不得切 BYOK");
+        // 配置 Key 后 → BYOK 可切，快照回读一致
+        save_tier_inner(
+            &conn,
+            TIER_MAIN,
+            SaveTierPayload {
+                base_url: "https://api.example/v1".into(),
+                model: "m".into(),
+                api_key: Some("sk-1234".into()),
+                model_custom: String::new(),
+            },
+        )
+        .expect("保存 main 档");
+        set_quota_mode_inner(&conn, QUOTA_MODE_BYOK).expect("切 BYOK");
+        let snap = settings_get_inner(&conn).expect("读取快照");
+        assert_eq!(snap.is_custom_quota_used, QUOTA_MODE_BYOK);
+    }
+
+    #[test]
+    fn settings_save_dnd_rejects_unknown_frequency() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        assert!(
+            save_dnd_inner(&conn, DndValue::default(), "ultra".into()).is_err(),
+            "未知频率档位应报错"
+        );
+        save_dnd_inner(&conn, DndValue::default(), "quiet".into()).expect("合法频率档位应保存");
     }
 }

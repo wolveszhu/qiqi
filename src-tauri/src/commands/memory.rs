@@ -5,6 +5,8 @@
 
 use tauri::{AppHandle, State};
 
+use rusqlite::Connection;
+
 use crate::db::models::{DiaryDto, FactDto};
 use crate::db::repositories::{app_settings, diaries, facts};
 use crate::error::AppError;
@@ -18,7 +20,12 @@ const LIST_LIMIT: i64 = 200;
 #[tauri::command]
 pub fn memory_list_facts(state: State<'_, AppState>) -> Result<Vec<FactDto>, AppError> {
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
-    let rows = facts::list(&conn, LIST_LIMIT)?;
+    memory_list_facts_inner(&conn)
+}
+
+/// 纯逻辑（F1.2 可直测）：事实列表（limit 固定）。
+fn memory_list_facts_inner(conn: &Connection) -> Result<Vec<FactDto>, AppError> {
+    let rows = facts::list(conn, LIST_LIMIT)?;
     Ok(rows
         .into_iter()
         .map(|r| FactDto {
@@ -35,7 +42,12 @@ pub fn memory_list_facts(state: State<'_, AppState>) -> Result<Vec<FactDto>, App
 #[tauri::command]
 pub fn memory_list_diaries(state: State<'_, AppState>) -> Result<Vec<DiaryDto>, AppError> {
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
-    let rows = diaries::list(&conn, LIST_LIMIT)?;
+    memory_list_diaries_inner(&conn)
+}
+
+/// 纯逻辑（F1.2 可直测）：日记列表（按日期倒序）。
+fn memory_list_diaries_inner(conn: &Connection) -> Result<Vec<DiaryDto>, AppError> {
+    let rows = diaries::list(conn, LIST_LIMIT)?;
     Ok(rows
         .into_iter()
         .map(|r| DiaryDto { id: r.id, diary_date: r.diary_date, content: r.content, mood: r.mood })
@@ -127,5 +139,36 @@ pub async fn memory_regenerate_diary(app: AppHandle, date: String) -> Result<(),
         Ok(())
     } else {
         Err(AppError::Config(format!("{date} 没有对话记录，无法生成日记")))
+    }
+}
+
+// F1.2：命令 inner 直调用（`inner(&conn)`）——验证只读查询的 DB 交互。
+// 豁免：`memory_add/update/delete/regenerate` 需 `AppHandle` + embed/LLM 网络调用，
+// 向量一致性与 upsert 幂等已由 `tests/memory_it.rs`（C7 集成）覆盖（见覆盖矩阵豁免登记）。
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::repositories::{diaries, facts};
+    use crate::test_util::fresh_db;
+
+    #[test]
+    fn memory_list_facts_reflects_seed() {
+        let (_dir, conn) = fresh_db();
+        facts::insert(&conn, 0, "喜欢喝冰美式", 0.9).unwrap();
+        facts::insert(&conn, 1, "昨天加班到很晚", 0.8).unwrap();
+        let got = memory_list_facts_inner(&conn).expect("查询事实");
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().any(|f| f.content == "喜欢喝冰美式"));
+        assert!(got.iter().all(|f| f.id > 0), "应带出主键");
+    }
+
+    #[test]
+    fn memory_list_diaries_reflects_seed() {
+        let (_dir, conn) = fresh_db();
+        diaries::upsert(&conn, "2026-10-21", "今天用户陪我聊天啦", Some(0)).unwrap();
+        let got = memory_list_diaries_inner(&conn).expect("查询日记");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].diary_date, "2026-10-21");
+        assert_eq!(got[0].mood, Some(0));
     }
 }

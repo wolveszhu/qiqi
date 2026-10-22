@@ -6,6 +6,8 @@
 use serde::Deserialize;
 use tauri::{AppHandle, State};
 
+use rusqlite::Connection;
+
 use crate::affection::rules::AffectionSignal;
 use crate::db::models::{AffectionLogDto, PetStateDto, UpdatePetPayload};
 use crate::db::repositories::pet_states;
@@ -38,17 +40,21 @@ pub fn pet_update_state(
     state: State<'_, AppState>,
 ) -> Result<PetStateDto, AppError> {
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    pet_update_inner(&conn, payload)
+}
 
+/// 纯逻辑（F1.2 可直测）：资料更新（好感度字段只读）。
+fn pet_update_inner(conn: &Connection, payload: UpdatePetPayload) -> Result<PetStateDto, AppError> {
     let config_json = payload.renderer_config.as_ref().map(serde_json::to_string).transpose()?;
 
     pet_states::update_profile(
-        &conn,
+        conn,
         payload.pet_name.as_deref(),
         payload.active_renderer.as_deref(),
         config_json.as_deref(),
     )?;
 
-    let row = pet_states::get(&conn)?;
+    let row = pet_states::get(conn)?;
     Ok(PetStateDto {
         pet_name: row.pet_name,
         relationship_level: row.relationship_level,
@@ -80,8 +86,16 @@ pub fn pet_list_affection_logs(
     state: State<'_, AppState>,
 ) -> Result<Vec<AffectionLogDto>, AppError> {
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    pet_list_affection_logs_inner(&conn, limit)
+}
+
+/// 纯逻辑（F1.2 可直测）：limit 归一化 + 流水倒序查询。
+fn pet_list_affection_logs_inner(
+    conn: &Connection,
+    limit: Option<i64>,
+) -> Result<Vec<AffectionLogDto>, AppError> {
     let limit = limit.unwrap_or(50).clamp(1, 500);
-    crate::db::repositories::affection_logs::recent(&conn, limit).map(|rows| {
+    crate::db::repositories::affection_logs::recent(conn, limit).map(|rows| {
         rows.into_iter()
             .map(|r| AffectionLogDto {
                 id: r.id,
@@ -116,5 +130,57 @@ impl AffectionSettleInput {
             AffectionSettleInput::Resonance { strength } => AffectionSignal::Resonance(strength),
             AffectionSettleInput::Taboo { value } => AffectionSignal::Taboo(value),
         }
+    }
+}
+
+// F1.2：命令 inner 直调用（`inner(&conn)` 绕过 Tauri runtime）——验证资料写入与流水读取的 DB 交互。
+// 豁免：`pet_get_state`/`pet_settle_affection` 需 `AppHandle` + emit，由 affection 域集成测试覆盖（见覆盖矩阵豁免登记）。
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::repositories::{affection_logs, pet_states};
+    use crate::test_util::fresh_db;
+
+    #[test]
+    fn pet_update_state_persists_pet_name_and_keeps_affection() {
+        let (_dir, conn) = fresh_db();
+        let before = pet_states::get(&conn).unwrap().affection_points;
+
+        let out = pet_update_inner(
+            &conn,
+            UpdatePetPayload {
+                pet_name: Some("七七".into()),
+                active_renderer: None,
+                renderer_config: None,
+            },
+        )
+        .expect("更新资料");
+
+        assert_eq!(out.pet_name, "七七", "pet_name 应落库回显");
+        // 红线：好感度字段只读——update 不得触碰分数
+        assert_eq!(out.affection_points, before, "update 不应改好感度");
+    }
+
+    #[test]
+    fn pet_list_affection_logs_reflects_seed_in_desc_order() {
+        let (_dir, conn) = fresh_db();
+        affection_logs::insert(&conn, 10, "check_in").unwrap();
+        affection_logs::insert(&conn, -20, "taboo_violation").unwrap();
+        let logs = pet_list_affection_logs_inner(&conn, Some(50)).expect("查询流水");
+        assert_eq!(logs.len(), 2);
+        // 倒序（id DESC）：最新一条 taboo 在前
+        assert_eq!(logs[0].reason, "taboo_violation");
+        assert_eq!(logs[0].change_value, -20);
+    }
+
+    #[test]
+    fn pet_list_affection_logs_limit_clamped() {
+        let (_dir, conn) = fresh_db();
+        for _ in 0..3 {
+            affection_logs::insert(&conn, 1, "check_in").unwrap();
+        }
+        // limit=0 → clamp 到 1（默认下限 1）
+        let logs = pet_list_affection_logs_inner(&conn, Some(0)).expect("查询");
+        assert_eq!(logs.len(), 1, "limit 应被 clamp 到 ≥1");
     }
 }

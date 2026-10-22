@@ -148,7 +148,9 @@ impl ReqwestLlmClient {
         });
         // 主动话术等非流式短生成：仅当显式设置 max_tokens 时加入（不影响对话主链路）
         if let Some(mt) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(mt);
+            let _ = body
+                .as_object_mut()
+                .map(|obj| obj.insert("max_tokens".into(), serde_json::json!(mt)));
         }
         body
     }

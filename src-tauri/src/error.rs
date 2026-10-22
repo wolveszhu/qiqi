@@ -90,4 +90,22 @@ mod tests {
         let e: AppError = rusqlite::Error::InvalidQuery.into();
         assert!(matches!(e, AppError::Db(_)));
     }
+
+    #[test]
+    fn every_variant_serializes_and_displays() {
+        // F1.3：AppError 全变体可序列化（前端契约）且 Display 带 [kind] 前缀
+        let all = [
+            AppError::Db("d".into()),
+            AppError::Llm("l".into()),
+            AppError::Window("w".into()),
+            AppError::Probe("p".into()),
+            AppError::Io("i".into()),
+            AppError::Config("c".into()),
+        ];
+        for v in &all {
+            let json = serde_json::to_string(v).expect("序列化");
+            assert!(!json.is_empty());
+            assert!(v.to_string().starts_with('['), "Display 应含 kind 前缀: {v}");
+        }
+    }
 }

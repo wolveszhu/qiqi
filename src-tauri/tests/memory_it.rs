@@ -3,6 +3,9 @@
 //! 夹具同 B4/C5：`init_with_key` 临时库 + 固定测试密钥（不触碰真实数据目录）。
 //! Mock LLM `with_embed_dim(EMBEDDING_DIM)` 对接真实 1536 维 vec_memory。
 
+// F1.4：集成测试 fixture 用 unwrap/expect/index 属合理用法，统一豁免四项 clippy lint。
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+
 use qiqi_lib::config::EMBEDDING_DIM;
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
 use qiqi_lib::db::repositories::{diaries, facts, vec_memory};

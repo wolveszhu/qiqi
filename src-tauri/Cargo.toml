@@ -52,3 +52,12 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# F1.4：代码质量门禁（lint-rules §5 建议项）。
+# 设为 warn；CI/DoD 以 `cargo clippy --all-targets -- -D warnings` 收口零告警。
+# 存量 unwrap/expect/panic/indexing 逐条改造为 AppError 或在确需保留处 `#[allow]` 加理由（见各文件）。
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"

@@ -50,7 +50,8 @@ pub fn foreground_process_name() -> Option<String> {
             &mut size,
         ) {
             Ok(()) => {
-                let path = String::from_utf16_lossy(&buf[..size as usize]);
+                let len = (size as usize).min(buf.len());
+                let path = String::from_utf16_lossy(buf.get(..len).unwrap_or(&[]));
                 Path::new(&path).file_name().and_then(|s| s.to_str()).map(|s| s.to_string())
             },
             Err(_) => None,
