@@ -81,14 +81,15 @@ pub fn settings_get_typed(state: State<'_, AppState>) -> Result<SettingsSnapshot
     let quota_mode = app_settings::get_quota_mode(&conn)?;
 
     let tiered = app_settings::get_tiered(&conn)?;
-    let dnd = parse_dnd(dnd_row.as_ref().and_then(|r| r.value.as_deref()))?;
+    let dnd_full = parse_dnd_full(dnd_row.as_ref().and_then(|r| r.value.as_deref()))?;
 
     Ok(SettingsSnapshotDto {
         main: to_dto(&tiered.main),
         memory: to_dto(&tiered.memory),
         fallback: to_dto(&tiered.fallback),
         is_custom_quota_used: quota_mode,
-        dnd,
+        dnd: dnd_full.dnd,
+        frequency: dnd_full.frequency,
     })
 }
 
@@ -116,29 +117,48 @@ pub fn settings_save_typed(
     app_settings::save_tier(&conn, &tier, &current)
 }
 
-/// 读取勿扰配置：优先 `{"dnd":{...}}`，回落旧单段格式。
+/// 保存勿扰 + 频率档位（type=2 行；frequency 同段持久化，避免跨行并发）。
+#[tauri::command]
+pub fn settings_save_dnd(
+    dnd: DndValue,
+    frequency: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    if !["quiet", "normal", "sticky"].contains(&frequency.as_str()) {
+        return Err(AppError::Config(format!("未知频率档位: {frequency}")));
+    }
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let payload = SettingsDndValue { dnd, frequency };
+    let json = serde_json::to_string(&payload)?;
+    app_settings::upsert_value(&conn, 2, &json)
+}
+
+/// 读取勿扰配置（完整 type=2 行）：优先 `{"dnd":{...},"frequency":...}`，回落旧单段格式。
 /// （type=1 的 tiered 解析已下沉至仓储层 `app_settings::get_tiered`，勿留双实现。）
-fn parse_dnd(raw: Option<&str>) -> Result<DndValue, AppError> {
+fn parse_dnd_full(raw: Option<&str>) -> Result<SettingsDndValue, AppError> {
     let Some(raw) = raw else {
-        return Ok(DndValue::default());
+        return Ok(SettingsDndValue::default());
     };
     // 同 parse_tiered：先判结构，避免带 default 的结构体误吞旧格式
     let value: serde_json::Value = serde_json::from_str(raw)?;
     if value.get("dnd").is_some() {
-        return Ok(serde_json::from_value::<SettingsDndValue>(value)?.dnd);
+        return Ok(serde_json::from_value::<SettingsDndValue>(value)?);
     }
     let legacy: LegacyDndValue = serde_json::from_value(value)
         .map_err(|e| AppError::Config(format!("app_settings(type=2) 格式无法识别: {e}")))?;
-    Ok(DndValue {
-        enabled: legacy.dnd_enabled,
-        ranges: if legacy.dnd_start_time.is_empty() || legacy.dnd_end_time.is_empty() {
-            Vec::new()
-        } else {
-            vec![crate::db::models::DndRange {
-                start: legacy.dnd_start_time,
-                end: legacy.dnd_end_time,
-            }]
+    Ok(SettingsDndValue {
+        dnd: DndValue {
+            enabled: legacy.dnd_enabled,
+            ranges: if legacy.dnd_start_time.is_empty() || legacy.dnd_end_time.is_empty() {
+                Vec::new()
+            } else {
+                vec![crate::db::models::DndRange {
+                    start: legacy.dnd_start_time,
+                    end: legacy.dnd_end_time,
+                }]
+            },
         },
+        frequency: String::new(),
     })
 }
 
@@ -199,7 +219,7 @@ mod tests {
     #[test]
     fn parse_dnd_falls_back_to_legacy_single_range() {
         let legacy = r#"{"dnd_enabled":true,"dnd_start_time":"09:00","dnd_end_time":"18:00"}"#;
-        let dnd = parse_dnd(Some(legacy)).expect("兼容解析");
+        let dnd = parse_dnd_full(Some(legacy)).expect("兼容解析").dnd;
         assert!(dnd.enabled);
         assert_eq!(dnd.ranges.len(), 1);
         assert_eq!(dnd.ranges[0].start, "09:00");

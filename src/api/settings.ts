@@ -10,6 +10,8 @@
 
 import { callCommand } from "./client";
 import type {
+  DndConfig,
+  ProactiveFrequency,
   ProviderPreset,
   SaveTierPayload,
   SettingsSnapshot,
@@ -26,12 +28,20 @@ export async function saveTyped(tier: TierName, payload: SaveTierPayload): Promi
   await callCommand("settings_save_typed", { tier, payload });
 }
 
-/** 服务商预设列表（C3：Rust 单一真源经 IPC 下发，禁止前端硬编码 URL）。 */
-export async function listProviders(): Promise<ProviderPreset[]> {
-  return callCommand<ProviderPreset[]>("settings_list_providers");
+/** 保存勿扰与频率档位（type=2 行；dnd 与 frequency 同段持久化）。 */
+export async function saveDnd(
+  dnd: DndConfig,
+  frequency: ProactiveFrequency,
+): Promise<void> {
+  await callCommand("settings_save_dnd", { dnd, frequency });
 }
 
 /** 切换额度模式（1=内置额度 / 2=BYOK；BYOK 需 main 档已配 Key，否则报 Config 错误）。 */
 export async function setQuotaMode(mode: 1 | 2): Promise<void> {
   await callCommand("settings_set_quota_mode", { mode });
+}
+
+/** 服务商预设列表（C3：Rust 单一真源经 IPC 下发，禁止前端硬编码 URL）。 */
+export async function listProviders(): Promise<ProviderPreset[]> {
+  return callCommand<ProviderPreset[]>("settings_list_providers");
 }

@@ -39,6 +39,8 @@ export interface SettingsSnapshot {
   /** 1=内置额度 / 2=BYOK（app_settings.is_custom_quota_used）。 */
   isCustomQuotaUsed: number;
   dnd: DndConfig;
+  /** 主动频率档位（D2.3：随 type=2 行下发；C6 引擎读取）。 */
+  frequency: ProactiveFrequency;
 }
 
 /** 勿扰配置（勘误#13：多段时段）。 */

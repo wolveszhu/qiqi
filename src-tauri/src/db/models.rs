@@ -112,12 +112,15 @@ pub struct DndValue {
     pub ranges: Vec<DndRange>,
 }
 
-/// type=2 行的完整 value。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// type=2 行的完整 value（勘误 #13：dnd 多段 + 主动频率档位持久化于同一行）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDndValue {
     #[serde(default)]
     pub dnd: DndValue,
+    /// 主动频率档位（"quiet" | "normal" | "sticky"；D2.3 持久化，C6 引擎读取）。
+    #[serde(default)]
+    pub frequency: String,
 }
 
 /// 旧勿扰格式（M1 种子单段，snake_case 键）——兼容读取用。
@@ -154,6 +157,8 @@ pub struct SettingsSnapshotDto {
     /// 1=内置额度 / 2=BYOK（app_settings.is_custom_quota_used）。
     pub is_custom_quota_used: i64,
     pub dnd: DndValue,
+    /// 主动频率档位（D2.3：随 type=2 行一并下发，前端 settingsStore 消费）。
+    pub frequency: String,
 }
 
 /// 桌宠状态（pet_get_state / pet_update_state 返回；好感度字段只读透出）。

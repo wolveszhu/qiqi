@@ -19,9 +19,12 @@ const state = reactive<SettingsState>({
   frequency: "normal",
 });
 
-/** 以 settings_get_typed 返回刷新。 */
+/** 以 settings_get_typed 返回刷新（含 dnd + frequency 同步到本地即时读取态）。 */
 export function applySnapshot(snapshot: SettingsSnapshot): void {
   state.snapshot = snapshot;
+  if (snapshot.frequency) {
+    state.frequency = snapshot.frequency;
+  }
 }
 
 /** dnd 本地即时更新（勿扰开关/时段编辑后调用，落库前乐观刷新）。 */

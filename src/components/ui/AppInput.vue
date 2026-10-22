@@ -12,6 +12,8 @@ withDefaults(
     placeholder?: string;
     /** 密码显隐切换按钮（type=password 时默认开启）。 */
     revealable?: boolean;
+    /** 最大长度（如桌宠名字 ≤20）。 */
+    maxlength?: number;
   }>(),
   { type: "text", revealable: true },
 );
@@ -35,6 +37,7 @@ const revealed = ref(false);
         class="app-input__field"
         :type="type === 'password' && !revealed ? 'password' : 'text'"
         :placeholder="placeholder"
+        :maxlength="maxlength"
         :value="modelValue"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       />

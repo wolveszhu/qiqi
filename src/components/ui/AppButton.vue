@@ -8,8 +8,9 @@ withDefaults(
   defineProps<{
     variant?: "primary" | "ghost" | "danger";
     disabled?: boolean;
+    loading?: boolean;
   }>(),
-  { variant: "primary", disabled: false },
+  { variant: "primary", disabled: false, loading: false },
 );
 
 defineEmits<{ (e: "click", ev: MouseEvent): void }>();
@@ -18,10 +19,15 @@ defineEmits<{ (e: "click", ev: MouseEvent): void }>();
 <template>
   <button
     class="app-btn"
-    :class="`app-btn--${variant}`"
-    :disabled="disabled"
+    :class="[`app-btn--${variant}`, { 'is-loading': loading }]"
+    :disabled="disabled || loading"
     @click="$emit('click', $event)"
   >
+    <span
+      v-if="loading"
+      class="app-btn__spin"
+      aria-hidden="true"
+    ></span>
     <slot></slot>
   </button>
 </template>
@@ -45,6 +51,24 @@ defineEmits<{ (e: "click", ev: MouseEvent): void }>();
 .app-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.app-btn__spin {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: app-btn-spin 0.7s linear infinite;
+}
+
+@keyframes app-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .app-btn--primary {

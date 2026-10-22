@@ -14,6 +14,7 @@ import AvatarPanel from "./panels/AvatarPanel.vue";
 import DndPanel from "./panels/DndPanel.vue";
 import LlmPanel from "./panels/LlmPanel.vue";
 import MemoryPanel from "./panels/MemoryPanel.vue";
+import AppToast from "../../components/ui/AppToast.vue";
 
 type PanelKey = "avatar" | "llm" | "dnd" | "affection" | "memory";
 
@@ -48,6 +49,7 @@ async function closeWindow(): Promise<void> {
         <MemoryPanel v-else />
       </main>
     </div>
+    <AppToast />
   </div>
 </template>
 
