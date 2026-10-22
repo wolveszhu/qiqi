@@ -6,7 +6,7 @@
 | 规则依据 | `.codebuddy/rules/`：code-standards §4（AppError/禁吞错）、§5（边界——LLM 请求全 Rust、API Key 不落前端）、design-baseline §E（模块 4 管道）/§H、lint-rules §5；规格来源：`桌宠.md` 模块 4 + §5.2 记忆管道 |
 | 范围边界 | **做**：LLM SSE 流式代理、三档路由与回落、混合检索 + Prompt 拼装、chat 命令实装（替换 B5 echo 桩）、异步沉淀（事实抽取/摘要/向量）、前端流消费 composable。**不含**：好感度结算与禁忌判定（C5/C7，本计划只暴露扩展点）、日记生成（C7）、气泡/输入框 UI（D1）、连通性测试 UI（D2） |
 | 现状 | B5 echo 桩（`chat_send_stream` + `chat:stream:delta/done` 事件契约）已定；C3 三档配置 + `PROVIDER_PRESETS` 契约已定；`config.rs` 有 `EMBEDDING_DIM=1536`；`llm/` 四个文件为占位文档 |
-| 状态 | 待执行（前置：B4、B5、C3） |
+| 状态 | **已完成**（2026-10-22，提交 6eb24aa）——执行结果与裁决落地见文末 |
 
 ---
 
@@ -117,3 +117,49 @@
 ## 八、执行顺序
 
 C4.1（抽象层）→ C4.2（SSE 解析+单测）→ C4.3（路由+单测）→ C4.4（检索+prompt+单测）→ **C4.6（蒸馏，先于命令实装以便 mock 全测）** → C4.5（chat 命令实装）→ C4.7（前端消费）→ 手工清单 → C4.8 DoD 收口。
+
+---
+
+## 执行结果与计划对应情况（2026-10-22，提交 6eb24aa）
+
+| 计划任务 | 实际结果 | 对应 |
+| :--- | :--- | :--- |
+| C4.1 依赖与抽象层 | `tokio(sync/macros/rt/time)` + `reqwest(json/stream/rustls-tls)` + `futures-util` + `async-trait`（dyn 兼容）；`LlmClient` trait（chat_stream/embed）+ `ReqwestLlmClient` + `MockLlmClient`（按 url 前缀注入失败） | ✅ |
+| C4.2 SSE 解析 | **手写分帧**（计划 §七预案：`eventsource-stream` 备选未启用，降依赖面）——`next_sse_delta` 纯函数（`data:` 提取 / `[DONE]` 终止 / 跨 chunk 缓冲 / 非 chat 帧忽略）4 单测；embed **显式维度校验**（勘误 #8） | ✅ |
+| C4.3 路由回落 | `resolve_main_target`（内置额度→外部端点免 Key / BYOK→自配）+ `chain_order`（跳过未配置档）+ `chat_with_fallback`（main→memory→fallback→**本地话术**，链日志逐条记录）3 单测 | ✅ |
+| C4.4 检索+Prompt | `prompt.rs` 纯函数（人设基线 + Lv1-4 指令**夹取越界** + 记忆段条件注入 + 禁数值规则）4 单测；仓储扩展 messages/summaries/vec_memory（KNN）；检索降级策略（embed 失败→仅 facts，不阻断对话） | ✅ |
+| C4.6 蒸馏 | `distill.rs`：JSON **三态宽松解析**（直接/围栏/空；非 JSON 静默）5 单测 + fact 落库→embed→vec_memory（rowid=facts.id）+ 摘要阈值 upsert + 重试一次；C7 扩展锚位注释 | ✅ |
+| C4.5 chat 实装 | `chat_send_stream` async 命令：user 落库 → spawn_blocking 检索 → spawn 流式任务（abort 标志逐 chunk 检查；中止不落库）→ done → assistant 落库 → **蒸馏 spawn**（不阻塞 done）；`chat_abort` 置位注册表 | ✅ echo 桩移除 |
+| C4.7 前端消费 | `useChatStream` 实装：**rAF 帧节流**合并 delta → chatStore；done→happy 表情（模块级 `setExpression`）；error→气泡尾部提示不弹窗；session 过滤防串扰；PetWindow 气泡占位接入 | ✅ |
+| C4.8 收口 | 门禁全绿 + 隐私 grep（llm/ 内 apiKey/api_key 仅在请求头/请求体构造处）+ 父计划回写 | ✅ |
+
+### API 实态修正（编译/测试驱动，9 处）
+
+`ChatRequest` 去掉 model 字段（与 `LlmTarget.model` 双源）；`AppError::From<reqwest::Error>`；`SseDelta: Default`；`Emit`/`Manager` trait 局部导入；spawn_blocking 双层 Result 展平；`async_block` 双层匹配（embed 的 F::Output 本身是 Result）；`expect_err` 需 `Stream: Debug` → match 解包；回落链日志 4 条（3 失败+1 兜底）断言修正；router/chat 职责划分（tiered 解析下沉仓储）。
+
+### 门禁终态
+
+`cargo clippy -D warnings` ✅ / `cargo fmt --check` ✅ / **cargo test 60 passed** ✅（新增：SSE 4 + router 3 + prompt 4 + distill 5 + KNN 既有）/ `pnpm typecheck` ✅ / `pnpm build` ✅ / `pnpm test` 9 passed ✅ / `pnpm lint` 0 problems ✅ / `pnpm format:check` ✅
+
+### 冷眼三问自查（DoD）
+
+| # | 项 | 结果 |
+| :--- | :--- | :--- |
+| ① | spawn 任务句柄管理 | 蒸馏/流式任务随 AppHandle 生命周期；abort 标志注册表会话级清理；无句柄泄漏风险点 ✅ |
+| ② | 事件负载与前端 DTO 对齐 | `StreamDelta/StreamDone/StreamError` 均 `rename_all camelCase`，与 useChatStream 监听结构一致 ✅ |
+| ③ | 三档配置实时读取 | `chat_send_stream` 每次调用实时锁库读取（改配置即生效）✅ |
+
+### 待用户手工验证（真实 Key，GUI）
+
+1. 流式对话：气泡占位逐字出现、done 后表情 happy、回复落库
+2. **次日召回**：今日"我爱吃香菜"→ 明日"我爱吃什么"命中（M1 核心锚点）
+3. 回落链：main 填错 Key → 自动走 memory/fallback；全断网 → 本地话术且 done
+4. abort：流式中止 → 立即停止、部分文本不落库
+5. 长对话：>10 条摘要生效（summaries 出行）
+6. 蒸馏静默失败：memory Key 错 → 对话正常、facts 缺失 + 日志
+
+### 集成点移交
+
+- **C5**：`run_chat_task` 的 relation 消费点（好感度判定注入 prompt/情绪）
+- **C7**：distill 框架扩展（禁忌判定/日记）；vec_memory 级联删除已备
+- **D1**：ChatInput 消费 `useChatStream().send/abortCurrent`；正式 SpeechBubble 替换占位
