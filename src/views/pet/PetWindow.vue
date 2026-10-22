@@ -13,15 +13,20 @@
  */
 
 import { startDrag } from "../../api/window";
+import { settleAffection } from "../../api/pet";
 import { useChatStream } from "../../composables/useChatStream";
+import { useAffection } from "../../composables/useAffection";
 import { usePetRenderer } from "../../composables/usePetRenderer";
 import { useSystemProbe } from "../../composables/useSystemProbe";
+import { setExpression } from "../../composables/usePetRenderer";
 import { chatStore } from "../../state/chatStore";
 
 const { playAction, lookAt } = usePetRenderer();
 useSystemProbe((x, y) => lookAt(x, y));
 // 仅挂载事件订阅（send/abortCurrent 由 D1 的 ChatInput 组件消费）
 useChatStream();
+// 好感度：打卡（mount）+ 事件消费 + 表情联动（禁数值红线：窗口 A 只取 mood）
+useAffection();
 
 /**
  * 按下即拖拽：透明区已被 Rust 穿透（点击不到本 DOM），
@@ -31,6 +36,17 @@ function onPointerDown(): void {
   playAction("drag");
   void startDrag().catch((e: unknown) => {
     console.warn("[window] 启动拖拽失败", e);
+  });
+}
+
+/**
+ * 双击/长按抚摸（C5 信号入口）：happy 表情 + 结算 petStroke（日上限 20，引擎去重）。
+ * 注：窗口 A 不渲染任何数值，仅以表情回应（禁数值红线）。
+ */
+function onDoubleClick(): void {
+  void setExpression("happy");
+  void settleAffection({ kind: "petStroke" }).catch((e: unknown) => {
+    console.warn("[affection] 抚摸结算失败", e);
   });
 }
 </script>
@@ -55,6 +71,7 @@ function onPointerDown(): void {
       id="pet-canvas"
       class="pet-window__canvas"
       @pointerdown="onPointerDown"
+      @dblclick="onDoubleClick"
     ></div>
     <p class="pet-window__hint">七七（C4 管道就绪；D1 落正式气泡与输入框）</p>
   </div>

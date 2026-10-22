@@ -6,7 +6,13 @@
  */
 
 import { callCommand } from "./client";
-import type { PetStateDto, UpdatePetPayload } from "./types";
+import type {
+  AffectionChangedPayload,
+  AffectionLogDto,
+  AffectionSettleInput,
+  PetStateDto,
+  UpdatePetPayload,
+} from "./types";
 
 /** 读取桌宠状态。 */
 export async function getState(): Promise<PetStateDto> {
@@ -16,4 +22,16 @@ export async function getState(): Promise<PetStateDto> {
 /** 更新桌宠资料（petName / activeRenderer / rendererConfig）。 */
 export async function updateState(payload: UpdatePetPayload): Promise<PetStateDto> {
   return callCommand<PetStateDto>("pet_update_state", { payload });
+}
+
+/** 好感度结算信号（checkIn/petStroke 由前端触发；deepChat/resonance 由 C4 内部调用）。 */
+export async function settleAffection(
+  input: AffectionSettleInput,
+): Promise<AffectionChangedPayload> {
+  return callCommand<AffectionChangedPayload>("pet_settle_affection", { signal: input });
+}
+
+/** 好感度流水查询（D2 看板；limit 分页）。 */
+export async function listAffectionLogs(limit?: number): Promise<AffectionLogDto[]> {
+  return callCommand<AffectionLogDto[]>("pet_list_affection_logs", { limit });
 }

@@ -243,22 +243,47 @@ async fn run_chat_task(
     async_runtime::spawn(async move {
         let distill_client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
         let memory_target = resolve_memory_target(&tiered, quota_embedded);
-        let result = async_runtime::spawn_blocking(move || -> Result<(usize, bool), AppError> {
-            // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
-            let state = app.state::<AppState>();
-            let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(crate::llm::distill::run_distill(
-                &distill_client,
-                &memory_target,
-                &conn,
-                &distill_input,
-            ))
-        })
+        let result = async_runtime::spawn_blocking(
+            move || -> Result<(usize, bool, Option<u8>), AppError> {
+                // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
+                let state = app.state::<AppState>();
+                let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
+                let rt = tokio::runtime::Handle::current();
+                let out = rt.block_on(crate::llm::distill::run_distill(
+                    &distill_client,
+                    &memory_target,
+                    &conn,
+                    &distill_input,
+                ))?;
+
+                // C5.5 共鸣结算（失败静默，不影响对话；conn/app 在此闭包作用域内）
+                if let Some(strength) = out.2
+                    && let Err(e) = crate::affection::settle_signal(
+                        &conn,
+                        &app,
+                        crate::affection::rules::AffectionSignal::Resonance(strength),
+                    )
+                {
+                    eprintln!("[affection] 共鸣结算失败: {e}");
+                }
+                // C5 深度对话：单轮回复字数 ≥ 阈值 → +5（每消息至多一次）
+                if distill_input.assistant_text.chars().count()
+                    >= crate::config::DEEP_CHAT_MIN_CHARS
+                    && let Err(e) = crate::affection::settle_signal(
+                        &conn,
+                        &app,
+                        crate::affection::rules::AffectionSignal::DeepChat,
+                    )
+                {
+                    eprintln!("[affection] 深聊结算失败: {e}");
+                }
+                Ok(out)
+            },
+        )
         .await;
         match result {
             // 展平 spawn_blocking 的 JoinError 包装（Err 携带任务 panic/join 错误）
-            Ok(Ok((n, summarized))) => {
+            Ok(Ok((n, summarized, _resonance))) => {
                 if n > 0 {
                     eprintln!("[distill] 沉淀 {n} 条事实（summarized={summarized}）");
                 }

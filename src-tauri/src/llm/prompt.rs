@@ -4,7 +4,8 @@
 //! facts 近因）+ 勿扰/情绪基调占位（C6 接入点）+ 禁数值播报规则。
 //! 隐私红线：载荷仅含对话文本与本地记忆，**绝不含屏幕内容/进程窗口内容**。
 
-use crate::config::{PERSONA_BASELINE, RELATION_LEVEL_DIRECTIVES};
+use crate::affection::level::{self, Level};
+use crate::config::PERSONA_BASELINE;
 
 /// 混合检索结果（KNN 命中 + facts 近因）。
 #[derive(Debug, Default, Clone)]
@@ -31,9 +32,14 @@ pub fn build_system_prompt(retrieved: &RetrievedContext, relation: &RelationView
     prompt.push_str(relation.pet_name);
     prompt.push('。');
 
-    // 关系等级行为指令（夹取 1..=4）
-    let idx = (relation.level.clamp(1, 4) - 1) as usize;
-    prompt.push_str(RELATION_LEVEL_DIRECTIVES[idx]);
+    // 关系等级行为指令（夹取 1..=4，由 C5 level 模块单一真源提供）
+    let lvl = match relation.level.clamp(1, 4) {
+        1 => Level::L1,
+        2 => Level::L2,
+        3 => Level::L3,
+        _ => Level::L4,
+    };
+    prompt.push_str(level::behavior_prompt(lvl));
     prompt.push_str("\n\n");
 
     // 记忆注入（有则注入，无则省略段落——保持 Prompt 精简）

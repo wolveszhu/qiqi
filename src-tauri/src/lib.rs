@@ -3,8 +3,8 @@
 //! 边界：本文件只做"组装"——插件初始化、invoke_handler 注册、setup 钩子接线；
 //! 业务规则一律放领域模块（db/llm/affection/proactive/probe/window），命令薄层放 commands/。
 
-mod affection;
-mod llm;
+pub mod affection;
+pub mod llm;
 mod proactive;
 mod probe;
 mod window;
@@ -14,6 +14,8 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod state;
+
+use crate::state::AppState;
 
 // greet（脚手架遗留）已按 B3 决策移除：命令统一从 commands/ 出口，不留死代码。
 
@@ -72,7 +74,21 @@ pub fn run() {
             window::tray::build_tray(app)?;
             let handle = app.handle().clone();
             probe::scheduler::start_cursor_probe(handle.clone());
-            start_click_through_sync(handle);
+            start_click_through_sync(handle.clone());
+
+            // [C5] 启动衰减结算：异步、失败仅 log 不阻断窗口（幂等）
+            {
+                use tauri::Manager as _;
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app_handle.state::<AppState>();
+                    if let Ok(conn) = state.db.lock()
+                        && let Err(e) = crate::affection::settle_decay_at_startup(&app_handle, &conn)
+                    {
+                        eprintln!("[affection] 启动衰减结算失败: {e}");
+                    }
+                });
+            }
             Ok(())
         })
         // [B5] 命令注册：settings/pet/chat/memory 组（B5）；window/probe 组（C2 全量）。
@@ -90,6 +106,8 @@ pub fn run() {
             commands::settings::settings_set_quota_mode,
             commands::pet::pet_get_state,
             commands::pet::pet_update_state,
+            commands::pet::pet_settle_affection,
+            commands::pet::pet_list_affection_logs,
             commands::chat::chat_send_stream,
             commands::chat::chat_abort,
             commands::memory::memory_list_facts,

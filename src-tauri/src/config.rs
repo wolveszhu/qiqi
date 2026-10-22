@@ -27,6 +27,8 @@ pub const MAX_CONTEXT_MESSAGES: usize = 12;
 
 /// 触发会话摘要的消息条数阈值（用户+助手合计；超过即蒸馏摘要，M2 §5.2）。
 pub const SUMMARY_TRIGGER_COUNT: i64 = 10;
+/// 深度对话判定阈值：单轮 assistant 回复字数 ≥ 此值记为一次深度对话（C5 +5，MVP 量化）。
+pub const DEEP_CHAT_MIN_CHARS: usize = 80;
 
 /// 全部档位失败时的**本地兜底话术**（无网安慰，随机取一；禁数值播报）。
 pub const LOCAL_FALLBACK_PHRASES: &[&str] = &[

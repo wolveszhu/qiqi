@@ -63,6 +63,30 @@ export interface LogItem {
   createdAt: string;
 }
 
+/** 好感度流水 DTO（Rust `AffectionLogDto` 对齐，camelCase）。 */
+export interface AffectionLogDto {
+  id: number;
+  changeValue: number;
+  reason: string;
+  createdAt: string;
+}
+
+/** 好感度结算信号入参（前端仅发 checkIn / petStroke；deepChat/resonance 由 C4 内部调用）。 */
+export type AffectionSettleInput =
+  | { kind: "checkIn" }
+  | { kind: "petStroke" }
+  | { kind: "deepChat" }
+  | { kind: "resonance"; strength: number }
+  | { kind: "taboo"; value: number };
+
+/** affection:changed 事件负载（窗口 A 只消费 mood；delta/newPoints/newLevel 仅进看板 D2）。 */
+export interface AffectionChangedPayload {
+  delta: number;
+  newPoints: number;
+  newLevel: number;
+  mood: "happy" | "angry" | "neutral";
+}
+
 /** 主动频率档位（C6 微随机引擎日预算区间：1-2 / 4-6 / 10+）。 */
 export type ProactiveFrequency = "quiet" | "normal" | "sticky";
 

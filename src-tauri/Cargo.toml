@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
 async-trait = "0.1"
+chrono = { version = "0.4", features = ["clock"] }  # C5 衰减结算的本地日期/天数差
 
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "blob"] }
 sqlite-vec = "0.1"

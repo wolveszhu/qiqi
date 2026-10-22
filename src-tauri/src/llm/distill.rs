@@ -20,6 +20,12 @@ pub const FACT_EXTRACT_PROMPT: &str = "从下面的对话中提取关于用户�
 只输出 JSON 数组，每个元素形如 {\"content\":\"...\",\"category\":0}。\
 category：0=偏好，1=事件，2=画像。没有值得记住的内容就输出 []。只输出 JSON，不要多余文字。";
 
+/// 共鸣检测 Prompt（C5.5）：memory 档小模型判定本轮是否产生情感共鸣。
+/// 输出 JSON `{resonance:0|1, strength:1|2}`；宽松解析，失败/未判定 → None（宁少不多）。
+pub const RESONANCE_PROMPT: &str = "判断下面这段对话里，用户是否向七七表达了情感共鸣（被理解、被在乎、\
+袒露脆弱、愉快分享等）。只输出 JSON：共鸣则 {\"resonance\":1,\"strength\":2}（强烈）\
+或 {\"resonance\":1,\"strength\":1}（轻微），无共鸣则 {\"resonance\":0}。不要多余文字。";
+
 /// 解析事实抽取输出（**宽松三态**：直接 JSON / markdown 围栏 / 空输出）。
 ///
 /// 非 JSON（模型跑偏）→ 返回空集（静默跳过，不 panic）。
@@ -71,13 +77,15 @@ pub struct DistillInput {
 /// 执行沉淀（在 async 上下文中调用；DB 阻塞段由调用方 spawn_blocking 包裹）。
 ///
 /// 步骤：① facts 抽取（memory 档）→ 落库 + embed + 向量写入
-/// ② 消息数超阈值 → 会话摘要 upsert。失败重试一次后放弃（返回 Err 供日志）。
+/// ② 消息数超阈值 → 会话摘要 upsert
+/// ③ 共鸣检测（memory 档）→ 返回 strength（供 C5 结算；失败/未判定 → None）
+/// 任一 LLM 步骤失败重试一次后放弃（返回 Err 供日志；不改对话主链路）。
 pub async fn run_distill(
     client: &dyn LlmClient,
     memory_target: &LlmTarget,
     conn: &rusqlite::Connection,
     input: &DistillInput,
-) -> Result<(usize, bool), AppError> {
+) -> Result<(usize, bool, Option<u8>), AppError> {
     // ① 事实抽取（一次请求；失败重试一次）
     let raw = extract_facts(client, memory_target, &input.user_text, &input.assistant_text).await?;
     let extracted = parse_extracted_facts(&raw);
@@ -112,7 +120,11 @@ pub async fn run_distill(
         false
     };
 
-    Ok((written, summarized))
+    // ③ 共鸣检测（memory 档；宽松解析，失败/未判定 → None）
+    let resonance =
+        detect_resonance(client, memory_target, &input.user_text, &input.assistant_text).await;
+
+    Ok((written, summarized, resonance))
 }
 
 /// 抽取事实（重试一次）。
@@ -144,6 +156,56 @@ async fn extract_facts(
             Err(e) => return Err(e),
         }
     }
+}
+
+/// 共鸣检测（重试一次；解析失败/未共鸣 → None，宁少不多）。
+async fn detect_resonance(
+    client: &dyn LlmClient,
+    target: &LlmTarget,
+    user_text: &str,
+    assistant_text: &str,
+) -> Option<u8> {
+    let request = ChatRequest {
+        messages: vec![
+            ChatMessage { role: "system".into(), content: RESONANCE_PROMPT.into() },
+            ChatMessage {
+                role: "user".into(),
+                content: format!("用户：{user_text}\n助手：{assistant_text}"),
+            },
+        ],
+    };
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match collect_full_text(client, target, request.clone()).await {
+            Ok(text) => return parse_resonance(&text),
+            Err(e) if attempt == 1 => {
+                let _ = e;
+                continue;
+            },
+            Err(_) => return None,
+        }
+    }
+}
+
+/// 解析共鸣检测输出（宽松三态）：合法 JSON / 围栏 / 其它 → 命中则返回 strength（夹取 1..=2），否则 None。
+pub fn parse_resonance(raw: &str) -> Option<u8> {
+    let trimmed = raw.trim();
+    let json_text = strip_code_fence(trimmed);
+    if json_text.is_empty() {
+        return None;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(json_text) else {
+        return None;
+    };
+    // resonance 缺失或非 1 → 未共鸣
+    let resonance = value.get("resonance").and_then(Value::as_u64).unwrap_or(0);
+    if resonance != 1 {
+        return None;
+    }
+    // strength 缺省/越界 → 1（轻微），合法 1/2 映射
+    let strength = value.get("strength").and_then(Value::as_u64).unwrap_or(1);
+    Some(strength.clamp(1, 2) as u8)
 }
 
 /// 会话摘要（读最近消息拼给 memory 档）。

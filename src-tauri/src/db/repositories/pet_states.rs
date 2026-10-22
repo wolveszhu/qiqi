@@ -61,3 +61,27 @@ pub fn update_profile(
     }
     Ok(())
 }
+
+/// 仅更新分数与等级（C5 结算落库；不触碰 last_interaction/last_decay_at）。
+pub fn set_affection(conn: &Connection, points: i64, level: i64) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE pet_states SET affection_points = ?1, relationship_level = ?2 WHERE id = 1",
+        params![points, level],
+    )
+    .map_err(AppError::from)?;
+    Ok(())
+}
+
+/// 刷新最后互动日期（互动即推后衰减起点；参数为本地日期串 `YYYY-MM-DD`）。
+pub fn touch_interaction(conn: &Connection, date: &str) -> Result<(), AppError> {
+    conn.execute("UPDATE pet_states SET last_interaction = ?1 WHERE id = 1", params![date])
+        .map_err(AppError::from)?;
+    Ok(())
+}
+
+/// 刷新最后结算日期（衰减结算后写回；参数为本地日期串 `YYYY-MM-DD`）。
+pub fn touch_decay(conn: &Connection, date: &str) -> Result<(), AppError> {
+    conn.execute("UPDATE pet_states SET last_decay_at = ?1 WHERE id = 1", params![date])
+        .map_err(AppError::from)?;
+    Ok(())
+}

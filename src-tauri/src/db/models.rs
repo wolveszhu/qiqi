@@ -45,6 +45,14 @@ pub struct DiaryRow {
     pub created_at: String,
 }
 
+/// affection_logs 行（好感度流水）。
+pub struct AffectionLogRow {
+    pub id: i64,
+    pub change_value: i64,
+    pub reason: String,
+    pub created_at: String,
+}
+
 // ---------- app_settings.value 的存储结构 ----------
 
 /// 单档 LLM 配置（库内存储形态；api_key 依赖 SQLCipher 全库加密，无需二次加密）。
@@ -177,6 +185,16 @@ pub struct DiaryDto {
     pub diary_date: String,
     pub content: String,
     pub mood: Option<i64>,
+}
+
+/// 好感度流水条目（pet_list_affection_logs 返回，D2 看板）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AffectionLogDto {
+    pub id: i64,
+    pub change_value: i64,
+    pub reason: String,
+    pub created_at: String,
 }
 
 // ---------- 命令入参 DTO ----------

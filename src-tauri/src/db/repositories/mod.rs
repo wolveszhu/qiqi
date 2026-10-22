@@ -4,6 +4,7 @@
 //! - 全部查询走 `params![]`，禁止字符串拼接式 SQL（DoD 以 grep 该目录无拼接宏为准）；
 //! - 错误一律 `AppError::Db`，不做业务级 catch（错误由命令层原样上抛）。
 
+pub mod affection_logs;
 pub mod app_settings;
 pub mod diaries;
 pub mod facts;
