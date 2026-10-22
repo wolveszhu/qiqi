@@ -106,12 +106,15 @@ export interface FactDto {
   createdAt: string;
 }
 
+/** 日记情绪档（C7：LLM 同步输出；0=开心 1=平静 2=低落；越界/未知 → null）。 */
+export type DiaryMood = 0 | 1 | 2;
+
 /** 日记条目（memory_list_diaries 返回）。 */
 export interface DiaryDto {
   id: number;
   diaryDate: string;
   content: string;
-  mood: number | null;
+  mood: DiaryMood | null;
 }
 
 /** 保存单档配置的入参（api_key 仅在新值时携带；空串 = 不改动存量 Key）。 */

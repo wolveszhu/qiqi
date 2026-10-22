@@ -271,6 +271,8 @@ pub struct MockLlmClient {
     pub deltas: Vec<String>,
     /// embed 失败模拟。
     pub fail_embed: bool,
+    /// embed 返回的向量维度（默认 8；对接 1536 维虚拟表时用 `with_embed_dim`）。
+    pub embed_dim: usize,
 }
 
 #[allow(dead_code)]
@@ -280,6 +282,7 @@ impl MockLlmClient {
             fail_urls: vec![],
             deltas: vec!["你好".into(), "，我是".into(), "七七".into()],
             fail_embed: false,
+            embed_dim: 8,
         }
     }
 
@@ -288,7 +291,14 @@ impl MockLlmClient {
             fail_urls: urls.iter().map(|s| s.to_string()).collect(),
             deltas: vec![],
             fail_embed: false,
+            embed_dim: 8,
         }
+    }
+
+    /// 指定 embed 维度（C7 集成测试对接真实 1536 维 vec_memory）。
+    pub fn with_embed_dim(mut self, dim: usize) -> Self {
+        self.embed_dim = dim;
+        self
     }
 }
 
@@ -317,8 +327,8 @@ impl LlmClient for MockLlmClient {
         if self.fail_embed {
             return Err(AppError::Llm("mock embed 失败".into()));
         }
-        // 假向量：8 维由文本长度决定（仅测试用途）
-        Ok(texts.into_iter().map(|t| vec![t.len() as f32; 8]).collect())
+        // 假向量：维度 = embed_dim，值由文本长度决定（仅测试用途）
+        Ok(texts.into_iter().map(|t| vec![t.len() as f32; self.embed_dim]).collect())
     }
 }
 

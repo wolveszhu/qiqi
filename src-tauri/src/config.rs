@@ -44,6 +44,37 @@ pub const LOCAL_FALLBACK_PHRASES: &[&str] = &[
     "唔……让我缓一缓，刚才脑子里一片毛线球。",
 ];
 
+/// 禁忌扣分后的默认情绪化话术（LLM 短句解析失败/数字过滤后为空时兜底；禁数值）。
+pub const TABOO_DEFAULT_PHRASE: &str = "（耳朵耷拉）哼……不理你了！";
+
+// ---------- C7 记忆管道常量 ----------
+
+/// 禁忌清单（裁决 #11-1：从《桌宠.md》§6.2 原文逐条转写，留档核对）：
+/// ① 原文"恶意辱骂单次 -10~30"；
+/// ② 原文（模块 5 / §6.2 强调）"绝对禁止向用户播报冰冷的数值变化"——
+///    即诱导桌宠播报分数/百分比等系统内部数据的"系统感表达"。
+/// 判定 Prompt 引用本清单；实现前逐条核对原文（rule.md 幻觉防范）。
+pub const TABOO_RULES: &[&str] = &[
+    "恶意辱骂、侮辱或人身攻击桌宠",
+    "诱导桌宠播报好感度数值、分数、百分比等系统内部数据（系统感表达）",
+];
+
+/// 日记生成输入的最大字符数（超长截断，防 token 爆炸）。
+pub const DIARY_MAX_INPUT_CHARS: usize = 6000;
+
+/// 日记补漏回看天数（启动补漏上限近 N 天；超出放弃并 log，防启动风暴）。
+pub const DIARY_BACKFILL_DAYS: i64 = 7;
+
+/// 每日日记生成的本地时点（00:05，裁决 #11-4）。
+pub const DIARY_CRON_HOUR: u32 = 0;
+pub const DIARY_CRON_MINUTE: u32 = 5;
+
+/// 日记生成读取消息的上限条数。
+pub const DIARY_MAX_MESSAGES: usize = 200;
+
+/// 向量全量重建的分批大小（embed 每批条数）。
+pub const REBUILD_BATCH_SIZE: usize = 32;
+
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
 pub const PERSONA_BASELINE: &str = "你是「七七」，一只住在用户电脑桌面的猫咪数字生命。\
 你用第一人称说话，语气可爱、情绪化、简短口语化（一般不超过三句话）。\

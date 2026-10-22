@@ -57,19 +57,8 @@ pub fn probe_get_snapshot(state: State<'_, AppState>) -> Result<ProbeSnapshot, A
     Ok(ProbeSnapshot { cursor, idle_ms, idle, foreground })
 }
 
-/// `proactive:show` 事件负载（窗口 A 消费：本地逐字打字机 + 表情联动）。
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProactiveShow {
-    /// 会话 id（前缀 `proactive-`，与用户对话隔离）。
-    pub session_id: String,
-    /// 主动话术文本（已完税，前端仅做本地打字机动画）。
-    pub text: String,
-    /// 表情指令（happy / tsundere），驱动渲染器 `setExpression`。
-    pub mood: String,
-}
-
-/// 主动话术生成（C6.4）：Rust 复用 C4 管道做**非流式短生成**，emit `proactive:show`。
+/// 主动话术生成（C6.4）：Rust 复用 C4 管道做**非流式短生成**，emit `proactive:show`
+/// （负载结构 `llm::ProactiveShow`，与 C7 禁忌短句共用管道）。
 ///
 /// - 用户未开口，由桌宠主动找话；max_tokens 限短句（max_tokens=60）；
 /// - 傲娇优先：距上次互动 ≥3 天 → tsundere 话术；
@@ -141,6 +130,7 @@ pub async fn proactive_generate(
 
     let session_id = format!("proactive-{}", chrono::Local::now().timestamp_millis());
     let mood = if tsundere { "tsundere" } else { "happy" };
-    let _ = app.emit("proactive:show", ProactiveShow { session_id, text, mood: mood.into() });
+    let _ = app
+        .emit("proactive:show", crate::llm::ProactiveShow { session_id, text, mood: mood.into() });
     Ok(())
 }

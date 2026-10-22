@@ -1,16 +1,17 @@
-//! memory 命令域（薄层）：B5 只落**只读查询**；写操作签名预留，实现属 C7。
+//! memory 命令域（薄层）：只读查询（B5）+ 写操作实装（C7.3，向量同步在 llm 域）。
 //!
-//! 写操作（编辑/删除/重生成 + `vec_memory` 同步重建）必须**同事务**保证向量与行一致，
-//! 该事务逻辑与 embed 调用在 C7 落位；本计划仅声明签名并返回"未接入"。
+//! 事务一致性（冷眼三问①）：编辑 = embed（无锁段，失败不触碰库）→ 同事务
+//! 行更新 + 向量重写；删除 = 同事务行删除 + 向量级联。
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::db::models::{DiaryDto, FactDto};
-use crate::db::repositories::{diaries, facts};
+use crate::db::repositories::{app_settings, diaries, facts};
 use crate::error::AppError;
+use crate::llm::client::{LlmClient as _, ReqwestLlmClient};
 use crate::state::AppState;
 
-/// 单次查询上限（C7 引入分页后改为参数化）。
+/// 单次查询上限（分页需求出现后改为参数化）。
 const LIST_LIMIT: i64 = 200;
 
 /// 列出结构化事实。
@@ -41,25 +42,54 @@ pub fn memory_list_diaries(state: State<'_, AppState>) -> Result<Vec<DiaryDto>, 
         .collect())
 }
 
-// ---------- [C7 接入]：签名已定，实现随记忆管道落位 ----------
+// ---------- [C7.3 实装]：写操作与向量同步 ----------
 
-/// 编辑事实（含向量同步）。
+/// 编辑事实（含向量同步）：embed（无锁）→ 同事务行更新 + 向量重写。
 #[tauri::command]
-pub fn memory_update_fact(id: i64, content: String) -> Result<(), AppError> {
-    let _ = (id, content);
-    Err(AppError::Config("[C7 接入] 记忆编辑与向量同步尚未接入".into()))
+pub async fn memory_update_fact(app: AppHandle, id: i64, content: String) -> Result<(), AppError> {
+    use tauri::Manager as _;
+    let state = app.state::<AppState>();
+
+    // ① 配置快照（锁段一）
+    let (tiered, quota_embedded) = {
+        let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+        let tiered = app_settings::get_tiered(&conn)?;
+        let quota = app_settings::get_quota_mode(&conn)?;
+        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED)
+    };
+
+    // ② embed（无锁段；失败不触碰库）
+    let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
+    let memory_target = crate::llm::router::memory_target(&tiered, quota_embedded);
+    let embedding = client
+        .embed(&memory_target, vec![content.clone()])
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Llm("embed 返回空结果".into()))?;
+
+    // ③ 同事务写库（锁段二）
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    crate::llm::distill::apply_fact_embedding(&conn, id, &content, &embedding)
 }
 
-/// 删除事实（含向量级联删除）。
+/// 删除事实（含向量级联删除；纯 DB 同事务，无 LLM 调用）。
 #[tauri::command]
-pub fn memory_delete_fact(id: i64) -> Result<(), AppError> {
-    let _ = id;
-    Err(AppError::Config("[C7 接入] 记忆删除与向量级联尚未接入".into()))
+pub fn memory_delete_fact(app: AppHandle, id: i64) -> Result<(), AppError> {
+    use tauri::Manager as _;
+    let state = app.state::<AppState>();
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    crate::llm::distill::remove_fact(&conn, id)
 }
 
-/// 重新生成指定日期的日记（upsert 覆盖）。
+/// 重新生成指定日期的日记（upsert 覆盖；memory 档短生成）。
 #[tauri::command]
-pub fn memory_regenerate_diary(date: String) -> Result<(), AppError> {
-    let _ = date;
-    Err(AppError::Config("[C7 接入] 日记生成尚未接入".into()))
+pub async fn memory_regenerate_diary(app: AppHandle, date: String) -> Result<(), AppError> {
+    // 生成管道内部三段式（锁不跨 await）；当日无消息 → Err(Config) 供 D3 提示
+    let generated = crate::llm::diary::generate_for_date(&app, &date).await?;
+    if generated {
+        Ok(())
+    } else {
+        Err(AppError::Config(format!("{date} 没有对话记录，无法生成日记")))
+    }
 }

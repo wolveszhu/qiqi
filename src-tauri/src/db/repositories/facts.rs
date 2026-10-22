@@ -43,6 +43,20 @@ pub fn insert(
     Ok(conn.last_insert_rowid())
 }
 
+/// 更新事实内容（updated_at 刷新；返回受影响行数，0 = 不存在）。
+pub fn update(conn: &Connection, id: i64, content: &str) -> Result<usize, AppError> {
+    conn.execute(
+        "UPDATE facts SET content = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+        params![content, id],
+    )
+    .map_err(AppError::from)
+}
+
+/// 删除事实（返回受影响行数，0 = 不存在）。
+pub fn delete(conn: &Connection, id: i64) -> Result<usize, AppError> {
+    conn.execute("DELETE FROM facts WHERE id = ?1", params![id]).map_err(AppError::from)
+}
+
 /// 近因事实（Prompt 拼装用：按更新时间倒序取 N 条 content）。
 pub fn recent_contents(conn: &Connection, limit: i64) -> Result<Vec<String>, AppError> {
     let mut stmt = conn

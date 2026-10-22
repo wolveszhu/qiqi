@@ -244,7 +244,7 @@ async fn run_chat_task(
         let distill_client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
         let memory_target = resolve_memory_target(&tiered, quota_embedded);
         let result = async_runtime::spawn_blocking(
-            move || -> Result<(usize, bool, Option<u8>), AppError> {
+            move || -> Result<crate::llm::distill::DistillOutcome, AppError> {
                 // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
                 let state = app.state::<AppState>();
                 let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
@@ -257,7 +257,7 @@ async fn run_chat_task(
                 ))?;
 
                 // C5.5 共鸣结算（失败静默，不影响对话；conn/app 在此闭包作用域内）
-                if let Some(strength) = out.2
+                if let Some(strength) = out.resonance
                     && let Err(e) = crate::affection::settle_signal(
                         &conn,
                         &app,
@@ -265,6 +265,28 @@ async fn run_chat_task(
                     )
                 {
                     eprintln!("[affection] 共鸣结算失败: {e}");
+                }
+                // C7.1 禁忌结算：severity → -10/-20/-30（affection:changed(angry) 由结算天然 emit）；
+                // 情绪化短句经 proactive:show 展示（数字已剥离，红线：话术无数值）
+                if let Some(hit) = &out.taboo {
+                    let delta = crate::llm::distill::taboo_delta(hit.severity) as i8;
+                    if let Err(e) = crate::affection::settle_signal(
+                        &conn,
+                        &app,
+                        crate::affection::rules::AffectionSignal::Taboo(delta),
+                    ) {
+                        eprintln!("[affection] 禁忌结算失败: {e}");
+                    }
+                    let session_id =
+                        format!("proactive-taboo-{}", chrono::Local::now().timestamp_millis());
+                    let _ = app.emit(
+                        "proactive:show",
+                        crate::llm::ProactiveShow {
+                            session_id,
+                            text: hit.emotion_hint.clone(),
+                            mood: "angry".into(),
+                        },
+                    );
                 }
                 // C5 深度对话：单轮回复字数 ≥ 阈值 → +5（每消息至多一次）
                 if distill_input.assistant_text.chars().count()
@@ -283,9 +305,12 @@ async fn run_chat_task(
         .await;
         match result {
             // 展平 spawn_blocking 的 JoinError 包装（Err 携带任务 panic/join 错误）
-            Ok(Ok((n, summarized, _resonance))) => {
-                if n > 0 {
-                    eprintln!("[distill] 沉淀 {n} 条事实（summarized={summarized}）");
+            Ok(Ok(outcome)) => {
+                if outcome.facts_written > 0 {
+                    eprintln!(
+                        "[distill] 沉淀 {} 条事实（summarized={}）",
+                        outcome.facts_written, outcome.summarized
+                    );
                 }
             },
             Ok(Err(e)) => {
@@ -374,21 +399,12 @@ fn build_chat_request(
     Ok(ChatRequest { messages, max_tokens: None })
 }
 
-/// memory 档目标（蒸馏与 embedding 共用；勘误 #8）。
+/// memory 档目标（蒸馏与 embedding 共用；勘误 #8）——委托 router 单一真源。
 fn resolve_memory_target(
     tiered: &crate::db::models::TieredValue,
     quota_embedded: bool,
 ) -> LlmTarget {
-    let mut memory = crate::llm::router::target_of("memory", &tiered.memory);
-    if quota_embedded && memory.base_url.is_empty() {
-        // 内置额度模式下未配 memory 档 → 指向外部端点（部署前由回落链兜底）
-        memory.base_url = crate::config::EMBEDDED_QUOTA_BASE_URL.into();
-        memory.model = crate::config::EMBEDDING_MODEL.into();
-    }
-    if memory.model.is_empty() {
-        memory.model = crate::config::EMBEDDING_MODEL.into();
-    }
-    memory
+    crate::llm::router::memory_target(tiered, quota_embedded)
 }
 
 fn emit_error(app: &AppHandle, session_id: &str, e: &AppError) {

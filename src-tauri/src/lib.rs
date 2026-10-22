@@ -89,6 +89,12 @@ pub fn run() {
                     }
                 });
             }
+
+            // [C7] 日记调度：启动补漏（近 7 天）+ 每日 00:05 生成昨日日记（单例 spawn，失败仅 log）
+            {
+                let app_handle = app.handle().clone();
+                crate::llm::diary::spawn_scheduler(app_handle);
+            }
             Ok(())
         })
         // [B5] 命令注册：settings/pet/chat/memory 组（B5）；window/probe 组（C2 全量）。

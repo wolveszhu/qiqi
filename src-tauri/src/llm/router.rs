@@ -28,6 +28,21 @@ pub fn target_of(tier: &'static str, value: &crate::db::models::LlmTierValue) ->
     }
 }
 
+/// memory 档目标（C4 蒸馏/embedding 与 C7 日记/编辑同步共用；勘误 #8 单一真源）。
+///
+/// 内置额度模式下未配 memory 档 → 指向外部端点；model 缺省 → embedding 模型。
+pub fn memory_target(tiered: &TieredValue, quota_embedded: bool) -> LlmTarget {
+    let mut memory = target_of("memory", &tiered.memory);
+    if quota_embedded && memory.base_url.is_empty() {
+        memory.base_url = crate::config::EMBEDDED_QUOTA_BASE_URL.into();
+        memory.model = crate::config::EMBEDDING_MODEL.into();
+    }
+    if memory.model.is_empty() {
+        memory.model = crate::config::EMBEDDING_MODEL.into();
+    }
+    memory
+}
+
 /// 回落链尝试顺序：main → memory → fallback（未配置档自动跳过）。
 pub fn chain_order(tiered: &TieredValue) -> Vec<LlmTarget> {
     let mut targets = vec![

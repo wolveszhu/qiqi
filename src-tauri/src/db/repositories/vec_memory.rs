@@ -48,3 +48,19 @@ pub fn delete_by_rowid(conn: &Connection, rowid: i64) -> Result<(), AppError> {
         .map_err(AppError::from)?;
     Ok(())
 }
+
+/// 全量重建第一步：DROP 后按维度重建虚拟表（C7.4；DDL 与 M2 单点同构）。
+///
+/// ⚠️ 连接必须已注册 sqlite-vec 扩展（生产连接由 `init` 保证）；
+/// `dim` 显式传入（生产 = `config::EMBEDDING_DIM`，测试可用小维度配 Mock）。
+pub fn drop_and_recreate(conn: &Connection, dim: usize) -> Result<(), AppError> {
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS vec_memory;
+         CREATE VIRTUAL TABLE vec_memory USING vec0 (
+             embedding float[{dim}],
+             +source_text TEXT
+         );"
+    ))
+    .map_err(AppError::from)?;
+    Ok(())
+}

@@ -48,3 +48,32 @@ pub fn recent(
         .map_err(AppError::from)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
+
+/// 读取指定**本地日期**的全部消息（时间正序；C7.2 日记输入）。
+///
+/// `created_at` 为 UTC（CURRENT_TIMESTAMP），按 `date(created_at,'localtime')` 过滤。
+pub fn by_date(conn: &Connection, date: &str, limit: usize) -> Result<Vec<MessageRow>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, role, content FROM messages
+             WHERE date(created_at, 'localtime') = ?1
+             ORDER BY created_at ASC, id ASC LIMIT ?2",
+        )
+        .map_err(AppError::from)?;
+    let rows = stmt
+        .query_map(params![date, limit as i64], |row| {
+            Ok(MessageRow { id: row.get(0)?, role: row.get(1)?, content: row.get(2)? })
+        })
+        .map_err(AppError::from)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+/// 指定本地日期的消息条数（补漏判空，轻量 COUNT）。
+pub fn count_by_date(conn: &Connection, date: &str) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM messages WHERE date(created_at, 'localtime') = ?1",
+        params![date],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
+}
