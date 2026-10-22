@@ -63,6 +63,12 @@ impl From<tauri::Error> for AppError {
     }
 }
 
+impl From<reqwest::Error> for AppError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Llm(format!("HTTP {e}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

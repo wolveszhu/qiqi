@@ -17,6 +17,39 @@ pub const KEY_USER: &str = "sqlcipher-key";
 /// 端点部署后仅改此常量（单点）。
 pub const EMBEDDED_QUOTA_BASE_URL: &str = "https://qiqi-quota.workers.dev/v1";
 
+// ---------- C4 对话管道常量 ----------
+
+/// Embedding 模型（勘误 #8：复用 memory 档 OpenAI 兼容接口；1536 维匹配 EMBEDDING_DIM）。
+pub const EMBEDDING_MODEL: &str = "text-embedding-3-small";
+
+/// 对话上下文保留的最近消息条数（超出部分由会话摘要头部承担，防 token 超限）。
+pub const MAX_CONTEXT_MESSAGES: usize = 12;
+
+/// 触发会话摘要的消息条数阈值（用户+助手合计；超过即蒸馏摘要，M2 §5.2）。
+pub const SUMMARY_TRIGGER_COUNT: i64 = 10;
+
+/// 全部档位失败时的**本地兜底话术**（无网安慰，随机取一；禁数值播报）。
+pub const LOCAL_FALLBACK_PHRASES: &[&str] = &[
+    "唔……我的网络好像打了个盹儿，等会儿再聊好不好？",
+    "呜，刚才走神了……你刚刚说什么来着？",
+    "（耳朵耷拉）信号好像被云叼走了……我马上回来！",
+    "唔……让我缓一缓，刚才脑子里一片毛线球。",
+];
+
+/// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
+pub const PERSONA_BASELINE: &str = "你是「七七」，一只住在用户电脑桌面的猫咪数字生命。\
+你用第一人称说话，语气可爱、情绪化、简短口语化（一般不超过三句话）。\
+重要规则：绝对不要向用户播报任何数字、分数、百分比或统计信息——\
+你的好感与情绪只通过语气和称呼体现（比如开心地喵一声、委屈地哼哼）。";
+
+/// 关系等级行为指令（Lv1-4；数值映射仅内部使用，输出层禁播报数值）。
+pub const RELATION_LEVEL_DIRECTIVES: &[&str] = &[
+    "（关系阶段：刚认识）保持礼貌但略带警惕，偶尔害羞；不要表现得太熟络。",
+    "（关系阶段：熟悉的朋友）亲近自然，会主动分享小发现，偶尔撒娇。",
+    "（关系阶段：亲密伙伴）非常黏人，语气亲昵，会关心用户的作息与情绪。",
+    "（关系阶段：无可替代的存在）毫无保留的信任与依恋，把你当作整个世界。",
+];
+
 /// LLM 配置档位（与 `db::models::TieredValue` 三档一致）。
 pub const TIER_MAIN: &str = "main";
 pub const TIER_MEMORY: &str = "memory";

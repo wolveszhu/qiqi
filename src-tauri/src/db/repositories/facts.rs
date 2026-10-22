@@ -1,4 +1,4 @@
-//! facts 表访问（只读；编辑/删除与向量同步属 C7）。
+//! facts 表访问：C4 蒸馏插入（返回 id 供 vec_memory rowid 关联）。
 
 use rusqlite::{Connection, params};
 
@@ -25,5 +25,30 @@ pub fn list(conn: &Connection, limit: i64) -> Result<Vec<FactRow>, AppError> {
             })
         })
         .map_err(AppError::from)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+/// 插入事实并返回 id（category：0=preference, 1=event, 2=profile）。
+pub fn insert(
+    conn: &Connection,
+    category: i64,
+    content: &str,
+    confidence: f64,
+) -> Result<i64, AppError> {
+    conn.execute(
+        "INSERT INTO facts (category, content, confidence) VALUES (?1, ?2, ?3)",
+        params![category, content, confidence],
+    )
+    .map_err(AppError::from)?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// 近因事实（Prompt 拼装用：按更新时间倒序取 N 条 content）。
+pub fn recent_contents(conn: &Connection, limit: i64) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn
+        .prepare("SELECT content FROM facts ORDER BY updated_at DESC, id DESC LIMIT ?1")
+        .map_err(AppError::from)?;
+    let rows =
+        stmt.query_map(params![limit], |row| row.get::<_, String>(0)).map_err(AppError::from)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }

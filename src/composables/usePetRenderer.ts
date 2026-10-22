@@ -29,6 +29,19 @@ export interface UsePetRendererApi {
   lookAt: (x: number, y: number) => void;
 }
 
+/** 模块级驱动函数（操作单例 renderer；供其他 composable/组件直接调用，未挂载时 no-op）。 */
+export function playAction(name: Parameters<IPetRenderer["playAction"]>[0]): void {
+  renderer?.playAction(name);
+}
+
+export function setExpression(name: Parameters<IPetRenderer["setExpression"]>[0]): void {
+  renderer?.setExpression(name);
+}
+
+export function lookAt(x: number, y: number): void {
+  renderer?.lookAt(x, y);
+}
+
 export function usePetRenderer(): UsePetRendererApi {
   onMounted(async () => {
     const container = document.getElementById("pet-canvas");

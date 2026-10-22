@@ -7,4 +7,7 @@
 pub mod app_settings;
 pub mod diaries;
 pub mod facts;
+pub mod messages;
 pub mod pet_states;
+pub mod summaries;
+pub mod vec_memory;
