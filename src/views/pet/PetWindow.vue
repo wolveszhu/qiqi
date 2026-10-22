@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import SpeechBubble from "../../components/pet/SpeechBubble.vue";
 import ChatInput from "../../components/pet/ChatInput.vue";
 import BellToggle from "../../components/pet/BellToggle.vue";
 import {
+  lookAt,
   playAction,
   setExtraHitRegion,
   setPetSleeping,
   usePetRenderer,
 } from "../../composables/usePetRenderer";
-import { useProactive } from "../../composables/useProactive";
-import { applyDndLocal, settingsStore } from "../../state/settingsStore";
+import { proactiveBubble, useProactive } from "../../composables/useProactive";
+import { useChatStream } from "../../composables/useChatStream";
+import { useAffection } from "../../composables/useAffection";
+import { useSystemProbe } from "../../composables/useSystemProbe";
+import { settingsStore, applyDndLocal } from "../../state/settingsStore";
+import { chatStore } from "../../state/chatStore";
 import { saveDnd } from "../../api/settings";
+import { settleAffection } from "../../api/pet";
+import { onChatToggle } from "../../api/probe";
 import {
   getOuterPosition,
   restoreFromSnap,
@@ -27,9 +34,34 @@ const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
 const sleepSnap = ref(false);
 
-// 挂载渲染器（PIXI 单例）+ 启动主动引擎
+// ---- 主链路接线（E1a：此前三个 composable 未在窗口 A 实例化，MVP 链路断裂） ----
 usePetRenderer();
 useProactive();
+const stream = useChatStream();
+useAffection();
+useSystemProbe({
+  // 鼠标坐标 → 视线跟随（C2/C6 探针 → 渲染器 lookAt）
+  onMove: (x: number, y: number) => lookAt(x, y),
+  // 空闲翻转 → 睡/醒动作（C6：30min 无操作睡、回归伸懒腰）
+  onIdleChange: (idle: boolean) => {
+    if (idle) playAction("sleep");
+    else playAction("stretch");
+  },
+});
+
+// 气泡数据源（窗口 A 单气泡覆盖式，勘误#12）：对话流优先，主动话术次之
+const bubbleText = computed(() => chatStore.text || proactiveBubble.text);
+const bubbleStreaming = computed(
+  () => chatStore.isStreaming || proactiveBubble.isStreaming,
+);
+const bubbleVisible = computed(() => bubbleText.value.length > 0);
+
+function onSend(text: string): void {
+  stream.send(text);
+}
+function onCloseInput(): void {
+  settingsStore.chatInputVisible = false;
+}
 
 function onAction(name: string): void {
   if (name === "pet") playAction("click");
@@ -64,6 +96,10 @@ function onPointerDown(): void {
   // 系统接管拖拽（C2）；拖拽中首次 pointerup 触发一次吸附检测（风险#12）
   void startDrag();
   playAction("click");
+  // 抚摸计分（M1 锚点④：点击猫身即抚摸+1，日上限 20；C5 内部结算与上限控制）
+  void settleAffection({ kind: "petStroke" }).catch((e: unknown) =>
+    console.warn("[pet] 抚摸计分失败", e),
+  );
   if (!isDragging.value) {
     isDragging.value = true;
     window.addEventListener("pointerup", () => void onDragEnd(), { once: true });
@@ -101,6 +137,12 @@ onMounted(async (): Promise<void> => {
       }
     }),
   );
+  // Ctrl+Shift+P 呼出/隐藏输入框（D1；toggle 运行时 UI 态）
+  unlisteners.push(
+    await onChatToggle(() => {
+      settingsStore.chatInputVisible = !settingsStore.chatInputVisible;
+    }),
+  );
   // 铃铛矩形 union 进 hitRegion（D4.3：穿透状态机照常）
   setExtraHitRegion({ x: 8, y: 8, width: 32, height: 32 });
 });
@@ -123,8 +165,18 @@ onUnmounted((): void => {
       @pointerdown.stop
       @toggle="onBellToggle"
     />
-    <SpeechBubble />
-    <ChatInput :visible="settingsStore.chatInputVisible" />
+    <SpeechBubble
+      :text="bubbleText"
+      :streaming="bubbleStreaming"
+      :visible="bubbleVisible"
+    />
+    <ChatInput
+      class="chat-layer"
+      :visible="settingsStore.chatInputVisible"
+      @pointerdown.stop
+      @send="onSend"
+      @close="onCloseInput"
+    />
   </div>
 </template>
 
