@@ -9,7 +9,7 @@
 use rusqlite::Connection;
 
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
-use qiqi_lib::db::migrations::chain;
+use qiqi_lib::db::migrations::{TARGET_VERSION, chain};
 use qiqi_lib::db::repositories::{app_settings, diaries, facts, pet_states};
 
 const TEST_KEY: &str = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
@@ -162,7 +162,7 @@ fn case6_schema_matches_migration_chain() {
         assert!(exists, "列缺失: {}.{}", col.0, col.1);
     }
     let version: usize = chain().current_version(&conn).expect("版本").into();
-    assert_eq!(version, 3, "M3（勘误 #7 tiered 迁移）应已注册");
+    assert_eq!(version, TARGET_VERSION, "M1–M4（含勘误 #7 tiered / 勘误 #13 dnd 迁移）应已注册");
 }
 
 // ---------- 用例 7（C3）：tiered 读写 / BYOK 校验 / 双格式兼容 ----------

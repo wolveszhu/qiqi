@@ -9,6 +9,7 @@
 use rusqlite::Connection;
 
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
+use qiqi_lib::db::migrations::TARGET_VERSION;
 
 /// 固定测试密钥（64 hex 字符，同生产 32 字节 hex 形态）。
 const TEST_KEY: &str = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
@@ -66,9 +67,9 @@ fn case1_empty_db_migrates_full_chain() {
         assert!(exists, "索引缺失: {index}");
     }
 
-    // user_version == 3（M1+M2+M3；M3 为勘误 #7 数据迁移）
+    // user_version == TARGET_VERSION（M1 核心表 + M2 vec0 + M3 tiered 数据迁移 + M4 dnd/频率数据迁移）
     let version: usize = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).expect("版本");
-    assert_eq!(version, 3);
+    assert_eq!(version, TARGET_VERSION, "应迁移到目标版本");
 
     // 种子：pet_states 仅 id=1 一行
     let pet_count: i64 =
@@ -93,6 +94,86 @@ fn case1_empty_db_migrates_full_chain() {
     let settings_count: i64 =
         conn.query_row("SELECT COUNT(*) FROM app_settings", [], |row| row.get(0)).expect("查询");
     assert_eq!(settings_count, 2);
+    // M4（勘误 #13 后）：type=2 种子应为 `{"dnd":{...},"frequency":...}` 新结构，
+    // frequency 有规范默认档（修复 M1 种子旧单段导致的空串脏值）
+    let dnd: String = conn
+        .query_row("SELECT value FROM app_settings WHERE type = 2", [], |row| row.get(0))
+        .expect("settings 行");
+    let dnd_parsed: serde_json::Value = serde_json::from_str(&dnd).expect("JSON 解析");
+    assert!(dnd_parsed.get("dnd").is_some(), "type=2 应含 dnd 键: {dnd}");
+    assert_eq!(
+        dnd_parsed.get("frequency").and_then(|v| v.as_str()),
+        Some("normal"),
+        "frequency 应有规范默认档: {dnd}"
+    );
+}
+
+// ---------- 用例 9：M4 数据迁移（旧单段勿扰 → 新结构） ----------
+
+#[test]
+fn case9_m4_migrates_legacy_dnd_seed_to_tiered() {
+    register_vec_extension().expect("vec 注册");
+    let dir = tempfile::tempdir().expect("临时目录");
+    let db_path = dir.path().join("pet.db");
+
+    // 构造"勘误 #13 前"的旧库：裸连接只跑到 M3（链上无降级，故从零起步而非回退），
+    // 再把 type=2 显式写回 M1 种子的旧单段格式（M4 未执行时的真实存储态）。
+    let mut conn = Connection::open(&db_path).expect("打开");
+    conn.execute_batch(&format!("PRAGMA key = \"x'{TEST_KEY}'\";")).expect("密钥");
+    qiqi_lib::db::migrations::chain().to_version(&mut conn, 3).expect("迁移到 M3");
+    conn.execute_batch(
+        "UPDATE app_settings SET value = '{\"dnd_enabled\":true,\"dnd_start_time\":\"09:00\",\"dnd_end_time\":\"18:00\"}' WHERE type = 2;",
+    )
+    .expect("写回旧单段格式");
+    drop(conn);
+
+    // 重新初始化：M4 应把旧单段迁为新结构（一段 ranges + frequency 默认档）
+    let db = init_with_key(&db_path, TEST_KEY).expect("升级初始化");
+    let conn = db.conn.lock().expect("锁");
+    let value: String = conn
+        .query_row("SELECT value FROM app_settings WHERE type = 2", [], |row| row.get(0))
+        .expect("settings 行");
+    let parsed: serde_json::Value = serde_json::from_str(&value).expect("JSON 解析");
+    let dnd = parsed.get("dnd").expect("应已迁移出 dnd 键");
+    // enabled 必须是 JSON 布尔（非整数 0/1）——DndValue.enabled: bool 反序列化依赖此（F4 回归钉死）
+    assert_eq!(dnd.get("enabled").and_then(|v| v.as_bool()), Some(true));
+    let ranges = dnd.get("ranges").and_then(|v| v.as_array()).expect("ranges 数组");
+    assert_eq!(ranges.len(), 1, "旧单段应迁为一段 ranges");
+    assert_eq!(ranges[0].get("start").and_then(|v| v.as_str()), Some("09:00"));
+    assert_eq!(ranges[0].get("end").and_then(|v| v.as_str()), Some("18:00"));
+    assert_eq!(parsed.get("frequency").and_then(|v| v.as_str()), Some("normal"));
+
+    // 端到端：迁移后的 type=2 必须能被 settings 读取端完整反序列化（F4 回归钉子）。
+    // 读取端私有（settings_get_inner），此处直接验证 DTO 反序列化（同一 serde 契约）。
+    let settings_dnd: qiqi_lib::db::models::SettingsDndValue =
+        serde_json::from_value(parsed.clone()).expect("SettingsDndValue 反序列化");
+    assert!(settings_dnd.dnd.enabled, "dnd.enabled 应迁为 true");
+    assert_eq!(settings_dnd.dnd.ranges.len(), 1);
+    assert_eq!(settings_dnd.frequency, "normal");
+
+    // 幂等：再跑一次全链，值不变（M4 的 `$.dnd IS NULL` 守卫生效）
+    drop(conn);
+    drop(db);
+    let db2 = init_with_key(&db_path, TEST_KEY).expect("幂等复跑");
+    let conn2 = db2.conn.lock().expect("锁");
+    let value2: String = conn2
+        .query_row("SELECT value FROM app_settings WHERE type = 2", [], |row| row.get(0))
+        .expect("settings 行");
+    assert_eq!(value, value2, "M4 重跑不应改变值");
+}
+
+// ---------- 用例 10：M4 迁移后 settings 读取端无需 legacy 兜底 ----------
+
+#[test]
+fn case10_settings_snapshot_reads_tiered_dnd_after_migration() {
+    let (_dir, conn) = fresh_db();
+    // 经 settings_get_inner 等价路径：仓储层直接读到的 type=2 已是新结构
+    let raw = qiqi_lib::db::repositories::app_settings::get_row(&conn, 2)
+        .expect("查询")
+        .and_then(|r| r.value)
+        .expect("type=2 行应有值");
+    let parsed: serde_json::Value = serde_json::from_str(&raw).expect("JSON 解析");
+    assert!(parsed.get("dnd").is_some(), "新库 type=2 应直接为新结构（无需 legacy 兼容）: {raw}");
 }
 
 // ---------- 用例 2：重复执行幂等 ----------
@@ -156,7 +237,7 @@ fn case3b_db_version_below_target_backs_up_then_migrates() {
     let conn = db.conn.lock().expect("锁");
     assert!(db_path.with_extension("db.bak").exists(), "应产生备份");
     let version: usize = conn.query_row("PRAGMA user_version", [], |row| row.get(0)).expect("版本");
-    assert_eq!(version, 3);
+    assert_eq!(version, TARGET_VERSION);
     let name: String = conn
         .query_row("SELECT pet_name FROM pet_states WHERE id = 1", [], |row| row.get(0))
         .expect("数据");

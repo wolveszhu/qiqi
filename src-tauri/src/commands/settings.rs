@@ -159,6 +159,10 @@ fn save_dnd_inner(conn: &Connection, dnd: DndValue, frequency: String) -> Result
 
 /// 读取勿扰配置（完整 type=2 行）：优先 `{"dnd":{...},"frequency":...}`，回落旧单段格式。
 /// （type=1 的 tiered 解析已下沉至仓储层 `app_settings::get_tiered`，勿留双实现。）
+///
+/// **legacy 兼容保留理由（F4 勘误 #7/#13 清理裁决）**：M4 迁移已使新库 type=2 为规范结构，
+/// 运行时不该遇到旧格式；保留读取兼容仅为**防御**——用户从 M4 之前的备份恢复 `pet.db` 时
+/// （备份未随迁移链前进），仍可正常读取而非硬失败。迁移负责"新库干净"，兼容负责"旧备份可读"。
 fn parse_dnd_full(raw: Option<&str>) -> Result<SettingsDndValue, AppError> {
     let Some(raw) = raw else {
         return Ok(SettingsDndValue::default());

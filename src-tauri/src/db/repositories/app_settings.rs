@@ -101,6 +101,9 @@ pub fn main_tier_has_key(conn: &Connection) -> Result<bool, AppError> {
 }
 
 /// 解析 type=1 value：tiered 优先，回落扁平旧结构（勘误 #7 兜底）。
+///
+/// **legacy 兜底保留理由（F4 清理裁决）**：M3 迁移已使新库 type=1 为三档结构，运行时不该
+/// 遇到扁平格式；保留仅为防御——从 M3 之前的备份恢复 `pet.db` 时仍可读而非硬失败。
 pub(crate) fn parse_tiered(raw: Option<&str>) -> Result<TieredValue, AppError> {
     use crate::db::models::LegacyFlatValue;
     let Some(raw) = raw else {

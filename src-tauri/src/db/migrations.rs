@@ -15,9 +15,9 @@ use crate::config::EMBEDDING_DIM;
 
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1；`connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 3;
+pub const TARGET_VERSION: usize = 4;
 
-/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移）。
+/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移 → M4 dnd/频率数据迁移）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -41,6 +41,9 @@ pub fn chain() -> Migrations<'static> {
         // M3：勘误 #7 数据迁移（app_settings 扁平结构 → 三档 tiered）；
         // 仅影响勘误 #7 前创建的旧库，新库种子已正确（迁移内幂等）。
         M::up(include_str!("migrations/M3__llm_tiers.sql")),
+        // M4：勘误 #13 后数据迁移（type=2 旧单段勿扰 → 多段 + frequency 新结构）；
+        // 修正 M1 种子遗留的旧格式（新库 frequency 持久化空串），迁移内幂等。
+        M::up(include_str!("migrations/M4__dnd_tiers.sql")),
     ])
 }
 
