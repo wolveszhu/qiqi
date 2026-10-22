@@ -11,7 +11,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use serde::Serialize;
+use base64::Engine;
+use serde::{Deserialize, Serialize};
 use tauri::async_runtime;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -51,15 +52,40 @@ struct StreamError {
     message: String,
 }
 
+/// 拖入/附件负载（D1.5；与前端 FilePayload 对齐，向后兼容：缺省纯文本）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePayload {
+    pub name: String,
+    /// "text" | "image"（Rust 侧再次校验，前端兜底层）。
+    pub kind: String,
+    /// text=utf8 内容；image=base64 data URL（含 `data:...;base64,` 前缀）。
+    pub content: String,
+    pub mime: String,
+}
+
+/// 单文件大小上限（红线：base64 不写日志、内存可控）。
+const MAX_TEXT_BYTES: usize = 1024 * 1024; // 1MB
+const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024; // 10MB
+const MAX_DROPPED_FILES: usize = 5;
+
 /// 发送对话（流式；命令立即返回，结果经事件推送）。
 #[tauri::command]
 pub async fn chat_send_stream(
     app: AppHandle,
     session_id: String,
     text: String,
+    attachments: Vec<FilePayload>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
+
+    // 附件类型校验（kind 仅 text/image；非法 → Config 错误）
+    for a in &attachments {
+        if a.kind != "text" && a.kind != "image" {
+            return Err(AppError::Config(format!("不支持的附件类型: {}", a.kind)));
+        }
+    }
 
     // ① 配置快照（每次实时读取——改配置即生效，冷眼三问③）
     let (tiered, quota_embedded, relation) = {
@@ -74,10 +100,14 @@ pub async fn chat_send_stream(
         )
     };
 
-    // ② user 消息落库（阻塞段）
+    // ② user 消息落库（图片不持久化内容，仅留标记；MVP 记忆不存图）
     {
+        let mut stored = text.clone();
+        if attachments.iter().any(|a| a.kind == "image") {
+            stored.push_str("（附图片）");
+        }
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
-        messages::insert(&conn, &session_id, 0, &text)?;
+        messages::insert(&conn, &session_id, 0, &stored)?;
     }
 
     // ③ 混合检索（spawn_blocking：embed + KNN + facts 近因）
@@ -109,6 +139,7 @@ pub async fn chat_send_stream(
             &retrieved,
             (relation.0, relation.1.as_str()),
             &text,
+            &attachments,
         )?
     };
 
@@ -138,6 +169,83 @@ pub fn chat_abort(session_id: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 解析拖入文件（D1.5）：文件读取全在 Rust（边界隔离，base64 不写日志）。
+///
+/// 文本 → utf8 内容；图片 → base64 data URL；大小/数量超限 → `AppError::Config`。
+/// 仅返回结构化负载，后续随 `chat_send_stream` 的 `attachments` 发送。
+#[tauri::command]
+pub fn chat_resolve_dropped_files(paths: Vec<String>) -> Result<Vec<FilePayload>, AppError> {
+    if paths.len() > MAX_DROPPED_FILES {
+        return Err(AppError::Config(format!("一次最多拖入 {MAX_DROPPED_FILES} 个文件")));
+    }
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        // 仅在文件名层面判定类型（不读取内容即可分流，少做 IO）
+        let kind = if is_image_path(&path) { "image" } else { "text" };
+        let raw = std::fs::read(&path).map_err(|e| AppError::Io(format!("读取文件失败: {e}")))?;
+        let bytes = raw.len();
+        let (content, mime) = if kind == "image" {
+            if bytes > MAX_IMAGE_BYTES {
+                return Err(AppError::Config(format!(
+                    "图片 {} 超过 {}MB 上限",
+                    path,
+                    MAX_IMAGE_BYTES / 1024 / 1024
+                )));
+            }
+            let mime = detect_mime(&path);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+            (format!("data:{mime};base64,{b64}"), mime)
+        } else {
+            if bytes > MAX_TEXT_BYTES {
+                return Err(AppError::Config(format!(
+                    "文本 {} 超过 {}MB 上限",
+                    path,
+                    MAX_TEXT_BYTES / 1024 / 1024
+                )));
+            }
+            // 二进制文本（如程序）→ 视为不支持，拒绝而非乱码
+            let text = String::from_utf8(raw.clone())
+                .map_err(|_| AppError::Config(format!("文件 {} 不是可读取的文本/图片", path)))?;
+            (text, "text/plain".into())
+        };
+        out.push(FilePayload {
+            name: std::path::Path::new(&path)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone()),
+            kind: kind.into(),
+            content,
+            mime,
+        });
+    }
+    Ok(out)
+}
+
+/// 按扩展名粗判图片（D1.5：视觉模型要求；非图片一律走文本分支）。
+fn is_image_path(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.ends_with(".png")
+        || p.ends_with(".jpg")
+        || p.ends_with(".jpeg")
+        || p.ends_with(".gif")
+        || p.ends_with(".webp")
+        || p.ends_with(".bmp")
+}
+
+/// 图片 MIME 推测（数据与模型对齐用；非关键，缺省 png）。
+fn detect_mime(path: &str) -> String {
+    let p = path.to_ascii_lowercase();
+    match p.rsplit('.').next() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        _ => "image/png",
+    }
+    .into()
+}
+
 /// 对话任务主体（流式 emit → done → assistant 落库 → 蒸馏 spawn）。
 async fn run_chat_task(
     app: AppHandle,
@@ -153,7 +261,7 @@ async fn run_chat_task(
         .iter()
         .rev()
         .find(|m| m.role == "user")
-        .map(|m| m.content.clone())
+        .map(|m| m.content.as_text())
         .unwrap_or_default();
 
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
@@ -358,13 +466,14 @@ fn async_block<F: std::future::Future>(fut: F) -> Result<F::Output, AppError> {
     }
 }
 
-/// 组装对话请求：System Prompt + 摘要头 + 最近 N 条 + 本条消息。
+/// 组装对话请求：System Prompt + 摘要头 + 最近 N 条 + 本条消息（含多模态附件）。
 fn build_chat_request(
     conn: &rusqlite::Connection,
     session_id: &str,
     retrieved: &RetrievedContext,
     relation: (i64, &str),
     text: &str,
+    attachments: &[FilePayload],
 ) -> Result<ChatRequest, AppError> {
     let view = RelationView { level: relation.0, pet_name: "喵喵" };
     // C6.6 傲娇：距上次互动 ≥3 天 → 注入傲娇基调（用户主动对话同样生效）
@@ -384,7 +493,7 @@ fn build_chat_request(
         system.push_str(&summary);
     }
 
-    let mut messages = vec![ChatMessage { role: "system".into(), content: system }];
+    let mut messages = vec![ChatMessage { role: "system".into(), content: system.into() }];
     for m in crate::db::repositories::messages::recent(
         conn,
         session_id,
@@ -392,10 +501,29 @@ fn build_chat_request(
     )? {
         messages.push(ChatMessage {
             role: if m.role == 0 { "user".into() } else { "assistant".into() },
-            content: m.content,
+            content: m.content.into(),
         });
     }
-    messages.push(ChatMessage { role: "user".into(), content: text.to_string() });
+    // 本条消息：有附件 → vision content 数组（文本 part + 图片 part）；否则纯文本
+    let user_content = if attachments.is_empty() {
+        crate::llm::client::MessageContent::Text(text.to_string())
+    } else {
+        let mut parts = vec![crate::llm::client::ContentPart::Text { text: text.to_string() }];
+        for a in attachments {
+            if a.kind == "image" {
+                parts.push(crate::llm::client::ContentPart::ImageUrl {
+                    image_url: crate::llm::client::ImageUrl { url: a.content.clone() },
+                });
+            } else {
+                // 文本附件：内容拼入文本 part（便于模型引用）
+                parts.push(crate::llm::client::ContentPart::Text {
+                    text: format!("[附件 {}]\n{}", a.name, a.content),
+                });
+            }
+        }
+        crate::llm::client::MessageContent::Parts(parts)
+    };
+    messages.push(ChatMessage { role: "user".into(), content: user_content });
     Ok(ChatRequest { messages, max_tokens: None })
 }
 

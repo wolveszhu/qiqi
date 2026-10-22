@@ -220,7 +220,7 @@ async fn extract_facts(
             ChatMessage { role: "system".into(), content: FACT_EXTRACT_PROMPT.into() },
             ChatMessage {
                 role: "user".into(),
-                content: format!("用户：{user_text}\n助手：{assistant_text}"),
+                content: format!("用户：{user_text}\n助手：{assistant_text}").into(),
             },
         ],
         max_tokens: None,
@@ -252,7 +252,7 @@ async fn detect_resonance(
             ChatMessage { role: "system".into(), content: RESONANCE_PROMPT.into() },
             ChatMessage {
                 role: "user".into(),
-                content: format!("用户：{user_text}\n助手：{assistant_text}"),
+                content: format!("用户：{user_text}\n助手：{assistant_text}").into(),
             },
         ],
         max_tokens: None,
@@ -280,10 +280,10 @@ async fn detect_taboo(
 ) -> Option<TabooHit> {
     let request = ChatRequest {
         messages: vec![
-            ChatMessage { role: "system".into(), content: taboo_prompt() },
+            ChatMessage { role: "system".into(), content: taboo_prompt().into() },
             ChatMessage {
                 role: "user".into(),
-                content: format!("用户：{user_text}\n助手：{assistant_text}"),
+                content: format!("用户：{user_text}\n助手：{assistant_text}").into(),
             },
         ],
         max_tokens: Some(80), // 情绪短句一句话，限短生成
@@ -350,7 +350,7 @@ async fn summarize_session(
                     "把下面的对话压缩成 2-3 句客观摘要（保留用户偏好与关键事件）。只输出摘要。"
                         .into(),
             },
-            ChatMessage { role: "user".into(), content: transcript },
+            ChatMessage { role: "user".into(), content: transcript.into() },
         ],
         max_tokens: None,
     };

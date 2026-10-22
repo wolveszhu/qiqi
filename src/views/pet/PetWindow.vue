@@ -1,157 +1,232 @@
 <script setup lang="ts">
-/**
- * 窗口 A（桌宠层 400×400 透明）：PIXI 画布挂载 + 点击果冻反馈。
- *
- * C2/C4 接线：
- * - pointerdown → `window_start_drag`（系统接管拖拽，前端只做形变反馈）；
- * - hitRegion 低频上报由 `usePetRenderer` 内部完成（源头持有者）；
- * - cursor 事件 → 渲染器 lookAt（真实数据源）；
- * - 聊天流 → chatStore → 气泡占位（D1 换正式 SpeechBubble 组件）。
- *
- * TODO(D1): SpeechBubble/ChatInput 正式组件；TODO(D4): BellToggle 头顶铃铛。
- * 纪律：PIXI 实例由 `usePetRenderer` 以普通变量持有，不进响应式（code-standards §6）。
- */
+import { computed, onMounted, onUnmounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { startDrag } from "../../api/window";
-import { settleAffection } from "../../api/pet";
+import ChatInput from "../../components/pet/ChatInput.vue";
+import SpeechBubble from "../../components/pet/SpeechBubble.vue";
+import { setClickThroughEnabled } from "../../api/window";
+import { resolveDroppedFiles } from "../../api/chat";
 import { useChatStream } from "../../composables/useChatStream";
-import { useAffection } from "../../composables/useAffection";
-import { usePetRenderer } from "../../composables/usePetRenderer";
-import { useProactive, proactiveBubble } from "../../composables/useProactive";
+import { setIdleMode, usePetRenderer } from "../../composables/usePetRenderer";
+import { proactiveBubble, useProactive } from "../../composables/useProactive";
 import { useSystemProbe } from "../../composables/useSystemProbe";
-import { playAction, setExpression, setIdleMode } from "../../composables/usePetRenderer";
 import { chatStore } from "../../state/chatStore";
+import type { FilePayload } from "../../api/types";
 
-const { lookAt } = usePetRenderer();
+const { playAction, lookAt } = usePetRenderer();
+const { send } = useChatStream();
+// 主动互动编排（C6）：自动订阅 + 5min tick；proactiveBubble 供气泡渲染
+useProactive();
+
+// C6.5 空闲睡/醒（保留，不破坏主动互动链路）
 useSystemProbe({
-  onMove: lookAt,
-  // C6.5 空闲接线：入睡（呼吸幅度减半 + 降帧）/ 回归伸懒腰
-  onIdleChange: (idle: boolean): void => {
+  onIdleChange: (idle) => {
     if (idle) {
-      playAction("sleep");
+      void playAction("sleep");
       setIdleMode(true);
     } else {
-      playAction("stretch");
+      void playAction("stretch");
       setIdleMode(false);
     }
   },
 });
-// 仅挂载事件订阅（send/abortCurrent 由 D1 的 ChatInput 组件消费）
-useChatStream();
-// 好感度：打卡（mount）+ 事件消费 + 表情联动（禁数值红线：窗口 A 只取 mood）
-useAffection();
-// C6.4 主动互动：5min tick 微随机仲裁 + proactive:show 气泡消费
-useProactive();
 
-/**
- * 按下即拖拽：透明区已被 Rust 穿透（点击不到本 DOM），
- * 因此 pointerdown 到达此处即视为命中猫身（C2.5 链路）。
- */
-function onPointerDown(): void {
-  playAction("drag");
-  void startDrag().catch((e: unknown) => {
-    console.warn("[window] 启动拖拽失败", e);
-  });
+// ---- D1 状态 ----
+const inputVisible = ref(false);
+const attachments = ref<FilePayload[]>([]);
+const dragOver = ref(false);
+const notice = ref("");
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+const unlisteners: UnlistenFn[] = [];
+
+/** 气泡优先级：对话流 > 主动话术（D1.4 流式覆盖主动气泡）。 */
+const bubbleText = computed(() =>
+  chatStore.isStreaming || chatStore.text ? chatStore.text : proactiveBubble.text,
+);
+const bubbleStreaming = computed(() => chatStore.isStreaming);
+
+function showNotice(msg: string): void {
+  notice.value = msg;
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => (notice.value = ""), 4000);
 }
 
-/**
- * 双击/长按抚摸（C5 信号入口）：happy 表情 + 结算 petStroke（日上限 20，引擎去重）。
- * 注：窗口 A 不渲染任何数值，仅以表情回应（禁数值红线）。
- */
-function onDoubleClick(): void {
-  void setExpression("happy");
-  void settleAffection({ kind: "petStroke" }).catch((e: unknown) => {
-    console.warn("[affection] 抚摸结算失败", e);
-  });
+// ---- D1.2 快捷键显隐输入框（C2 emit window:chat:toggle） ----
+// ---- D1.5 拖入多模态（Tauri 内置 tauri://drag-drop 事件） ----
+onMounted(async () => {
+  unlisteners.push(
+    await listen<void>("window:chat:toggle", () => {
+      inputVisible.value = !inputVisible.value;
+    }),
+    await listen<{ paths: string[] }>("tauri://drag-drop", (e) => {
+      void onDropFiles(e.payload.paths);
+    }),
+  );
+});
+
+onUnmounted((): void => {
+  for (const u of unlisteners.splice(0)) u();
+  void setClickThroughEnabled(true); // 卸载复位穿透（防残留整窗接收）
+  if (noticeTimer) clearTimeout(noticeTimer);
+});
+
+async function onDropFiles(paths: string[]): Promise<void> {
+  try {
+    const files = await resolveDroppedFiles(paths);
+    attachments.value.push(...files);
+  } catch (e) {
+    showNotice(e instanceof Error ? e.message : "文件读取失败");
+  }
+}
+
+function onSend(text: string): void {
+  send(text, attachments.value);
+  attachments.value = [];
+}
+
+function removeAttachment(idx: number): void {
+  attachments.value.splice(idx, 1);
+}
+
+function onCloseInput(): void {
+  inputVisible.value = false;
 }
 </script>
 
 <template>
-  <div class="pet-window">
-    <!-- 气泡占位（D1 换正式 SpeechBubble；单气泡覆盖式，勘误#12）。
-         聊天流优先；否则显示主动互动气泡（C6.4，本地逐字打字机） -->
+  <div
+    class="pet-root"
+    @pointermove="(e) => lookAt(e.clientX, e.clientY)"
+    @pointerdown="() => playAction('click')"
+    @dragover.prevent="dragOver = true"
+    @dragleave="dragOver = false"
+  >
+    <canvas id="pet-canvas"></canvas>
+
+    <!-- D1.1 气泡（打字机/防截断/靠右缘左翻） -->
+    <SpeechBubble
+      :text="bubbleText"
+      :streaming="bubbleStreaming"
+      :visible="true"
+    />
+
+    <!-- D1.5 拖入附件提示条 -->
     <div
-      v-if="chatStore.text || chatStore.isStreaming"
-      class="pet-window__bubble"
+      v-if="attachments.length"
+      class="attach-bar"
     >
-      {{ chatStore.text
-      }}<span
-        v-if="chatStore.isStreaming"
-        class="pet-window__cursor"
-        >▍</span
+      <span
+        v-for="(a, i) in attachments"
+        :key="a.name"
+        class="chip"
+        :class="a.kind"
+        @click="removeAttachment(i)"
       >
-    </div>
-    <div
-      v-else-if="proactiveBubble.text"
-      class="pet-window__bubble"
-    >
-      {{ proactiveBubble.text
-      }}<span
-        v-if="proactiveBubble.isStreaming"
-        class="pet-window__cursor"
-        >▍</span
-      >
+        {{ a.kind === "image" ? "🖼" : "📄" }} {{ a.name }}
+        <span class="x">×</span>
+      </span>
     </div>
 
-    <!-- PIXI 画布容器（透明窗口；穿透由 C2 Rust 状态机接管） -->
+    <!-- D1.5 拒绝提示 -->
+    <transition name="fade">
+      <div
+        v-if="notice"
+        class="notice"
+      >
+        {{ notice }}
+      </div>
+    </transition>
+
+    <!-- D1.2 输入框（Ctrl+Shift+P 唤出；穿透状态机在组件内） -->
+    <ChatInput
+      :visible="inputVisible"
+      @send="onSend"
+      @close="onCloseInput"
+    />
+
+    <!-- 拖拽高亮（D1.5 视觉反馈） -->
     <div
-      id="pet-canvas"
-      class="pet-window__canvas"
-      @pointerdown="onPointerDown"
-      @dblclick="onDoubleClick"
-    ></div>
-    <p class="pet-window__hint">七七（C4 管道就绪；D1 落正式气泡与输入框）</p>
+      v-if="dragOver"
+      class="drop-mask"
+    >
+      松开以发送图片或文本
+    </div>
   </div>
 </template>
 
 <style scoped>
-.pet-window {
+.pet-root {
+  position: relative;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
+  background: transparent;
 }
-
-/* 气泡占位：顶部居中（D1 按设计方案样式替换） */
-.pet-window__bubble {
+#pet-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.attach-bar {
   position: absolute;
-  top: 8px;
   left: 50%;
+  bottom: 26%;
   transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
   max-width: 90%;
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: var(--bg-window, #fffef9);
-  color: var(--ink, #403a2e);
-  font-size: 13px;
-  line-height: 1.5;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
-  pointer-events: none;
-  word-break: break-word;
 }
-
-.pet-window__cursor {
-  animation: blink 1s steps(2) infinite;
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font: 500 12px var(--font-ui);
+  cursor: pointer;
+  box-shadow: 0 2px 6px var(--shadow-soft);
 }
-
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
+.chip.image {
+  border: 1px solid var(--accent-rose);
 }
-
-/* 画布容器：400×400 逻辑像素居中（与窗口 A 尺寸一致） */
-.pet-window__canvas {
-  width: 400px;
-  height: 400px;
-  margin: 0 auto;
+.chip .x {
+  opacity: 0.6;
 }
-
-.pet-window__hint {
+.notice {
   position: absolute;
-  bottom: 6px;
   left: 50%;
+  top: 8%;
   transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--ink-soft, #8a8272);
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: #ffe3e3;
+  color: #b42318;
+  font: 600 12px var(--font-ui);
+  z-index: 30;
+}
+.drop-mask {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 209, 217, 0.18);
+  border: 2px dashed var(--accent-rose);
+  color: var(--text-primary);
+  font: 600 14px var(--font-ui);
+  z-index: 5;
   pointer-events: none;
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

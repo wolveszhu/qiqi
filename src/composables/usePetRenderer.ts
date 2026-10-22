@@ -6,11 +6,12 @@
  * TODO(C6): probe:idle:changed → setIdleMode / playAction("sleep" | "stretch")。
  */
 
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, reactive } from "vue";
 
 import { setHitRegion } from "../api/window";
 import { createRenderer } from "../renderer/factory";
 import type { IPetRenderer } from "../renderer/IPetRenderer";
+import type { HitRegion } from "../api/types";
 import { petStore } from "../state/petStore";
 
 /** hitRegion 上报间隔（C2.2：低频比对，变化才 invoke）。 */
@@ -21,6 +22,9 @@ let renderer: IPetRenderer | null = null;
 
 /** hitRegion 上报定时器（卸载时清理）。 */
 let hitRegionTimer: ReturnType<typeof setInterval> | null = null;
+
+/** 猫身命中区域（窗口 A 逻辑像素；气泡翻转决策的数据源，D1.1）。 */
+export const hitRegion = reactive<HitRegion>({ x: 100, y: 100, width: 200, height: 200 });
 
 /** usePetRenderer 暴露的渲染驱动 API（未挂载时 no-op）。 */
 export interface UsePetRendererApi {
@@ -78,11 +82,17 @@ function startHitRegionReporting(): void {
     const current = renderer?.getHitRegion();
     if (!current) return;
     const key = `${current.x},${current.y},${current.width},${current.height}`;
-    if (key === last) return; // 无变化：零 IPC
-    last = key;
-    void setHitRegion(current).catch((e: unknown) => {
-      console.warn("[window] hitRegion 上报失败（穿透回退默认开启）", e);
-    });
+    if (key !== last) {
+      // 同步给气泡翻转（D1.1）与上报（穿透状态机输入）
+      hitRegion.x = current.x;
+      hitRegion.y = current.y;
+      hitRegion.width = current.width;
+      hitRegion.height = current.height;
+      last = key;
+      void setHitRegion(current).catch((e: unknown) => {
+        console.warn("[window] hitRegion 上报失败（穿透回退默认开启）", e);
+      });
+    }
   }, HIT_REGION_INTERVAL_MS);
 }
 

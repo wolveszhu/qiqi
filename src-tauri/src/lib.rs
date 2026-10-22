@@ -116,6 +116,7 @@ pub fn run() {
             commands::pet::pet_list_affection_logs,
             commands::chat::chat_send_stream,
             commands::chat::chat_abort,
+            commands::chat::chat_resolve_dropped_files,
             commands::memory::memory_list_facts,
             commands::memory::memory_list_diaries,
             commands::memory::memory_update_fact,

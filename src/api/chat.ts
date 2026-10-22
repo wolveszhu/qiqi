@@ -5,10 +5,21 @@
  */
 
 import { callCommand } from "./client";
+import type { FilePayload } from "./types";
 
-/** 发起一次对话（流式结果经事件返回）。sessionId 由调用方生成（crypto.randomUUID()）。 */
-export async function sendStream(sessionId: string, text: string): Promise<void> {
-  await callCommand("chat_send_stream", { sessionId, text });
+/** 发起一次对话（流式结果经事件返回）。sessionId 由调用方生成（crypto.randomUUID()）。
+ *  attachments 可选（D1.5 多模态；缺省纯文本，向后兼容）。 */
+export async function sendStream(
+  sessionId: string,
+  text: string,
+  attachments: FilePayload[] = [],
+): Promise<void> {
+  await callCommand("chat_send_stream", { sessionId, text, attachments });
+}
+
+/** 解析拖入文件（Rust 读文件边界隔离；返回结构化负载，超限/非法 → AppError）。 */
+export async function resolveDroppedFiles(paths: string[]): Promise<FilePayload[]> {
+  return callCommand<FilePayload[]>("chat_resolve_dropped_files", { paths });
 }
 
 /** 中止指定会话。 */

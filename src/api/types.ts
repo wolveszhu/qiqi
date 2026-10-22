@@ -179,10 +179,22 @@ export interface ProbeSnapshot {
   foreground: string | null;
 }
 
+/** 拖入/附件负载（D1.5；与 Rust `FilePayload` 对齐）。 */
+export interface FilePayload {
+  /** 展示名（文件名）。 */
+  name: string;
+  /** "text" | "image"（Rust 侧再次校验）。 */
+  kind: "text" | "image";
+  /** text=utf8 内容；image=base64 data URL（含 `data:...;base64,` 前缀）。 */
+  content: string;
+  /** image/png 等 MIME。 */
+  mime: string;
+}
+
 /** proactive:show 事件负载（Rust 非流式短生成完毕；前端仅做本地打字机）。 */
 export interface ProactiveShowPayload {
   sessionId: string;
   text: string;
-  /** 表情指令（与 PetExpression 值域一致）。 */
-  mood: "happy" | "tsundere";
+  /** 表情指令（与 PetExpression 值域一致；C7 禁忌补充 angry）。 */
+  mood: "happy" | "tsundere" | "angry";
 }

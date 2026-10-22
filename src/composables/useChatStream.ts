@@ -17,6 +17,7 @@ import { listen } from "@tauri-apps/api/event";
 import { abort, sendStream } from "../api/chat";
 import { appendDelta, clearBubble, finishStream, startSession } from "../state/chatStore";
 import { setExpression } from "./usePetRenderer";
+import type { FilePayload } from "../api/types";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 /** 帧节流缓冲（delta 先入缓冲，rAF 时一次性 flush）。 */
@@ -41,8 +42,8 @@ function scheduleFlush(): void {
 
 /** useChatStream 暴露的 API（PetWindow / ChatInput 调用）。 */
 export interface UseChatStreamApi {
-  /** 发送一条消息（生成 sessionId 并启动流式接收）。 */
-  send: (text: string) => void;
+  /** 发送一条消息（生成 sessionId 并启动流式接收；attachments 可选，D1.5 多模态）。 */
+  send: (text: string, attachments?: FilePayload[]) => void;
   /** 中止当前流。 */
   abortCurrent: () => void;
 }
@@ -90,11 +91,13 @@ export function useChatStream(): UseChatStreamApi {
   });
 
   return {
-    send: (text: string): void => {
+    send: (text: string, attachments: FilePayload[] = []): void => {
+      const content = text.trim();
+      if (!content && attachments.length === 0) return;
       const sessionId = crypto.randomUUID();
       activeSessionId = sessionId;
       startSession(sessionId);
-      void sendStream(sessionId, text).catch((e: unknown) => {
+      void sendStream(sessionId, content, attachments).catch((e: unknown) => {
         // 命令本身失败（如 DB 故障）：结束流 + 提示，不崩溃
         finishStream();
         appendDelta("……（好像没连上我自己的脑子）");

@@ -93,7 +93,7 @@ pub async fn proactive_generate(
 
     let request = ChatRequest {
         messages: vec![
-            ChatMessage { role: "system".into(), content: system },
+            ChatMessage { role: "system".into(), content: system.into() },
             ChatMessage {
                 role: "user".into(), content: "（轮到你主动开口了，说点什么吧）".into()
             },

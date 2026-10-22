@@ -5698,6 +5698,7 @@ name = "七七"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures-util",
  "getrandom 0.2.17",

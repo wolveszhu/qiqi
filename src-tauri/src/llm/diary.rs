@@ -95,7 +95,7 @@ pub async fn generate_diary_text(
     let request = ChatRequest {
         messages: vec![
             ChatMessage { role: "system".into(), content: DIARY_PROMPT.into() },
-            ChatMessage { role: "user".into(), content: transcript.to_string() },
+            ChatMessage { role: "user".into(), content: transcript.to_string().into() },
         ],
         max_tokens: Some(300),
     };

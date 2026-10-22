@@ -11,11 +11,66 @@ use crate::error::AppError;
 
 // ---------- 请求/响应模型（OpenAI 兼容） ----------
 
+/// 多模态消息内容（D1.5 拖入图片走 vision `content` 数组）。
+///
+/// `untagged`：纯文本序列化为字符串，多模态序列化为 part 数组——与 OpenAI 协议一致。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    /// 纯文本（默认形态；C4 蒸馏/日记/禁忌/对话均走此）。
+    Text(String),
+    /// 多模态（文本 + 图片 URL part 数组）。
+    Parts(Vec<ContentPart>),
+}
+
+impl MessageContent {
+    /// 提取用于落库/蒸馏的用户文本（Parts 仅取 text part 拼接；图片不持久化，MVP 记忆不存图）。
+    pub fn as_text(&self) -> String {
+        match self {
+            MessageContent::Text(t) => t.clone(),
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::Text { text } => Some(text.clone()),
+                    ContentPart::ImageUrl { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self {
+        MessageContent::Text(s)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self {
+        MessageContent::Text(s.to_string())
+    }
+}
+
+/// 多模态 part（OpenAI vision 协议：serde `tag="type"`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ImageUrl },
+}
+
+/// 图片 URL（base64 data URL）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageUrl {
+    pub url: String,
+}
+
 /// 对话消息（role: system/user/assistant）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: MessageContent,
 }
 
 /// 流式对话请求（model 由 `LlmTarget.model` 提供，请求体组装在 client 内——单一来源）。
