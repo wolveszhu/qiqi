@@ -60,12 +60,15 @@ onUnmounted((): void => {
         @change="(k: PanelKey) => (active = k)"
       />
       <main class="settings-window__content">
-        <ChatPanel v-if="active === 'chat'" />
-        <AvatarPanel v-else-if="active === 'avatar'" />
-        <LlmPanel v-else-if="active === 'llm'" />
-        <DndPanel v-else-if="active === 'dnd'" />
-        <AffectionPanel v-else-if="active === 'affection'" />
-        <MemoryPanel v-else />
+        <!-- KeepAlive：切 Tab 不卸载面板——对话流式期间离开对话 Tab 也能继续收流 -->
+        <KeepAlive>
+          <ChatPanel v-if="active === 'chat'" />
+          <AvatarPanel v-else-if="active === 'avatar'" />
+          <LlmPanel v-else-if="active === 'llm'" />
+          <DndPanel v-else-if="active === 'dnd'" />
+          <AffectionPanel v-else-if="active === 'affection'" />
+          <MemoryPanel v-else />
+        </KeepAlive>
       </main>
     </div>
     <AppToast />
