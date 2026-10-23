@@ -16,6 +16,13 @@ pub fn upsert(conn: &Connection, session_id: &str, summary_text: &str) -> Result
     Ok(())
 }
 
+/// 删除会话摘要（删除会话时连带清理由 `messages::delete_session` 调用）。
+pub fn delete(conn: &Connection, session_id: &str) -> Result<(), AppError> {
+    conn.execute("DELETE FROM summaries WHERE session_id = ?1", params![session_id])
+        .map_err(AppError::from)?;
+    Ok(())
+}
+
 /// 读取会话摘要（无则 None）。
 pub fn get(conn: &Connection, session_id: &str) -> Result<Option<String>, AppError> {
     let mut stmt = conn
