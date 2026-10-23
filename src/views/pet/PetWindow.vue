@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import SpeechBubble from "../../components/pet/SpeechBubble.vue";
 import ChatInput from "../../components/pet/ChatInput.vue";
@@ -22,6 +22,7 @@ import { onChatToggle } from "../../api/probe";
 import {
   getOuterPosition,
   restoreFromSnap,
+  setBubbleMode,
   snapToEdge,
   startDrag,
 } from "../../api/window";
@@ -62,6 +63,21 @@ const bubbleStreaming = computed(
 );
 const bubbleVisible = computed(() => bubbleText.value.length > 0);
 
+// ---- 气泡/输入框出现 → 窗口 A 临时展开（Rust 侧保持中心：形象屏幕位置不跳） ----
+// 窗口常态贴合形象，气泡与输入框需要横向空间，故按需放大；消失后收起。
+const windowExpanded = computed(
+  () => bubbleVisible.value || settingsStore.chatInputVisible,
+);
+watch(
+  windowExpanded,
+  (expanded: boolean) => {
+    void setBubbleMode(expanded).catch((e: unknown) =>
+      console.warn("[window] 窗口展开态切换失败", e),
+    );
+  },
+  { immediate: true },
+);
+
 function onSend(text: string): void {
   stream.send(text);
 }
@@ -100,18 +116,46 @@ async function onDragEnd(): Promise<void> {
   }
 }
 
-function onPointerDown(): void {
-  // 系统接管拖拽（C2）；拖拽中首次 pointerup 触发一次吸附检测（风险#12）
-  void startDrag();
+// ---- 手势分配（窗口贴合形象后，命中区=猫身主体）----
+// 单击：抚摸（果冻反馈 + 好感计分）；按住移动超阈值：系统接管拖拽；双击：打开输入框。
+/** 拖拽触发阈值（px）：低于此视为点击/双击，避免双击被系统拖拽抢走。 */
+const DRAG_THRESHOLD_PX = 5;
+let pressX = 0;
+let pressY = 0;
+let dragStarted = false;
+
+function onPointerMove(e: PointerEvent): void {
+  if (dragStarted) return;
+  const dx = e.clientX - pressX;
+  const dy = e.clientY - pressY;
+  if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+  dragStarted = true;
+  isDragging.value = true;
+  void startDrag(); // 系统接管拖拽（C2）：移动/跨屏/DPI 均由 OS 处理
+}
+
+function onPointerUp(): void {
+  window.removeEventListener("pointermove", onPointerMove);
+  // 仅真正发生过拖拽才做贴边检测（风险#12：拖拽中首次 pointerup 触发一次）
+  if (dragStarted) void onDragEnd();
+}
+
+function onPointerDown(e: PointerEvent): void {
+  pressX = e.clientX;
+  pressY = e.clientY;
+  dragStarted = false;
   playAction("click");
   // 抚摸计分（M1 锚点④：点击猫身即抚摸+1，日上限 20；C5 内部结算与上限控制）
   void settleAffection({ kind: "petStroke" }).catch((e: unknown) =>
     console.warn("[pet] 抚摸计分失败", e),
   );
-  if (!isDragging.value) {
-    isDragging.value = true;
-    window.addEventListener("pointerup", () => void onDragEnd(), { once: true });
-  }
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp, { once: true });
+}
+
+/** 双击形象 → 打开对话输入框（Ctrl+Shift+P 仍保留为 toggle 通道）。 */
+function onDoubleClick(): void {
+  settingsStore.chatInputVisible = true;
 }
 
 onMounted(async (): Promise<void> => {
@@ -146,6 +190,7 @@ onUnmounted((): void => {
   <div
     class="pet-root"
     @pointerdown="onPointerDown"
+    @dblclick="onDoubleClick"
   >
     <div id="pet-canvas"></div>
     <SpeechBubble

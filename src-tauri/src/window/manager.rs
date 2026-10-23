@@ -1,9 +1,15 @@
-use tauri::{AppHandle, LogicalPosition, Manager};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager};
 
 use crate::error::AppError;
 
 pub const LABEL_MAIN: &str = "main";
 pub const LABEL_SETTINGS: &str = "settings";
+
+/// 窗口 A 常态尺寸（逻辑 px）：贴合形象——含尾巴摆动与伸懒腰形变余量，
+/// 与 `tauri.conf.json` 的 main 窗口 width/height **必须一致**。
+pub const PET_WINDOW_SIZE: (i32, i32) = (150, 150);
+/// 窗口 A 展开态尺寸（逻辑 px）：气泡/输入框出现时临时放大，消失后收起。
+pub const PET_WINDOW_EXPANDED: (i32, i32) = (420, 300);
 
 pub fn hide_window(window: &tauri::Window) -> Result<(), AppError> {
     window.hide().map_err(AppError::from)
@@ -89,6 +95,38 @@ pub fn snap_to_edge(app: &AppHandle, edge: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// 展开/收起的几何计算**纯函数**（可测）：返回 (目标尺寸, 左上角位移)。
+///
+/// 策略：**保持窗口中心不动** → 向四周等量扩展/收缩，窗口内形象（居中渲染）
+/// 的屏幕位置保持不变，避免气泡出现时形象跳动。
+pub fn bubble_resize_geometry(cur: (i32, i32), target: (i32, i32)) -> ((i32, i32), (i32, i32)) {
+    let (cw, ch) = cur;
+    let (tw, th) = target;
+    ((tw, th), ((cw - tw) / 2, (ch - th) / 2))
+}
+
+/// 气泡/输入框展开态切换（Rust 实现窗口尺寸与位置，rule.md §5）。
+///
+/// 幂等：尺寸已为目标值则直接返回（气泡频繁切换时不产生抖动）。
+pub fn set_bubble_mode(app: &AppHandle, expanded: bool) -> Result<(), AppError> {
+    let window = app
+        .get_webview_window(LABEL_MAIN)
+        .ok_or_else(|| AppError::Window(format!("窗口不存在: {LABEL_MAIN}")))?;
+    let scale = window.scale_factor().map_err(AppError::from)?;
+    let cur = window.outer_size().map_err(AppError::from)?.to_logical::<i32>(scale);
+    let target = if expanded { PET_WINDOW_EXPANDED } else { PET_WINDOW_SIZE };
+    if (cur.width, cur.height) == target {
+        return Ok(());
+    }
+    let ((w, h), (dx, dy)) = bubble_resize_geometry((cur.width, cur.height), target);
+    let pos = window.outer_position().map_err(AppError::from)?.to_logical::<i32>(scale);
+    window.set_size(LogicalSize::new(w as f64, h as f64)).map_err(AppError::from)?;
+    window
+        .set_position(LogicalPosition::new((pos.x + dx) as f64, (pos.y + dy) as f64))
+        .map_err(AppError::from)?;
+    Ok(())
+}
+
 /// 解除吸附（位置由用户拖动决定，不自动回中）。
 ///
 /// 半透明恢复由前端 `setSleeping(false)` 处理；本命令保留以对齐 D4 命令面（API 稳定），
@@ -100,6 +138,20 @@ pub fn restore_from_snap(_app: &AppHandle) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bubble_resize_keeps_center() {
+        // 常态 150x150 → 展开 420x300：中心不动 → 左上各移 -135 / -75
+        assert_eq!(bubble_resize_geometry((150, 150), (420, 300)), ((420, 300), (-135, -75)));
+        // 展开 → 收起：反向等量回移
+        assert_eq!(bubble_resize_geometry((420, 300), (150, 150)), ((150, 150), (135, 75)));
+    }
+
+    #[test]
+    fn bubble_resize_same_size_is_noop_offset() {
+        // 已是目标尺寸 → 位移 0（幂等路径由 set_bubble_mode 提前返回）
+        assert_eq!(bubble_resize_geometry((150, 150), (150, 150)), ((150, 150), (0, 0)));
+    }
 
     #[test]
     fn snap_target_positions() {

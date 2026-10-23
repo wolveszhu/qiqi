@@ -22,6 +22,15 @@ const CANVAS_SIZE = 240;
 /** 形象整体缩放（参考"元宝"桌宠观感：紧凑小形象，约 90px 高）。 */
 const PET_SCALE = 0.6;
 
+/**
+ * 身体核心命中矩形（**局部坐标**，未缩放）：身体 + 耳朵 + 头，
+ * 不含尾巴与四周空白角——尾巴仍可见但不可点（穿透判定据此，见 updateHitRegion）。
+ */
+const CORE_LEFT = -68;
+const CORE_TOP = -96;
+const CORE_W = 136;
+const CORE_H = 154;
+
 /** 配色：与 styles/tokens.css 的 Jelly-Toy 设计 token 对齐。 */
 const COLOR_BODY = 0x7ca65b;
 const COLOR_BODY_DEEP = 0x5d8541;
@@ -179,16 +188,39 @@ export class CodeCatRenderer implements IPetRenderer {
 
     petRoot.addChild(tailG, bodyG, eyesG);
 
-    // ---- 包围盒：挂载时计算一次（帧内不再 getBounds） ----
-    const rect = petRoot.getBounds().rectangle;
-    this.hitRegion.x = rect.x;
-    this.hitRegion.y = rect.y;
-    this.hitRegion.width = rect.width;
-    this.hitRegion.height = rect.height;
+    // ---- 命中区：身体核心矩形（挂载时算一次，帧内不再 getBounds） ----
+    this.updateHitRegion();
+
+    // ---- 画布尺寸变化（窗口 A 展开/收起）→ 重新居中 + 命中区重算 ----
+    window.addEventListener("resize", this.relayout);
 
     // ---- 单一 Ticker（视线数据源由外部事件驱动 lookAt，见类头注释） ----
     app.ticker.add(this.tick, this);
   }
+
+  /** 命中区 = 身体核心矩形（随居中位置换算到窗口坐标；尾巴与空白角不入命中区）。 */
+  private updateHitRegion(): void {
+    this.hitRegion.x = this.centerX + CORE_LEFT * PET_SCALE;
+    this.hitRegion.y = this.centerY + CORE_TOP * PET_SCALE;
+    this.hitRegion.width = CORE_W * PET_SCALE;
+    this.hitRegion.height = CORE_H * PET_SCALE;
+  }
+
+  /**
+   * 重新布局（窗口 A 展开/收起后）：延后一帧等 PIXI `resizeTo` 生效，
+   * 再按新画布尺寸重新居中并重算命中区——形象屏幕位置不跳（窗口中心保持不变）。
+   */
+  private readonly relayout = (): void => {
+    requestAnimationFrame(() => {
+      const app = this.app;
+      const root = this.petRoot;
+      if (!app || !root) return;
+      this.centerX = app.screen.width / 2;
+      this.centerY = app.screen.height / 2;
+      root.position.set(this.centerX, this.centerY);
+      this.updateHitRegion();
+    });
+  };
 
   playAction(name: PetAction): void {
     switch (name) {
@@ -275,6 +307,7 @@ export class CodeCatRenderer implements IPetRenderer {
     this.petRoot = null;
     this.eyesG = null;
     this.tailG = null;
+    window.removeEventListener("resize", this.relayout);
     app?.destroy(true, { children: true });
   }
 

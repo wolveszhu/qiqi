@@ -120,6 +120,7 @@ pub fn run() {
             commands::window::window_snap_to_edge,
             commands::window::window_restore_from_snap,
             commands::window::window_set_hit_region,
+            commands::window::window_set_bubble_mode,
             commands::window::window_set_click_through_enabled,
             commands::settings::settings_get_typed,
             commands::settings::settings_save_typed,

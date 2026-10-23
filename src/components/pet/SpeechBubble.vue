@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import { hitRegion } from "../../composables/usePetRenderer";
 import { resolveBubbleLayout } from "../../utils/bubbleLayout";
 
-/** 窗口 A 逻辑宽度（跟随实际窗口尺寸，前端不再自定义窗口 A 大小）。 */
-const WINDOW_W = window.innerWidth;
+/**
+ * 窗口 A 逻辑宽度（跟随实际窗口尺寸：前端不再自定义窗口 A 大小，
+ * 且气泡/输入框出现时窗口会临时展开，故需随 resize 同步）。
+ */
+const winW = ref(window.innerWidth);
+function syncWinW(): void {
+  winW.value = window.innerWidth;
+}
+onMounted(() => window.addEventListener("resize", syncWinW));
+onUnmounted(() => window.removeEventListener("resize", syncWinW));
+
 const MODEL_MAX = 216;
 const MODEL_MIN = 120;
 const CHAR_W = 7;
@@ -30,7 +39,7 @@ const desiredW = computed(() => {
 
 const layout = computed(() =>
   resolveBubbleLayout({
-    winW: WINDOW_W,
+    winW: winW.value,
     catRegion: hitRegion,
     bubbleW: desiredW.value,
   }),

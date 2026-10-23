@@ -35,6 +35,13 @@ export async function setHitRegion(region: HitRegion): Promise<void> {
 }
 
 /**
+ * 气泡/输入框展开态：窗口 A 临时放大（Rust 保持形象中心不动），消失后收起回贴合尺寸。
+ */
+export async function setBubbleMode(expanded: boolean): Promise<void> {
+  await callCommand("window_set_bubble_mode", { expanded });
+}
+
+/**
  * 穿透总闸（D1 输入框可见 / D4 边缘休眠时传 false → 整窗接收点击）。
  * 默认 true：自动穿透状态机由 Rust 驱动。
  */

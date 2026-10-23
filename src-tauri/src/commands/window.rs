@@ -84,6 +84,12 @@ pub fn window_set_click_through_enabled(
     Ok(())
 }
 
+/// 气泡/输入框展开态：窗口 A 临时放大（保持形象中心不动），收起回常态贴合尺寸。
+#[tauri::command]
+pub fn window_set_bubble_mode(expanded: bool, app: AppHandle) -> Result<(), AppError> {
+    window::manager::set_bubble_mode(&app, expanded)
+}
+
 /// 解析目标窗口（label 常量校验，禁魔法字符串）。
 fn resolve<R: tauri::Runtime>(
     app: &AppHandle<R>,

@@ -22,15 +22,17 @@ let renderer: IPetRenderer | null = null;
 
 /** hitRegion 上报定时器（卸载时清理）。 */
 let hitRegionTimer: ReturnType<typeof setInterval> | null = null;
-/** 铃铛额外命中矩形（D4.3；PetWindow 挂载铃铛后写入，卸载清空）。 */
+/** 额外命中矩形（临时 UI 需可点时写入，卸载清空）。 */
 let extraHitRegion: HitRegion | null = null;
+/** 上次上报指纹（定时器与 resize 立即上报共用，变化才 invoke）。 */
+let lastRegionKey = "";
 
-/** 铃铛矩形 union 进 hitRegion 上报（零位图，DOM 矩形）。 */
+/** 额外矩形 union 进 hitRegion 上报（零位图，DOM 矩形）。 */
 export function setExtraHitRegion(r: HitRegion | null): void {
   extraHitRegion = r;
 }
 
-/** 矩形并集（包围盒）；D4 铃铛 union 进角色命中区。 */
+/** 矩形并集（包围盒）；额外 UI 矩形 union 进角色命中区。 */
 function unionRect(a: HitRegion, b: HitRegion): HitRegion {
   const x = Math.min(a.x, b.x);
   const y = Math.min(a.y, b.y);
@@ -102,33 +104,42 @@ export function usePetRenderer(): UsePetRendererApi {
   };
 }
 
-/** 启动 hitRegion 低频上报（变化才 invoke；失败仅 warn——穿透回退默认开启）。 */
-function startHitRegionReporting(): void {
-  if (hitRegionTimer) return;
-  let last = "";
-  hitRegionTimer = setInterval((): void => {
-    const current = renderer?.getHitRegion();
-    if (!current) return;
-    // 合并铃铛矩形（D4.3：铃铛矩形入 hitRegion，穿透状态机照常）
-    const region = extraHitRegion ? unionRect(current, extraHitRegion) : current;
-    const key = `${region.x},${region.y},${region.width},${region.height}`;
-    if (key !== last) {
-      hitRegion.x = region.x;
-      hitRegion.y = region.y;
-      hitRegion.width = region.width;
-      hitRegion.height = region.height;
-      last = key;
-      void setHitRegion(region).catch((e: unknown) => {
-        console.warn("[window] hitRegion 上报失败（穿透回退默认开启）", e);
-      });
-    }
-  }, HIT_REGION_INTERVAL_MS);
+/** 比对并上报命中区（变化才 invoke；失败仅 warn——穿透回退默认开启）。 */
+function reportHitRegion(): void {
+  const current = renderer?.getHitRegion();
+  if (!current) return;
+  // 合并额外矩形（临时 UI 矩形入 hitRegion，穿透状态机照常）
+  const region = extraHitRegion ? unionRect(current, extraHitRegion) : current;
+  const key = `${region.x},${region.y},${region.width},${region.height}`;
+  if (key === lastRegionKey) return;
+  hitRegion.x = region.x;
+  hitRegion.y = region.y;
+  hitRegion.width = region.width;
+  hitRegion.height = region.height;
+  lastRegionKey = key;
+  void setHitRegion(region).catch((e: unknown) => {
+    console.warn("[window] hitRegion 上报失败（穿透回退默认开启）", e);
+  });
 }
 
-/** 停止上报（卸载时调用，防定时器泄漏）。 */
+/** 窗口尺寸变化 → 延后一帧重报（等渲染器 relayout 完成居中，防穿透误判）。 */
+function onWindowResize(): void {
+  requestAnimationFrame(reportHitRegion);
+}
+
+/** 启动 hitRegion 低频上报（变化才 invoke）。 */
+function startHitRegionReporting(): void {
+  if (hitRegionTimer) return;
+  hitRegionTimer = setInterval(reportHitRegion, HIT_REGION_INTERVAL_MS);
+  // 窗口 A 展开/收起：形象居中位置变化，立即重报一次（不等 500ms）
+  window.addEventListener("resize", onWindowResize);
+}
+
+/** 停止上报（卸载时调用，防定时器与监听泄漏）。 */
 function stopHitRegionReporting(): void {
   if (hitRegionTimer) {
     clearInterval(hitRegionTimer);
     hitRegionTimer = null;
   }
+  window.removeEventListener("resize", onWindowResize);
 }
