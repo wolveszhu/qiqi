@@ -4,11 +4,34 @@
  * TODO(B1): data-tauri-drag-region 验证；TODO(C2): ✕ 改调 window_hide（替换临时 emit）。
  */
 
-import { ref } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
-const kbdHint = ref("Ctrl+Shift+P");
+const kbdHint = ref("七七");
+
+// 窗口控制（窗口 B 自绘标题栏，无系统装饰）：最小化到任务栏 + 最大化/还原。
+const appWindow = getCurrentWebviewWindow();
+const isMax = ref(false);
+
+async function syncMax() {
+  isMax.value = await appWindow.isMaximized();
+}
+function minimize() {
+  void appWindow.minimize();
+}
+function toggleMaximize() {
+  void appWindow.toggleMaximize();
+}
+
+// 监听窗口尺寸变化同步最大化态（卸载时反注册，防泄漏）。
+let unlisten: (() => void) | null = null;
+onMounted(async () => {
+  await syncMax();
+  unlisten = await appWindow.onResized(() => void syncMax());
+});
+onUnmounted(() => unlisten?.());
 </script>
 
 <template>
@@ -24,9 +47,26 @@ const kbdHint = ref("Ctrl+Shift+P");
     />
     <span class="titlebar__kbd">{{ kbdHint }}</span>
     <button
+      class="titlebar__btn"
+      aria-label="最小化"
+      @click="minimize"
+      @mousedown.stop.prevent
+    >
+      —
+    </button>
+    <button
+      class="titlebar__btn"
+      :aria-label="isMax ? '还原' : '最大化'"
+      @click="toggleMaximize"
+      @mousedown.stop.prevent
+    >
+      {{ isMax ? "❐" : "▢" }}
+    </button>
+    <button
       class="titlebar__close"
       aria-label="关闭"
       @click="emit('close')"
+      @mousedown.stop.prevent
     >
       ✕
     </button>
@@ -57,8 +97,26 @@ const kbdHint = ref("Ctrl+Shift+P");
   color: var(--ink-soft);
 }
 
-.titlebar__close {
+.titlebar__btn {
+  border: none;
+  background: none;
+  font-size: 14px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+}
+
+.titlebar__btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ink);
+}
+
+.titlebar__btn:first-of-type {
   margin-left: auto;
+}
+
+.titlebar__close {
   border: none;
   background: none;
   font-size: 14px;
