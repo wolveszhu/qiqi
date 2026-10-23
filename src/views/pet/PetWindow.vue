@@ -20,9 +20,11 @@ import { chatStore } from "../../state/chatStore";
 import { settleAffection } from "../../api/pet";
 import { onChatToggle } from "../../api/probe";
 import {
+  focusMainWindow,
   getOuterPosition,
   restoreFromSnap,
   setBubbleMode,
+  setClickThroughEnabled,
   snapToEdge,
   startDrag,
 } from "../../api/window";
@@ -76,6 +78,21 @@ watch(
     );
   },
   { immediate: true },
+);
+
+// ---- 输入框显隐 → 穿透总闸 + 窗口聚焦（气泡与输入框可各自独立出现，故单独 watch） ----
+// 输入框期间必须关闭穿透：否则点击落到下层窗口，既打不了字也点不到关闭；
+// 同时窗口 set_size 展开会让 webview 失焦，故展开后主动聚焦窗口，保证 textarea 拿到焦点。
+watch(
+  () => settingsStore.chatInputVisible,
+  async (visible: boolean) => {
+    try {
+      await setClickThroughEnabled(!visible);
+      if (visible) await focusMainWindow();
+    } catch (e: unknown) {
+      console.warn("[window] 穿透总闸切换/聚焦失败", e);
+    }
+  },
 );
 
 function onSend(text: string): void {
