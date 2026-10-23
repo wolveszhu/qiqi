@@ -22,3 +22,8 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+
+/* 桌宠层（窗口 A）：整窗透明，画面全部由 PIXI 绘制（B1 transparent 窗口的前提）。 */
+body.pet-window {
+  background: transparent;
+}

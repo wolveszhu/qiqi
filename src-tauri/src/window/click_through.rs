@@ -11,7 +11,8 @@ use crate::state::{AppState, HitRegion};
 
 /// 命中判定（**纯函数**，单测覆盖）：cursor 是否落在窗口 A 的命中矩形内。
 ///
-/// 坐标系：cursor 与 window_pos 均为**屏幕坐标**；hit_region 为窗口局部坐标。
+/// 坐标系：cursor、window_pos、region 三者均为**屏幕物理像素**（region 由
+/// `window_set_hit_region` 命令在落缓存时单点换算，见该命令文档）。
 /// 规则：
 /// - 区域无效（未上报/尺寸为 0）→ 视为未命中（回退默认穿透，计划 §3.2 兜底）；
 /// - 边界四边取闭区间（含边），与 `set_ignore_cursor_events` 的像素语义一致。

@@ -35,18 +35,30 @@ pub fn window_set_ignore_cursor_events(ignore: bool, app: AppHandle) -> Result<(
     window.set_ignore_cursor_events(ignore).map_err(AppError::from)
 }
 
-/// 上报命中区域（窗口局部坐标；C2.2：前端低频、变化才调）。
+/// 上报命中区域（C2.2：前端低频、变化才调）。
+///
+/// 前端上报为**逻辑像素**（PIXI `getBounds()`，autoDensity 下即 CSS 像素）；
+/// 穿透判定的另两个输入——cursor（`GetCursorPos`）与窗口位置（`outer_position()`）——
+/// 均为**物理像素**，故此处单点换算 `× scale_factor` 后落缓存（窗口 A 命中坐标系
+/// 的唯一换算出口，修复 DPI≠100% 时命中区错位导致整窗误穿透、无法拖动/点击）。
 #[tauri::command]
 pub fn window_set_hit_region(
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
+    window: tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    let scale = window.scale_factor().map_err(AppError::from)?;
     let mut slot =
         state.hit_region.lock().map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))?;
-    *slot = HitRegion { x, y, width, height };
+    *slot = HitRegion {
+        x: (x * scale).round() as i32,
+        y: (y * scale).round() as i32,
+        width: (width * scale).round() as i32,
+        height: (height * scale).round() as i32,
+    };
     Ok(())
 }
 

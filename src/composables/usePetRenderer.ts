@@ -77,7 +77,14 @@ export function usePetRenderer(): UsePetRendererApi {
     const container = document.getElementById("pet-canvas");
     if (!container) return;
     renderer = createRenderer(petStore.activeRenderer ?? "code_cat");
-    await renderer.mount(container);
+    try {
+      await renderer.mount(container);
+    } catch (e: unknown) {
+      // 挂载失败不静默：角色不可见 + hitRegion 不上报（穿透回退默认开启，可诊断）
+      console.error("[pet] 渲染器挂载失败，角色不可见", e);
+      renderer = null;
+      return;
+    }
     startHitRegionReporting();
   });
 

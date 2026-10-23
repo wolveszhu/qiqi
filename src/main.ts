@@ -23,5 +23,10 @@ async function resolveRootComponent(): Promise<typeof PetWindow | typeof Setting
 }
 
 void resolveRootComponent().then((Root) => {
+  // 桌宠层（窗口 A）整窗透明：body 默认背景（--bg-page）只属于设置层，
+  // 否则 400×400 不透明色块盖住桌面、透明窗口失效（B1）。
+  if (Root === PetWindow) {
+    document.body.classList.add("pet-window");
+  }
   createApp(Root).mount("#app");
 });

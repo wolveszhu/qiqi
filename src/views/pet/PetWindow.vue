@@ -170,7 +170,7 @@ onUnmounted((): void => {
     class="pet-root"
     @pointerdown="onPointerDown"
   >
-    <canvas id="pet-canvas"></canvas>
+    <div id="pet-canvas"></div>
     <BellToggle
       class="pet-bell"
       :enabled="settingsStore.snapshot?.dnd.enabled ?? false"
