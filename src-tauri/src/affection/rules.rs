@@ -159,17 +159,15 @@ mod tests {
     fn deep_chat_and_resonance_have_no_daily_cap() {
         // F3/F4 观察项结论钉子：深度对话/共鸣**无日上限**（每轮 +5 / 共鸣按强度）。
         // 若未来要加上限，此测试会失败——强制同步改规则与文档（防无声漂移）。
-        let many_deep: Vec<TodaysLog> = (0..50)
-            .map(|_| TodaysLog { reason: "deep_chat".into(), change_value: 5 })
-            .collect();
+        let many_deep: Vec<TodaysLog> =
+            (0..50).map(|_| TodaysLog { reason: "deep_chat".into(), change_value: 5 }).collect();
         assert_eq!(
             apply(0, &AffectionSignal::DeepChat, &many_deep).delta,
             DEEP_CHAT_POINTS,
             "深度对话无日上限（F3/F4 结论：维持现状，见已知问题清单 P2-07）"
         );
-        let many_res: Vec<TodaysLog> = (0..50)
-            .map(|_| TodaysLog { reason: "resonance".into(), change_value: 20 })
-            .collect();
+        let many_res: Vec<TodaysLog> =
+            (0..50).map(|_| TodaysLog { reason: "resonance".into(), change_value: 20 }).collect();
         assert_eq!(
             apply(0, &AffectionSignal::Resonance(2), &many_res).delta,
             20,

@@ -50,10 +50,7 @@ fn open_encrypted(db_path: &Path, key: &str) -> Result<Connection, AppError> {
             // 隔离前必须释放句柄（Windows 文件占用）
             drop(conn);
             let corrupt = quarantine_db(db_path)?;
-            Err(AppError::Config(format!(
-                "{msg} 已隔离为 {}，重启后将重建。",
-                corrupt.display()
-            )))
+            Err(AppError::Config(format!("{msg} 已隔离为 {}，重启后将重建。", corrupt.display())))
         },
         Err(e) => {
             drop(conn);

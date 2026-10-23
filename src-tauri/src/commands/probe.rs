@@ -78,12 +78,7 @@ pub async fn proactive_generate(
         let tiered: TieredValue = app_settings::get_tiered(&conn)?;
         let quota = app_settings::get_quota_mode(&conn)?;
         let pet = pet_states::get(&conn)?;
-        (
-            tiered,
-            quota == crate::config::QUOTA_MODE_EMBEDDED,
-            pet.relationship_level,
-            pet.pet_name,
-        )
+        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED, pet.relationship_level, pet.pet_name)
     };
 
     let tsundere = tsundere.unwrap_or(false);
