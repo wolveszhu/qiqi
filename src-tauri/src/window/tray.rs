@@ -3,6 +3,7 @@
 //! 菜单：显示/隐藏（窗口 A）、设置（显示窗口 B）、开机自启开关、退出。
 //! 退出走 Rust 侧 `app.exit(0)`——绕过 `on_window_event` 的关闭拦截（B1.2）。
 
+use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{App, AppHandle, Manager, Runtime};
@@ -17,6 +18,9 @@ const MENU_SETTINGS: &str = "tray_settings";
 const MENU_AUTOSTART: &str = "tray_autostart";
 const MENU_QUIT: &str = "tray_quit";
 
+/// 托盘图标（编译期嵌入，Tauri Image 仅支持 PNG/ICO；32×32 托盘原生尺寸）。
+const TRAY_ICON_PNG: &[u8] = include_bytes!("../../icons/tray.png");
+
 /// 构建托盘并挂接菜单事件（setup 内调用一次）。
 pub fn build_tray(app: &App) -> Result<(), AppError> {
     let menu = MenuBuilder::new(app)
@@ -30,7 +34,10 @@ pub fn build_tray(app: &App) -> Result<(), AppError> {
         .build()
         .map_err(AppError::from)?;
 
+    let icon = Image::from_bytes(TRAY_ICON_PNG)
+        .map_err(|e| AppError::Window(format!("托盘图标解码失败: {e}")))?;
     TrayIconBuilder::with_id("qiqi-main")
+        .icon(icon)
         .tooltip("Qiqi")
         .menu(&menu)
         .show_menu_on_left_click(true)

@@ -16,7 +16,12 @@ const kbdHint = ref("Ctrl+Shift+P");
     class="titlebar"
     data-tauri-drag-region
   >
-    <span class="titlebar__title">Qiqi</span>
+    <img
+      class="titlebar__logo"
+      src="/logo.jpeg"
+      alt="Qiqi"
+      draggable="false"
+    />
     <span class="titlebar__kbd">{{ kbdHint }}</span>
     <button
       class="titlebar__close"
@@ -39,10 +44,12 @@ const kbdHint = ref("Ctrl+Shift+P");
   border-bottom: 1px solid var(--line);
 }
 
-.titlebar__title {
-  font-family: var(--font-disp);
-  font-size: 18px;
-  color: var(--matcha-deep);
+.titlebar__logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .titlebar__kbd {
