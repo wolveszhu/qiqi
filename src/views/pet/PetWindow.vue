@@ -1,28 +1,27 @@
 <script setup lang="ts">
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import SpeechBubble from "../../components/pet/SpeechBubble.vue";
-import ChatInput from "../../components/pet/ChatInput.vue";
 import {
   lookAt,
   playAction,
+  setExpression,
   setIdleMode,
   setPetSleeping,
   usePetRenderer,
 } from "../../composables/usePetRenderer";
 import { proactiveBubble, useProactive } from "../../composables/useProactive";
-import { useChatStream } from "../../composables/useChatStream";
 import { useAffection } from "../../composables/useAffection";
 import { useSystemProbe } from "../../composables/useSystemProbe";
 import { settingsStore, applyDndLocal } from "../../state/settingsStore";
-import { chatStore } from "../../state/chatStore";
 import { settleAffection } from "../../api/pet";
 import { onChatToggle } from "../../api/probe";
 import {
   getOuterPosition,
   restoreFromSnap,
   setBubbleMode,
+  show,
   snapToEdge,
   startDrag,
 } from "../../api/window";
@@ -42,7 +41,6 @@ function refreshIdleFps(): void {
 // ---- 主链路接线（E1a：此前三个 composable 未在窗口 A 实例化，MVP 链路断裂） ----
 usePetRenderer();
 useProactive();
-const stream = useChatStream();
 useAffection();
 useSystemProbe({
   // 鼠标坐标 → 视线跟随（C2/C6 探针 → 渲染器 lookAt）
@@ -56,20 +54,16 @@ useSystemProbe({
   },
 });
 
-// 气泡数据源（窗口 A 单气泡覆盖式，勘误#12）：对话流优先，主动话术次之
-const bubbleText = computed(() => chatStore.text || proactiveBubble.text);
-const bubbleStreaming = computed(
-  () => chatStore.isStreaming || proactiveBubble.isStreaming,
-);
+// 气泡数据源（窗口 A 单气泡覆盖式）：**只显示主动话术**——
+// 对话的流式回复已迁到窗口 B「对话」Tab，A 不再显示（用户决策）。
+const bubbleText = computed(() => proactiveBubble.text);
+const bubbleStreaming = computed(() => proactiveBubble.isStreaming);
 const bubbleVisible = computed(() => bubbleText.value.length > 0);
 
-// ---- 气泡/输入框出现 → 窗口 A 临时展开（Rust 侧保持中心：形象屏幕位置不跳） ----
-// 窗口常态贴合形象，气泡与输入框需要横向空间，故按需放大；消失后收起。
-const windowExpanded = computed(
-  () => bubbleVisible.value || settingsStore.chatInputVisible,
-);
+// ---- 气泡出现 → 窗口 A 临时展开（Rust 侧保持中心：形象屏幕位置不跳） ----
+// 窗口常态贴合形象，主动话术气泡需要横向空间，故按需放大；消失后收起。
 watch(
-  windowExpanded,
+  bubbleVisible,
   (expanded: boolean) => {
     void setBubbleMode(expanded).catch((e: unknown) =>
       console.warn("[window] 窗口展开态切换失败", e),
@@ -78,11 +72,18 @@ watch(
   { immediate: true },
 );
 
-function onSend(text: string): void {
-  stream.send(text);
-}
-function onCloseInput(): void {
-  settingsStore.chatInputVisible = false;
+/**
+ * 打开窗口 B 的对话 Tab（双击形象 / Ctrl+Shift+P）。
+ * 双窗口独立 webview、store 不共享：A 只负责 show + 发 `window:chat:open`，
+ * 切换 Tab 与聚焦由 B 自己完成。
+ */
+async function openChatInSettings(): Promise<void> {
+  try {
+    await show("settings");
+    await emit("window:chat:open", {});
+  } catch (e: unknown) {
+    console.warn("[pet] 打开对话窗口失败", e);
+  }
 }
 
 function onAction(name: string): void {
@@ -153,9 +154,9 @@ function onPointerDown(e: PointerEvent): void {
   window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
-/** 双击形象 → 打开对话输入框（Ctrl+Shift+P 仍保留为 toggle 通道）。 */
+/** 双击形象 → 打开窗口 B 的对话 Tab。 */
 function onDoubleClick(): void {
-  settingsStore.chatInputVisible = true;
+  void openChatInSettings();
 }
 
 onMounted(async (): Promise<void> => {
@@ -173,10 +174,16 @@ onMounted(async (): Promise<void> => {
       }
     }),
   );
-  // Ctrl+Shift+P 呼出/隐藏输入框（D1；toggle 运行时 UI 态）
+  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；对话已迁至 B）
   unlisteners.push(
     await onChatToggle(() => {
-      settingsStore.chatInputVisible = !settingsStore.chatInputVisible;
+      void openChatInSettings();
+    }),
+  );
+  // 窗口 B 的对话流结束 → A 做表情联动（B 无渲染器句柄，只能靠事件）
+  unlisteners.push(
+    await listen<{ sessionId: string }>("chat:done", () => {
+      setExpression("happy");
     }),
   );
 });
@@ -197,13 +204,6 @@ onUnmounted((): void => {
       :text="bubbleText"
       :streaming="bubbleStreaming"
       :visible="bubbleVisible"
-    />
-    <ChatInput
-      class="chat-layer"
-      :visible="settingsStore.chatInputVisible"
-      @pointerdown.stop
-      @send="onSend"
-      @close="onCloseInput"
     />
   </div>
 </template>
@@ -227,13 +227,5 @@ onUnmounted((): void => {
   width: 360px;
   pointer-events: none;
   z-index: 5;
-}
-.chat-layer {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 15;
-  pointer-events: auto;
 }
 </style>
