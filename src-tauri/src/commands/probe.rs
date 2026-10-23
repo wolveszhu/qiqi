@@ -73,18 +73,23 @@ pub async fn proactive_generate(
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
 
     // 配置快照（每次实时读取——改配置即生效）
-    let (tiered, quota_embedded, relation_level) = {
+    let (tiered, quota_embedded, relation_level, pet_name) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered: TieredValue = app_settings::get_tiered(&conn)?;
         let quota = app_settings::get_quota_mode(&conn)?;
         let pet = pet_states::get(&conn)?;
-        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED, pet.relationship_level)
+        (
+            tiered,
+            quota == crate::config::QUOTA_MODE_EMBEDDED,
+            pet.relationship_level,
+            pet.pet_name,
+        )
     };
 
     let tsundere = tsundere.unwrap_or(false);
     // 系统 Prompt：人设 + 等级指令 + 傲娇基调（复用 C4 prompt 单一真源）
     let ctx = ConversationCtx { tsundere, slow_reply: false };
-    let view = RelationView { level: relation_level, pet_name: crate::config::PET_NAME };
+    let view = RelationView { level: relation_level, pet_name };
     let mut system = build_system_prompt(&RetrievedContext::default(), &view, &ctx);
     system.push_str("\n\n现在由你主动找用户说话（不是用户先开口）。用第一人称，不超过两句话，自然可爱，像突然想起来要搭话。");
     if tsundere {

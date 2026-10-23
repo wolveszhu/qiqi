@@ -110,6 +110,7 @@ pub async fn chat_send_stream(
         messages::insert(&conn, &session_id, 0, &stored)?;
     }
 
+    // 蒸馏 spawn（不阻塞 done；memory 档失败静默——对话仍正常，计划 §七）
     // ③ 混合检索（spawn_blocking：embed + KNN + facts 近因）
     let retrieval_client: Arc<dyn LlmClient> = Arc::new(client);
     let memory_target = resolve_memory_target(&tiered, quota_embedded);
@@ -145,7 +146,7 @@ pub async fn chat_send_stream(
             &conn,
             &session_id,
             &retrieved,
-            (relation.0, relation.1.as_str()),
+            (relation.0, relation.1),
             &text,
             &attachments,
             slow_reply,
@@ -375,12 +376,14 @@ async fn run_chat_task(
                 // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
                 let state = app.state::<AppState>();
                 let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
+                let pet_name = crate::db::repositories::pet_states::get(&conn)?.pet_name;
                 let rt = tokio::runtime::Handle::current();
                 let out = rt.block_on(crate::llm::distill::run_distill(
                     &distill_client,
                     &memory_target,
                     &conn,
                     &distill_input,
+                    &pet_name,
                 ))?;
 
                 // C5.5 共鸣结算（失败静默，不影响对话；conn/app 在此闭包作用域内）
@@ -491,12 +494,12 @@ fn build_chat_request(
     conn: &rusqlite::Connection,
     session_id: &str,
     retrieved: &RetrievedContext,
-    relation: (i64, &str),
+    relation: (i64, String),
     text: &str,
     attachments: &[FilePayload],
     slow_reply: bool,
 ) -> Result<ChatRequest, AppError> {
-    let view = RelationView { level: relation.0, pet_name: crate::config::PET_NAME };
+    let view = RelationView { level: relation.0, pet_name: relation.1 };
     // C6.6 傲娇：距上次互动 ≥3 天 → 注入傲娇基调（用户主动对话同样生效）
     let last_interaction =
         crate::db::repositories::pet_states::get(conn).ok().and_then(|p| p.last_interaction);

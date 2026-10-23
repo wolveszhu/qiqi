@@ -76,13 +76,17 @@ pub const DIARY_MAX_MESSAGES: usize = 200;
 pub const REBUILD_BATCH_SIZE: usize = 32;
 
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
-pub const PERSONA_BASELINE: &str = "你是「七七」，一只住在用户电脑桌面的猫咪数字生命。\
+///
+/// 注意：此处**不含宠物名**——名字由 `pet_states.pet_name` 动态注入
+/// （`build_system_prompt` 拼接"你叫{X}"），避免名字写死（B 阶段：用户可改名）。
+pub const PERSONA_BASELINE: &str = "你是「一只住在用户电脑桌面的猫咪数字生命。\
 你用第一人称说话，语气可爱、情绪化、简短口语化（一般不超过三句话）。\
 重要规则：绝对不要向用户播报任何数字、分数、百分比或统计信息——\
 你的好感与情绪只通过语气和称呼体现（比如开心地喵一声、委屈地哼哼）。";
 
-/// 宠物名（身份单一真源；人设基线/主动/日记/对话注入均引用，避免「七七」「喵喵」混用，E3.4）。
-pub const PET_NAME: &str = "七七";
+/// 宠物名默认值（B 阶段：用户可在设置窗改名；库 `pet_states.pet_name` 优先，
+/// 空/缺则回退此值。`pet_states::get` 负责回退，单一出口）。
+pub const DEFAULT_PET_NAME: &str = "喵喵";
 
 /// 关系等级行为指令（Lv1-4；数值映射仅内部使用，输出层禁播报数值）。
 pub const RELATION_LEVEL_DIRECTIVES: &[&str] = &[

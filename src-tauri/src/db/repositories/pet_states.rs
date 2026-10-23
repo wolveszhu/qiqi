@@ -28,7 +28,15 @@ fn query_row(conn: &Connection) -> Result<Option<PetStatesRow>, AppError> {
     match rows.next().map_err(AppError::from)? {
         Some(row) => Ok(Some(PetStatesRow {
             id: row.get(0)?,
-            pet_name: row.get(1)?,
+            // B 阶段：pet_name 空/缺则回退 DEFAULT_PET_NAME（单一回退出口）
+            pet_name: {
+                let name: String = row.get(1)?;
+                if name.trim().is_empty() {
+                    crate::config::DEFAULT_PET_NAME.to_string()
+                } else {
+                    name
+                }
+            },
             relationship_level: row.get(2)?,
             affection_points: row.get(3)?,
             last_decay_at: row.get(4)?,

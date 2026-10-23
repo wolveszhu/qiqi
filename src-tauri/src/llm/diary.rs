@@ -17,10 +17,16 @@ use crate::error::AppError;
 /// 日记生成 Prompt：第一人称"猫猫日记"，输出 JSON `{content, mood}`。
 ///
 /// mood：0=开心 1=平静 2=低落（DiaryMood，D3 看板消费）；只输出 JSON。
-pub const DIARY_PROMPT: &str = "你是「七七」，一只住在用户电脑桌面的猫咪。\
+/// `name` 为用户设定的宠物名（B 阶段：来自 `pet_states.pet_name`，非硬编码）。
+pub fn build_diary_prompt(name: &str) -> String {
+    format!(
+        "你是「{name}」，一只住在用户电脑桌面的猫咪。\
 根据下面的对话记录，以第一人称写一篇当天的日记（像猫猫的碎碎念，2-4 句，可爱、口语化）。\
-只输出 JSON：{\"content\":\"日记正文\",\"mood\":0}，mood 取 0=开心/1=平静/2=低落。\
-不要多余文字，不要包含任何数字、统计或量化信息，只用叙述。";
+只输出 JSON：{{\"content\":\"日记正文\",\"mood\":0}}，mood 取 0=开心/1=平静/2=低落。\
+不要多余文字，不要包含任何数字、统计或量化信息，只用叙述。",
+        name = name
+    )
+}
 
 /// 日记草稿（解析结果）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,9 +68,11 @@ fn strip_fence(raw: &str) -> &str {
 }
 
 /// 读指定日期的对话并拼装日记输入（本地时区；无消息 → None 跳过当日）。
+/// `pet_name` 为用户设定的宠物名（B 阶段：对话记录里的助手角色名跟随它）。
 pub fn collect_diary_input(
     conn: &rusqlite::Connection,
     date: &str,
+    pet_name: &str,
 ) -> Result<Option<String>, AppError> {
     let rows = messages::by_date(conn, date, crate::config::DIARY_MAX_MESSAGES)?;
     if rows.is_empty() {
@@ -73,7 +81,7 @@ pub fn collect_diary_input(
     let mut transcript = rows
         .iter()
         .map(|m| {
-            let role = if m.role == 0 { "用户" } else { "七七" };
+            let role = if m.role == 0 { "用户" } else { pet_name };
             format!("{role}：{}", m.content)
         })
         .collect::<Vec<_>>()
@@ -91,10 +99,11 @@ pub async fn generate_diary_text(
     client: &dyn LlmClient,
     memory_target: &LlmTarget,
     transcript: &str,
+    pet_name: &str,
 ) -> Result<DiaryDraft, AppError> {
     let request = ChatRequest {
         messages: vec![
-            ChatMessage { role: "system".into(), content: DIARY_PROMPT.into() },
+            ChatMessage { role: "system".into(), content: build_diary_prompt(pet_name).into() },
             ChatMessage { role: "user".into(), content: transcript.to_string().into() },
         ],
         max_tokens: Some(300),
@@ -165,22 +174,24 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
     let state = app.state::<crate::state::AppState>();
 
     // ① 配置快照 + 读输入（锁段一）
-    let (target, transcript) = {
+    let (target, transcript, pet_name) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = crate::db::repositories::app_settings::get_tiered(&conn)?;
         let quota = crate::db::repositories::app_settings::get_quota_mode(&conn)?;
         let target =
             crate::llm::router::memory_target(&tiered, quota == crate::config::QUOTA_MODE_EMBEDDED);
+        // 宠物名（B 阶段：跟随用户设置；空则 DEFAULT_PET_NAME 回退）
+        let pet_name = crate::db::repositories::pet_states::get(&conn)?.pet_name;
         // 借用检查：transcript 拷贝出锁段
-        match collect_diary_input(&conn, date)? {
-            Some(t) => (target, t),
+        match collect_diary_input(&conn, date, &pet_name)? {
+            Some(t) => (target, t, pet_name),
             None => return Ok(false), // 当日无对话：跳过（风险对策）
         }
     }; // conn guard drop
 
     // ② LLM 生成（无锁段）
     let client = super::client::ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let draft = generate_diary_text(&client, &target, &transcript).await?;
+    let draft = generate_diary_text(&client, &target, &transcript, &pet_name).await?;
 
     // ③ 落库（锁段二）
     {

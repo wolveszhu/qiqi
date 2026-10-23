@@ -22,9 +22,16 @@ category：0=偏好，1=事件，2=画像。没有值得记住的内容就输出
 
 /// 共鸣检测 Prompt（C5.5）：memory 档小模型判定本轮是否产生情感共鸣。
 /// 输出 JSON `{resonance:0|1, strength:1|2}`；宽松解析，失败/未判定 → None（宁少不多）。
-pub const RESONANCE_PROMPT: &str = "判断下面这段对话里，用户是否向七七表达了情感共鸣（被理解、被在乎、\
-袒露脆弱、愉快分享等）。只输出 JSON：共鸣则 {\"resonance\":1,\"strength\":2}（强烈）\
-或 {\"resonance\":1,\"strength\":1}（轻微），无共鸣则 {\"resonance\":0}。不要多余文字。";
+///
+/// `name` 为用户设定的宠物名（B 阶段：来自 `pet_states.pet_name`，非硬编码）。
+pub fn build_resonance_prompt(name: &str) -> String {
+    format!(
+        "判断下面这段对话里，用户是否向{name}表达了情感共鸣（被理解、被在乎、\
+袒露脆弱、愉快分享等）。只输出 JSON：共鸣则 {{\"resonance\":1,\"strength\":2}}（强烈）\
+或 {{\"resonance\":1,\"strength\":1}}（轻微），无共鸣则 {{\"resonance\":0}}。不要多余文字。",
+        name = name
+    )
+}
 
 /// 禁忌判定 Prompt（C7.1）：引用 `config::TABOO_RULES` 清单（§6.2 原文转写），
 /// 输出 JSON `{violated:0|1, severity:1|2|3, emotion_hint:"..."}`。
@@ -194,6 +201,7 @@ pub async fn run_distill(
     memory_target: &LlmTarget,
     conn: &rusqlite::Connection,
     input: &DistillInput,
+    pet_name: &str,
 ) -> Result<DistillOutcome, AppError> {
     // ① 事实抽取（一次请求；失败重试一次）
     let raw = extract_facts(client, memory_target, &input.user_text, &input.assistant_text).await?;
@@ -231,7 +239,8 @@ pub async fn run_distill(
 
     // ③ 共鸣检测（memory 档；宽松解析，失败/未判定 → None）
     let resonance =
-        detect_resonance(client, memory_target, &input.user_text, &input.assistant_text).await;
+        detect_resonance(client, memory_target, &input.user_text, &input.assistant_text, pet_name)
+            .await;
 
     // ④ 禁忌判定（C7.1；解析失败/未违规 → None，宁漏勿误）
     let taboo = detect_taboo(client, memory_target, &input.user_text, &input.assistant_text).await;
@@ -277,10 +286,11 @@ async fn detect_resonance(
     target: &LlmTarget,
     user_text: &str,
     assistant_text: &str,
+    pet_name: &str,
 ) -> Option<u8> {
     let request = ChatRequest {
         messages: vec![
-            ChatMessage { role: "system".into(), content: RESONANCE_PROMPT.into() },
+            ChatMessage { role: "system".into(), content: build_resonance_prompt(pet_name).into() },
             ChatMessage {
                 role: "user".into(),
                 content: format!("用户：{user_text}\n助手：{assistant_text}").into(),

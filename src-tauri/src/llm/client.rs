@@ -337,7 +337,7 @@ impl MockLlmClient {
     pub fn ok() -> Self {
         Self {
             fail_urls: vec![],
-            deltas: vec!["你好".into(), "，我是".into(), "七七".into()],
+            deltas: vec!["你好".into(), "，我是".into(), "喵喵".into()],
             fail_embed: false,
             embed_dim: 8,
         }
@@ -456,7 +456,7 @@ mod tests {
             }
             got
         });
-        assert_eq!(got, "你好，我是七七");
+        assert_eq!(got, "你好，我是喵喵");
     }
 
     /// 极简同步执行器（测试用；避免引入 tokio 测试宏依赖差异）。

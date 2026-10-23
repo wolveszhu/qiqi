@@ -51,7 +51,7 @@ fn open_encrypted(db_path: &Path, key: &str) -> Result<Connection, AppError> {
             drop(conn);
             let corrupt = quarantine_db(db_path)?;
             Err(AppError::Config(format!(
-                "{msg} 已隔离为 {}，重启七七后将重建。",
+                "{msg} 已隔离为 {}，重启后将重建。",
                 corrupt.display()
             )))
         },

@@ -149,14 +149,14 @@ mod tests {
         let out = pet_update_inner(
             &conn,
             UpdatePetPayload {
-                pet_name: Some("七七".into()),
+                pet_name: Some("团子".into()),
                 active_renderer: None,
                 renderer_config: None,
             },
         )
         .expect("更新资料");
 
-        assert_eq!(out.pet_name, "七七", "pet_name 应落库回显");
+        assert_eq!(out.pet_name, "团子", "pet_name 应落库回显");
         // 红线：好感度字段只读——update 不得触碰分数
         assert_eq!(out.affection_points, before, "update 不应改好感度");
     }

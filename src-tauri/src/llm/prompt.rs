@@ -18,10 +18,11 @@ pub struct RetrievedContext {
 }
 
 /// 关系等级的最小视图（避免依赖完整 PetStateDto，纯函数易测）。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RelationView {
     pub level: i64,
-    pub pet_name: &'static str,
+    /// 宠物名（来自 `pet_states.pet_name`，用户可改；不再硬编码常量，B 阶段）。
+    pub pet_name: String,
 }
 
 /// 对话基调上下文（C6：主动互动/情绪状态注入点）。
@@ -60,7 +61,7 @@ pub fn build_system_prompt(
 ) -> String {
     let mut prompt = String::from(PERSONA_BASELINE);
     prompt.push_str("\n\n你叫");
-    prompt.push_str(relation.pet_name);
+    prompt.push_str(&relation.pet_name);
     prompt.push('。');
 
     // 关系等级行为指令（夹取 1..=4，由 C5 level 模块单一真源提供）
@@ -117,7 +118,8 @@ mod tests {
     use super::*;
 
     fn view(level: i64) -> RelationView {
-        RelationView { level, pet_name: "七七" }
+        // 测试虚拟名（非七七/非喵喵），验证名字来自参数而非硬编码常量
+        RelationView { level, pet_name: "团子".to_string() }
     }
 
     #[test]
@@ -127,10 +129,12 @@ mod tests {
             &view(1),
             &ConversationCtx::default(),
         );
-        assert!(p.contains("七七"), "含人设名");
+        assert!(p.contains("你叫团子"), "名字来自参数（库 pet_name），非写死常量");
         assert!(p.contains("不要向用户播报任何数字"), "含禁数值规则");
         assert!(p.contains("刚认识"), "Lv1 指令注入");
         assert!(!p.contains("你记得的"), "无记忆时省略记忆段");
+        assert!(!p.contains("七七"), "不得残留旧硬编码七七");
+        assert!(!p.contains("喵喵"), "不得残留旧硬编码喵喵");
     }
 
     #[test]
@@ -206,16 +210,17 @@ mod tests {
     }
 
     #[test]
-    fn persona_name_is_consistent() {
-        // E3.4：人设基线（七七）与注入的"你叫X"必须同名，避免身份自相矛盾
+    fn persona_name_comes_from_state_not_hardcoded() {
+        // B 阶段：名字完全来自 pet_name 参数（库值），无硬编码常量；
+        // 基线已不含名字，仅"你叫X"处注入，天然一致。
         let p = build_system_prompt(
             &RetrievedContext::default(),
             &view(1),
             &ConversationCtx::default(),
         );
-        assert!(p.contains("你是「七七」"), "人设基线含七七");
-        assert!(p.contains("你叫七七"), "注入名与基线一致（无喵喵混用）");
-        assert!(!p.contains("喵喵"), "不允许残留喵喵自称");
+        assert!(p.contains("你叫团子"), "名字来自参数（库 pet_name）");
+        assert!(!p.contains("七七"), "不得残留旧硬编码七七");
+        assert!(!p.contains("喵喵"), "不得残留旧硬编码喵喵");
     }
 
     #[test]
