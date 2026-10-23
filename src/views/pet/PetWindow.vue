@@ -1,14 +1,12 @@
 <script setup lang="ts">
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 
 import SpeechBubble from "../../components/pet/SpeechBubble.vue";
 import ChatInput from "../../components/pet/ChatInput.vue";
-import BellToggle from "../../components/pet/BellToggle.vue";
 import {
   lookAt,
   playAction,
-  setExtraHitRegion,
   setIdleMode,
   setPetSleeping,
   usePetRenderer,
@@ -19,7 +17,6 @@ import { useAffection } from "../../composables/useAffection";
 import { useSystemProbe } from "../../composables/useSystemProbe";
 import { settingsStore, applyDndLocal } from "../../state/settingsStore";
 import { chatStore } from "../../state/chatStore";
-import { saveDnd } from "../../api/settings";
 import { settleAffection } from "../../api/pet";
 import { onChatToggle } from "../../api/probe";
 import {
@@ -29,7 +26,6 @@ import {
   startDrag,
 } from "../../api/window";
 import { detectSnapEdge } from "../../utils/edgeSnap";
-import { pushToast } from "../../composables/useToast";
 
 const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
@@ -118,27 +114,11 @@ function onPointerDown(): void {
   }
 }
 
-// ---- D4.3 铃铛勿扰（双向同步：写库 + 事件 + A 本地乐观） ----
-async function onBellToggle(): Promise<void> {
-  const cur = settingsStore.snapshot?.dnd.enabled ?? false;
-  const next = !cur;
-  const ranges = settingsStore.snapshot?.dnd.ranges ?? [];
-  applyDndLocal({ enabled: next, ranges }); // 乐观
-  try {
-    await saveDnd({ enabled: next, ranges }, settingsStore.frequency);
-    void emit("settings:dnd:changed", { enabled: next });
-    pushToast(next ? "已进入勿扰，主动找你聊天已静默" : "已关闭勿扰");
-  } catch (e: unknown) {
-    applyDndLocal({ enabled: cur, ranges }); // 回滚
-    pushToast(e instanceof Error ? e.message : "勿扰切换失败", "error");
-  }
-}
-
 onMounted(async (): Promise<void> => {
   unlisteners.push(
     await listen<string>("pet:action", (event) => onAction(event.payload)),
   );
-  // 窗口 B 改勿扰 → A 铃铛同步（双窗口独立 webview，store 不共享，靠事件）
+  // 窗口 B 改勿扰 → A 同步（双窗口独立 webview，store 不共享，靠事件）
   unlisteners.push(
     await listen<{ enabled: boolean }>("settings:dnd:changed", (event) => {
       if (settingsStore.snapshot) {
@@ -155,13 +135,10 @@ onMounted(async (): Promise<void> => {
       settingsStore.chatInputVisible = !settingsStore.chatInputVisible;
     }),
   );
-  // 铃铛矩形 union 进 hitRegion（D4.3：穿透状态机照常）
-  setExtraHitRegion({ x: 8, y: 8, width: 32, height: 32 });
 });
 
 onUnmounted((): void => {
   unlisteners.forEach((fn) => fn());
-  setExtraHitRegion(null);
 });
 </script>
 
@@ -171,12 +148,6 @@ onUnmounted((): void => {
     @pointerdown="onPointerDown"
   >
     <div id="pet-canvas"></div>
-    <BellToggle
-      class="pet-bell"
-      :enabled="settingsStore.snapshot?.dnd.enabled ?? false"
-      @pointerdown.stop
-      @toggle="onBellToggle"
-    />
     <SpeechBubble
       :text="bubbleText"
       :streaming="bubbleStreaming"
@@ -195,19 +166,13 @@ onUnmounted((): void => {
 <style scoped>
 .pet-root {
   position: relative;
-  width: 400px;
-  height: 400px;
+  width: 100%;
+  height: 100%;
 }
 #pet-canvas {
-  width: 400px;
-  height: 400px;
+  width: 100%;
+  height: 100%;
   display: block;
-}
-.pet-bell {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 10;
 }
 .bubble-layer {
   position: absolute;

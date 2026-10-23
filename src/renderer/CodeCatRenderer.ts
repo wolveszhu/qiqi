@@ -16,8 +16,11 @@ import type { Ticker } from "pixi.js";
 import { breathScales, dampedRecovery, eyeOffset, jellyImpulse } from "./physics";
 import type { HitRegion, IPetRenderer, PetAction, PetExpression } from "./IPetRenderer";
 
-/** 画布逻辑尺寸（与窗口 A 的 400×400 一致，B1 已配置）。 */
-const CANVAS_SIZE = 400;
+/** 画布逻辑尺寸初始默认值（mount 时按容器实际尺寸重算）。 */
+const CANVAS_SIZE = 240;
+
+/** 形象整体缩放（参考"元宝"桌宠观感：紧凑小形象，约 90px 高）。 */
+const PET_SCALE = 0.6;
 
 /** 配色：与 styles/tokens.css 的 Jelly-Toy 设计 token 对齐。 */
 const COLOR_BODY = 0x7ca65b;
@@ -81,7 +84,7 @@ export class CodeCatRenderer implements IPetRenderer {
     // 2) 果冻冲击后的阻尼回弹（与呼吸相乘叠加，非覆盖）
     this.scaleX = dampedRecovery(this.scaleX);
     this.scaleY = dampedRecovery(this.scaleY);
-    root.scale.set(this.scaleX * bx, this.scaleY * by);
+    root.scale.set(PET_SCALE * this.scaleX * bx, PET_SCALE * this.scaleY * by);
 
     // 3) 尾巴摆动（旋转近似，不重绘几何）
     tail.rotation = Math.sin(this.elapsedMs * TAIL_OMEGA) * TAIL_AMPLITUDE;
@@ -121,12 +124,13 @@ export class CodeCatRenderer implements IPetRenderer {
 
     // ---- 分层绘制（仅一次） ----
     // 居中基于实际画布尺寸（resizeTo: container → app.screen = 容器逻辑尺寸），
-    // 不再写死 CANVAS_SIZE/2：窗口 A(400×400) 与预览舞台(任意正方形) 形象均正中对齐、
-    // 完整展示；CANVAS_SIZE 仅作初始默认值保留。
+    // 窗口 A 与预览舞台(任意正方形) 形象均正中对齐、完整展示；
+    // CANVAS_SIZE 仅作初始默认值保留。
     this.centerX = this.app.screen.width / 2;
     this.centerY = this.app.screen.height / 2;
     const petRoot = new Container();
     petRoot.position.set(this.centerX, this.centerY);
+    petRoot.scale.set(PET_SCALE);
     this.petRoot = petRoot;
     app.stage.addChild(petRoot);
 

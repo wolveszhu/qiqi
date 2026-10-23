@@ -134,19 +134,9 @@ onMounted((): void => {
             :disabled="true"
           />
         </div>
-        <div class="set-row">
-          <div>
-            <div class="set-row__title">头顶铃铛快捷勿扰</div>
-            <div class="set-row__sub">点击铃铛进入勿扰</div>
-          </div>
-          <AppToggle
-            :model-value="false"
-            :disabled="true"
-          />
-        </div>
       </div>
       <HintBox tone="info">
-        形象切换与名字已即时生效；边缘吸附 / 铃铛开关的后端持久化命令将在后续阶段补齐。
+        形象切换与名字已即时生效；边缘吸附休眠的后端持久化命令将在后续阶段补齐。
       </HintBox>
     </AppCard>
   </div>

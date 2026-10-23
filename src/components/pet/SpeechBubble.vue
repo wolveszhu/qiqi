@@ -4,9 +4,9 @@ import { computed } from "vue";
 import { hitRegion } from "../../composables/usePetRenderer";
 import { resolveBubbleLayout } from "../../utils/bubbleLayout";
 
-/** 窗口 A 逻辑宽度（与设计 token WINDOW_SIZE 一致）。 */
-const WINDOW_W = 400;
-const MODEL_MAX = 300;
+/** 窗口 A 逻辑宽度（跟随实际窗口尺寸，前端不再自定义窗口 A 大小）。 */
+const WINDOW_W = window.innerWidth;
+const MODEL_MAX = 216;
 const MODEL_MIN = 120;
 const CHAR_W = 7;
 
