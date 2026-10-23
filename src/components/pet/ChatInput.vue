@@ -1,85 +1,68 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+/**
+ * 对话输入 composer（窗口 B「对话」Tab 使用）。
+ *
+ * 原窗口 A 版本里的点击穿透切换（`setClickThroughEnabled`）与可见性 prop 属**桌宠层专属**，
+ * 对话迁入窗口 B（普通窗口、无穿透）后已移除，本组件只保留纯输入职责。
+ */
 
-import { setClickThroughEnabled } from "../../api/window";
+import { ref } from "vue";
 
-const props = defineProps<{ visible: boolean }>();
-const emit = defineEmits<{
-  (e: "send", text: string): void;
-  (e: "close"): void;
-}>();
-
-const draft = ref("");
-const el = ref<HTMLTextAreaElement | null>(null);
-
-// D1.2 穿透状态机：输入框显示 → 整窗接收（false）；隐藏 → 恢复穿透（true）
-watch(
-  () => props.visible,
-  async (v) => {
-    await setClickThroughEnabled(!v);
-    if (v) {
-      await nextTick();
-      el.value?.focus();
-    }
-  },
+withDefaults(
+  defineProps<{
+    /** 流式中禁用发送（防并发流）。 */
+    disabled?: boolean;
+  }>(),
+  { disabled: false },
 );
 
+const emit = defineEmits<{ (e: "send", text: string): void }>();
+
+const draft = ref("");
+
+function submit(): void {
+  const text = draft.value.trim();
+  if (!text) return;
+  emit("send", text);
+  draft.value = "";
+}
+
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === "Escape") {
-    emit("close");
-    return;
-  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     submit();
   }
 }
-
-function submit(): void {
-  const t = draft.value.trim();
-  if (!t) return;
-  emit("send", t);
-  draft.value = "";
-}
 </script>
 
 <template>
-  <transition name="slide-up">
-    <div
-      v-if="visible"
-      class="chat-input"
+  <div class="composer">
+    <textarea
+      v-model="draft"
+      class="composer__field"
+      rows="2"
+      placeholder="说点什么…（Enter 发送 / Shift+Enter 换行）"
+      :disabled="disabled"
+      @keydown="onKeydown"
+    ></textarea>
+    <button
+      class="composer__send"
+      type="button"
+      :disabled="disabled || draft.trim().length === 0"
+      @click="submit"
     >
-      <textarea
-        ref="el"
-        v-model="draft"
-        class="field"
-        rows="2"
-        placeholder="说点什么…（Enter 发送 / Shift+Enter 换行 / Esc 关闭）"
-        @keydown="onKeydown"
-      ></textarea>
-      <button
-        class="send"
-        type="button"
-        @click="submit"
-      >
-        发送
-      </button>
-    </div>
-  </transition>
+      发送
+    </button>
+  </div>
 </template>
 
 <style scoped>
-.chat-input {
-  position: absolute;
-  left: 50%;
-  bottom: 10%;
-  transform: translateX(-50%);
-  width: 86%;
+.composer {
   display: flex;
+  align-items: stretch;
   gap: 8px;
-  z-index: 20;
 }
-.field {
+.composer__field {
   flex: 1;
   resize: none;
   border-radius: 12px;
@@ -89,32 +72,30 @@ function submit(): void {
   padding: 8px 10px;
   font: 500 13px/1.4 var(--font-ui);
   outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
 }
-.field:focus {
+.composer__field:focus {
   border-color: var(--accent-rose);
 }
-.send {
+.composer__field:disabled {
+  opacity: 0.6;
+}
+.composer__send {
   align-self: stretch;
-  padding: 0 14px;
+  padding: 0 16px;
   border: none;
   border-radius: 12px;
   background: var(--accent-rose);
   color: #fff;
   font: 600 13px var(--font-ui);
   cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease-out);
 }
-.send:hover {
+.composer__send:hover:not(:disabled) {
   filter: brightness(1.05);
 }
-.slide-up-enter-active,
-.slide-up-leave-active {
-  transition:
-    opacity var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
-}
-.slide-up-enter-from,
-.slide-up-leave-to {
-  opacity: 0;
-  transform: translate(-50%, 8px);
+.composer__send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

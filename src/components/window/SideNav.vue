@@ -1,18 +1,21 @@
 <script setup lang="ts">
 /**
- * 设置窗侧导航（设计方案 §3/§4）：五个 Tab，选中项由父级受控。
+ * 设置窗侧导航（设计方案 §3/§4）：六个 Tab，选中项由父级受控。
  */
 
 withDefaults(
-  defineProps<{ active?: "avatar" | "llm" | "dnd" | "affection" | "memory" }>(),
+  defineProps<{
+    active?: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory";
+  }>(),
   { active: "avatar" },
 );
 
 const emit = defineEmits<{
-  (e: "change", key: "avatar" | "llm" | "dnd" | "affection" | "memory"): void;
+  (e: "change", key: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory"): void;
 }>();
 
 const items = [
+  { key: "chat", label: "对话" },
   { key: "avatar", label: "桌宠" },
   { key: "llm", label: "大模型" },
   { key: "dnd", label: "勿扰与频率" },

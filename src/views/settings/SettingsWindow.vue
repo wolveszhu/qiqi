@@ -4,21 +4,25 @@
  * TODO(B1): 关闭=hide（CloseRequested 拦截在 Rust）；TODO(D2): 面板实装。
  */
 
-import { ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 
-import { hide } from "../../api/window";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+import { focusMainWindow, hide } from "../../api/window";
 import SideNav from "../../components/window/SideNav.vue";
 import TitleBar from "../../components/window/TitleBar.vue";
 import AffectionPanel from "./panels/AffectionPanel.vue";
 import AvatarPanel from "./panels/AvatarPanel.vue";
+import ChatPanel from "./panels/ChatPanel.vue";
 import DndPanel from "./panels/DndPanel.vue";
 import LlmPanel from "./panels/LlmPanel.vue";
 import MemoryPanel from "./panels/MemoryPanel.vue";
 import AppToast from "../../components/ui/AppToast.vue";
 
-type PanelKey = "avatar" | "llm" | "dnd" | "affection" | "memory";
+type PanelKey = "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory";
 
 const active = ref<PanelKey>("avatar");
+const unlisteners: UnlistenFn[] = [];
 
 /**
  * ✕ → `window_hide("settings")`（关闭=hide，进程存活；B1.4 临时通道已由
@@ -31,6 +35,20 @@ async function closeWindow(): Promise<void> {
     console.error("[settings] 隐藏窗口失败", e);
   }
 }
+
+onMounted(async (): Promise<void> => {
+  // 窗口 A 双击形象 / Ctrl+Shift+P → 切到对话 Tab 并聚焦（A 只负责 show，其余在此完成）
+  unlisteners.push(
+    await listen("window:chat:open", () => {
+      active.value = "chat";
+      void focusMainWindow().catch(() => {});
+    }),
+  );
+});
+
+onUnmounted((): void => {
+  unlisteners.forEach((fn) => fn());
+});
 </script>
 
 <template>
@@ -42,7 +60,8 @@ async function closeWindow(): Promise<void> {
         @change="(k: PanelKey) => (active = k)"
       />
       <main class="settings-window__content">
-        <AvatarPanel v-if="active === 'avatar'" />
+        <ChatPanel v-if="active === 'chat'" />
+        <AvatarPanel v-else-if="active === 'avatar'" />
         <LlmPanel v-else-if="active === 'llm'" />
         <DndPanel v-else-if="active === 'dnd'" />
         <AffectionPanel v-else-if="active === 'affection'" />
