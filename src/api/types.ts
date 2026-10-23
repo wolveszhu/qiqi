@@ -99,6 +99,23 @@ export interface ChatBubbleState {
   isStreaming: boolean;
 }
 
+/** 会话列表项（chat_list_sessions 返回；与 Rust `SessionSummaryDto` 对齐）。 */
+export interface ChatSessionDto {
+  sessionId: string;
+  /** 标题预览：首条 user 消息；空串表示尚未产生用户消息（UI 显示"新对话"）。 */
+  preview: string;
+  /** 最后活跃时间（UTC 字符串，Rust CURRENT_TIMESTAMP）。 */
+  lastAt: string;
+  messageCount: number;
+}
+
+/** 会话消息（chat_get_messages 返回；role: 0=user / 1=assistant）。 */
+export interface ChatMessageDto {
+  id: number;
+  role: number;
+  content: string;
+}
+
 /** 事实条目（memory_list_facts 返回）。 */
 export interface FactDto {
   id: number;
