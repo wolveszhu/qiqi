@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "七七",
+  "productName": "qiqi",
   "version": "0.1.0",
   "identifier": "com.brave.qiqi",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "七七",
+        "title": "Qiqi",
         "width": 400,
         "height": 400,
         "minWidth": 400,
@@ -28,7 +28,7 @@
       },
       {
         "label": "settings",
-        "title": "七七 · 设置",
+        "title": "Qiqi · Settings",
         "width": 1000,
         "height": 660,
         "minWidth": 900,

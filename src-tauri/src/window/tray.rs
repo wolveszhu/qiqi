@@ -31,7 +31,7 @@ pub fn build_tray(app: &App) -> Result<(), AppError> {
         .map_err(AppError::from)?;
 
     TrayIconBuilder::with_id("qiqi-main")
-        .tooltip("七七")
+        .tooltip("Qiqi")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))

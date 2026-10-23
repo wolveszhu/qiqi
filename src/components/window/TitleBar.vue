@@ -16,7 +16,7 @@ const kbdHint = ref("Ctrl+Shift+P");
     class="titlebar"
     data-tauri-drag-region
   >
-    <span class="titlebar__title">七七</span>
+    <span class="titlebar__title">Qiqi</span>
     <span class="titlebar__kbd">{{ kbdHint }}</span>
     <button
       class="titlebar__close"
