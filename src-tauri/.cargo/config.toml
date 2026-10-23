@@ -1,0 +1,11 @@
+# 抑制 vendored OpenSSL 静态库链接时的 LNK4099 警告。
+#
+# 背景：本项目 SQLCipher 走 `bundled-sqlcipher-vendored-openssl`，openssl-sys 静态链接
+# 的 libcrypto 不附带调试符号 PDB；MSVC 链接器在 dev/release 链接期打印
+# "LNK4099: 未找到 PDB ossl_static.pdb …… 正在链接对象，如同没有调试信息一样"。
+#
+# 该警告**完全无害**：不影响产物功能、运行、rustc/clippy 的 Rust 警告与门禁，
+# 仅提示"按无调试信息链接"。此处统一屏蔽，避免污染构建日志。
+# 仅对 MSVC 工具链生效（cfg 选择器），Linux/macOS 与 GNU 工具链不受影响。
+[target.'cfg(target_env = "msvc")']
+rustflags = ["-C", "link-args=/IGNORE:4099"]
