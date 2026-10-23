@@ -68,7 +68,11 @@ watch(
 <style scoped>
 .preview-stage {
   position: relative;
-  height: 210px;
+  /* 正方形舞台 + 居中：配合 CodeCatRenderer 基于容器尺寸居中，形象始终正中间完整展示 */
+  width: 100%;
+  max-width: 264px;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
   border-radius: 18px;
   background: linear-gradient(160deg, #fffdf4, #fdf3dd);
   overflow: hidden;

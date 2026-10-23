@@ -13,6 +13,8 @@ html,
 body,
 #app {
   height: 100%;
+  /* 窗口 A(透明宠层) / 窗口 B 均不显示页面级滚动条 */
+  overflow: hidden;
 }
 
 body {

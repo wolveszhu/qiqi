@@ -57,8 +57,8 @@ async function closeWindow(): Promise<void> {
 .settings-window {
   display: flex;
   flex-direction: column;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   background: var(--bg-page);
 }
 
@@ -71,6 +71,6 @@ async function closeWindow(): Promise<void> {
 .settings-window__content {
   flex: 1;
   padding: 24px 28px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 </style>

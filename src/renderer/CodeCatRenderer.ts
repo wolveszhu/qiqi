@@ -120,6 +120,11 @@ export class CodeCatRenderer implements IPetRenderer {
     this.app = app;
 
     // ---- 分层绘制（仅一次） ----
+    // 居中基于实际画布尺寸（resizeTo: container → app.screen = 容器逻辑尺寸），
+    // 不再写死 CANVAS_SIZE/2：窗口 A(400×400) 与预览舞台(任意正方形) 形象均正中对齐、
+    // 完整展示；CANVAS_SIZE 仅作初始默认值保留。
+    this.centerX = this.app.screen.width / 2;
+    this.centerY = this.app.screen.height / 2;
     const petRoot = new Container();
     petRoot.position.set(this.centerX, this.centerY);
     this.petRoot = petRoot;
