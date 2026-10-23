@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 
+import { setClickThroughEnabled } from "../../api/window";
+
 const props = defineProps<{ visible: boolean }>();
 const emit = defineEmits<{
   (e: "send", text: string): void;
@@ -10,25 +12,15 @@ const emit = defineEmits<{
 const draft = ref("");
 const el = ref<HTMLTextAreaElement | null>(null);
 
-/**
- * 聚焦输入区（穿透总闸与窗口聚焦由 PetWindow 统一处理，此处只管键盘焦点）。
- * 窗口展开（set_size）会让 webview 失焦，首次 focus 可能落空 → 下一帧重试一次。
- */
-function focusField(): void {
-  const field = el.value;
-  if (!field) return;
-  field.focus();
-  if (document.activeElement !== field) {
-    requestAnimationFrame(() => el.value?.focus());
-  }
-}
-
+// D1.2 穿透状态机：输入框显示 → 整窗接收（false）；隐藏 → 恢复穿透（true）
 watch(
   () => props.visible,
   async (v) => {
-    if (!v) return;
-    await nextTick();
-    focusField();
+    await setClickThroughEnabled(!v);
+    if (v) {
+      await nextTick();
+      el.value?.focus();
+    }
   },
 );
 
@@ -72,14 +64,6 @@ function submit(): void {
       >
         发送
       </button>
-      <button
-        class="close"
-        type="button"
-        aria-label="关闭输入框"
-        @click="emit('close')"
-      >
-        ✕
-      </button>
     </div>
   </transition>
 </template>
@@ -121,20 +105,6 @@ function submit(): void {
 }
 .send:hover {
   filter: brightness(1.05);
-}
-.close {
-  align-self: stretch;
-  padding: 0 10px;
-  border: none;
-  border-radius: 12px;
-  background: var(--surface-panel);
-  color: var(--ink-soft);
-  font: 600 13px var(--font-ui);
-  cursor: pointer;
-}
-.close:hover {
-  background: var(--peach-soft);
-  color: var(--peach);
 }
 .slide-up-enter-active,
 .slide-up-leave-active {

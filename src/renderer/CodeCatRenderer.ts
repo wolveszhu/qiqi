@@ -155,11 +155,10 @@ export class CodeCatRenderer implements IPetRenderer {
     this.tailG = tailG;
 
     // 身体 + 面部 + 耳朵 + 腮红 + 鼻子（静态，绘制一次）
-    // 无描边：Jelly-Toy 观感靠纯色块与圆角表达，描边会让形象显得"带边框"。
-    // 例外：尾巴本身是 bezier **线**，其 stroke 即尾巴本体，必须保留。
     const bodyG = new Graphics()
       .roundRect(-68, -56, 136, 114, 46)
       .fill(COLOR_BODY)
+      .stroke({ width: 3, color: COLOR_BODY_DEEP, alpha: 0.85 })
       .ellipse(0, -8, 54, 46)
       .fill(COLOR_FACE)
       .ellipse(-34, 14, 11, 7)
@@ -172,8 +171,10 @@ export class CodeCatRenderer implements IPetRenderer {
       .fill(COLOR_BODY)
       .poly([-60, -50, -36, -96, -18, -56])
       .fill(COLOR_BODY)
+      .stroke({ width: 2, color: COLOR_BODY_DEEP, alpha: 0.8 })
       .poly([60, -50, 36, -96, 18, -56])
-      .fill(COLOR_BODY);
+      .fill(COLOR_BODY)
+      .stroke({ width: 2, color: COLOR_BODY_DEEP, alpha: 0.8 });
 
     // 眼睛容器（lookAt / 眨眼 / 表情作用于此）
     const eyesG = new Container();

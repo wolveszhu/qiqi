@@ -7,15 +7,8 @@
  * 参数约定（Tauri 2）：invoke 按**参数名**取值，见各命令 Rust 签名。
  */
 
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-
 import { callCommand } from "./client";
 import type { HitRegion } from "./types";
-
-/** 窗口 A 获得焦点（输入框打开时确保可输入：窗口 set_size 会使 webview 失焦）。 */
-export async function focusMainWindow(): Promise<void> {
-  await getCurrentWebviewWindow().setFocus();
-}
 
 /** 开始拖拽窗口 A（系统接管：移动/跨屏/DPI 均由 OS 处理）。 */
 export async function startDrag(): Promise<void> {

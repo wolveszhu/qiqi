@@ -26,7 +26,9 @@ void resolveRootComponent().then((Root) => {
   // 桌宠层（窗口 A）整窗透明：body 默认背景（--bg-page）只属于设置层，
   // 否则 400×400 不透明色块盖住桌面、透明窗口失效（B1）。
   if (Root === PetWindow) {
+    // html 也加：背景会传播到视口画布，只清 body 仍可能露出方形底块
     document.body.classList.add("pet-window");
+    document.documentElement.classList.add("pet-window");
   }
   createApp(Root).mount("#app");
 });

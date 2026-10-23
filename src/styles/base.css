@@ -25,7 +25,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* 桌宠层（窗口 A）：整窗透明，画面全部由 PIXI 绘制（B1 transparent 窗口的前提）。 */
-body.pet-window {
+/* 桌宠层（窗口 A）：整窗透明，画面全部由 PIXI 绘制（B1 transparent 窗口的前提）。
+   html/#app 一并透明：body 背景会向上传播到视口画布，任何一层有色都会露出方形底块。 */
+html.pet-window,
+body.pet-window,
+body.pet-window #app {
   background: transparent;
 }
