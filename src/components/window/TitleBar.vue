@@ -18,7 +18,7 @@ const kbdHint = ref("Ctrl+Shift+P");
   >
     <img
       class="titlebar__logo"
-      src="/logo.jpeg"
+      src="/logo.png"
       alt="Qiqi"
       draggable="false"
     />
