@@ -69,6 +69,39 @@ pub fn memory_target(tiered: &TieredValue, quota_embedded: bool) -> LlmTarget {
     memory
 }
 
+/// 记忆沉淀目标的**自动派生**（用户决策：UI 不再暴露 memory 档配置）。
+///
+/// 优先序：
+/// 1. memory 档已显式配置（存量数据/M7 前的库）→ 用它；
+/// 2. 首个启用的自定义平台 → 取其第一个模型（蒸馏/事实/共鸣/禁忌判定都可用；
+///    该模型若不支持 embedding，`embed` 调用失败会走 `retrieve_context` 的降级分支——
+///    memory_hits 为空但对话本身不受影响）；
+/// 3. 内置额度端点（`memory_target` 的 quota 分支，未部署时同样失败降级）；
+/// 4. 全空 → 返回空 target（调用方各自优雅降级）。
+pub fn memory_target_from_sources(
+    tiered: &TieredValue,
+    quota_embedded: bool,
+    custom: &[CustomModelRow],
+) -> LlmTarget {
+    // ① memory 档显式配置（M7 清空后的新库不会走到这里；防御存量/回滚库）
+    if !tiered.memory.base_url.is_empty() {
+        return memory_target(tiered, quota_embedded);
+    }
+    // ② 首个启用的自定义平台（调用方已过滤启用与 LLM 类型）
+    if let Some(row) = custom.first()
+        && let Some(model) = row.models().first()
+    {
+        return LlmTarget {
+            tier: TIER_CUSTOM,
+            base_url: row.base_url.clone(),
+            api_key: row.api_key.clone(),
+            model: model.clone(),
+        };
+    }
+    // ③④ 内置额度端点 / 空 target（均由 memory_target 的既有分支表达）
+    memory_target(tiered, quota_embedded)
+}
+
 /// 构建编排链（纯函数：输入行数据 + 轮询参数 → 有序目标列表）。
 pub fn build_chain(input: &ChainInput<'_>) -> ModelChain {
     let mut targets: Vec<LlmTarget> = Vec::new();
@@ -346,6 +379,38 @@ mod tests {
         // 语义：内置额度开启时内置优先于存量 main（免费优先），main 退化为主对话备选。
         assert_eq!(chain.targets[0].tier, "builtin");
         assert_eq!(chain.targets[1].tier, "main");
+    }
+
+    #[test]
+    fn memory_target_from_sources_prefers_first_custom_platform() {
+        let mut tiered = fixture();
+        tiered.memory.base_url = String::new(); // 无 memory 档配置 → 走自定义平台分支
+        let custom = [custom_row("我的平台", &["m-a", "m-b"])];
+        let target = memory_target_from_sources(&tiered, false, &custom);
+        assert_eq!(target.tier, "custom", "无 memory 档配置 → 取首个自定义平台");
+        assert_eq!(target.model, "m-a", "取平台第一个模型");
+        assert_eq!(target.base_url, "https://custom/v1");
+        assert_eq!(target.api_key, "sk-custom");
+    }
+
+    #[test]
+    fn memory_target_from_sources_falls_back_to_tier_then_quota() {
+        // ① memory 档已配置 → 优先
+        let tiered = fixture();
+        let target = memory_target_from_sources(&tiered, false, &[]);
+        assert_eq!(target.tier, "memory");
+        assert_eq!(target.model, "m-memory");
+
+        // ③ 无 memory 档 + 无自定义 + 内置额度 → Workers 端点
+        let mut bare = fixture();
+        bare.memory.base_url = String::new();
+        let target = memory_target_from_sources(&bare, true, &[]);
+        assert_eq!(target.base_url, crate::config::EMBEDDED_QUOTA_BASE_URL);
+        assert_eq!(target.model, crate::config::EMBEDDING_MODEL);
+
+        // ④ 全空且非额度模式 → 空 target（调用方降级）
+        let target = memory_target_from_sources(&bare, false, &[]);
+        assert!(!target.is_configured(), "全空 → 未配置 target");
     }
 
     /// 异步执行辅助（同 client.rs 测试）。

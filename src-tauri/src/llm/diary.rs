@@ -178,8 +178,13 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = crate::db::repositories::app_settings::get_tiered(&conn)?;
         let quota = crate::db::repositories::app_settings::get_quota_mode(&conn)?;
-        let target =
-            crate::llm::router::memory_target(&tiered, quota == crate::config::QUOTA_MODE_EMBEDDED);
+        // 记忆沉淀目标自动派生（memory 档 → 首个启用自定义平台 → 内置端点 → 空）
+        let custom = crate::db::repositories::custom_model_settings::list_enabled_llm(&conn)?;
+        let target = crate::llm::router::memory_target_from_sources(
+            &tiered,
+            quota == crate::config::QUOTA_MODE_EMBEDDED,
+            &custom,
+        );
         // 宠物名（B 阶段：跟随用户设置；空则 DEFAULT_PET_NAME 回退）
         let pet_name = crate::db::repositories::pet_states::get(&conn)?.pet_name;
         // 借用检查：transcript 拷贝出锁段

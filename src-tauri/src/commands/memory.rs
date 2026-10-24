@@ -8,7 +8,7 @@ use tauri::{AppHandle, State};
 use rusqlite::Connection;
 
 use crate::db::models::{DiaryDto, FactDto};
-use crate::db::repositories::{app_settings, diaries, facts};
+use crate::db::repositories::{app_settings, custom_model_settings, diaries, facts};
 use crate::error::AppError;
 use crate::llm::client::{LlmClient as _, ReqwestLlmClient};
 use crate::state::AppState;
@@ -63,16 +63,18 @@ pub async fn memory_update_fact(app: AppHandle, id: i64, content: String) -> Res
     let state = app.state::<AppState>();
 
     // ① 配置快照（锁段一）
-    let (tiered, quota_embedded) = {
+    let (tiered, quota_embedded, custom) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = app_settings::get_tiered(&conn)?;
         let quota = app_settings::get_quota_mode(&conn)?;
-        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED)
+        let custom = custom_model_settings::list_enabled_llm(&conn)?;
+        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED, custom)
     };
 
     // ② embed（无锁段；失败不触碰库）
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let memory_target = crate::llm::router::memory_target(&tiered, quota_embedded);
+    let memory_target =
+        crate::llm::router::memory_target_from_sources(&tiered, quota_embedded, &custom);
     let embedding = client
         .embed(&memory_target, vec![content.clone()])
         .await?
@@ -109,15 +111,17 @@ pub async fn memory_add_fact(
     let category = if (0..=2).contains(&category) { category } else { 0 };
 
     let state = app.state::<AppState>();
-    let (tiered, quota_embedded) = {
+    let (tiered, quota_embedded, custom) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = app_settings::get_tiered(&conn)?;
         let quota = app_settings::get_quota_mode(&conn)?;
-        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED)
+        let custom = custom_model_settings::list_enabled_llm(&conn)?;
+        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED, custom)
     };
 
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let memory_target = crate::llm::router::memory_target(&tiered, quota_embedded);
+    let memory_target =
+        crate::llm::router::memory_target_from_sources(&tiered, quota_embedded, &custom);
     let embedding = client
         .embed(&memory_target, vec![content.clone()])
         .await?

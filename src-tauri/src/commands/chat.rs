@@ -90,7 +90,7 @@ pub async fn chat_send_stream(
     }
 
     // ① 配置快照（每次实时读取——改配置即生效，冷眼三问③）+ 两个模型源 + 编排链
-    let (tiered, quota_embedded, relation, chain) = {
+    let (tiered, quota_embedded, relation, chain, custom) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = app_settings_tiered(&conn)?;
         let quota = app_settings_quota(&conn)?;
@@ -108,7 +108,7 @@ pub async fn chat_send_stream(
             builtin_last_ok: last_ok,
             tiered: &tiered,
         });
-        (tiered, embedded, (pet.relationship_level, pet.pet_name), chain)
+        (tiered, embedded, (pet.relationship_level, pet.pet_name), chain, custom)
     };
 
     // ② user 消息落库（图片不持久化内容，仅留标记；MVP 记忆不存图）
@@ -124,7 +124,7 @@ pub async fn chat_send_stream(
     // 蒸馏 spawn（不阻塞 done；memory 档失败静默——对话仍正常，计划 §七）
     // ③ 混合检索（spawn_blocking：embed + KNN + facts 近因）
     let retrieval_client: Arc<dyn LlmClient> = Arc::new(client);
-    let memory_target = resolve_memory_target(&tiered, quota_embedded);
+    let memory_target = resolve_memory_target(&tiered, quota_embedded, &custom);
     let session_for_retrieval = session_id.clone();
     let text_for_retrieval = text.clone();
     let app_for_retrieval = app.clone();
@@ -174,7 +174,13 @@ pub async fn chat_send_stream(
     };
 
     async_runtime::spawn(async move {
-        run_chat_task(app, session, request, chain, tiered, quota_embedded, abort_flag).await;
+        run_chat_task(
+            app,
+            session,
+            request,
+            RunChatParams { chain, tiered, quota_embedded, custom, abort_flag },
+        )
+        .await;
     });
     Ok(())
 }
@@ -338,15 +344,23 @@ fn detect_mime(path: &str) -> String {
 }
 
 /// 对话任务主体（流式 emit → done → assistant 落库 → 蒸馏 spawn）。
+/// 流式任务的运行时依赖（打包避免参数列表超过 clippy `too_many_arguments` 上限）。
+struct RunChatParams {
+    chain: ModelChain,
+    tiered: crate::db::models::TieredValue,
+    quota_embedded: bool,
+    /// 自定义平台行（记忆沉淀目标派生用；已过滤启用与 LLM 类型）。
+    custom: Vec<custom_model_settings::CustomModelRow>,
+    abort_flag: Arc<AtomicBool>,
+}
+
 async fn run_chat_task(
     app: AppHandle,
     session_id: String,
     request: ChatRequest,
-    chain: ModelChain,
-    tiered: crate::db::models::TieredValue,
-    quota_embedded: bool,
-    abort_flag: Arc<AtomicBool>,
+    params: RunChatParams,
 ) {
+    let RunChatParams { chain, tiered, quota_embedded, custom, abort_flag } = params;
     // E3.5：计时起点（首 token 前到 done 的时长，用于下一轮 slow_reply 判定）
     let started = std::time::Instant::now();
     // 蒸馏输入的用户文本先提取（request 将被 chat_with_fallback 消费）
@@ -451,7 +465,7 @@ async fn run_chat_task(
     };
     async_runtime::spawn(async move {
         let distill_client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-        let memory_target = resolve_memory_target(&tiered, quota_embedded);
+        let memory_target = resolve_memory_target(&tiered, quota_embedded, &custom);
         let result = async_runtime::spawn_blocking(
             move || -> Result<crate::llm::distill::DistillOutcome, AppError> {
                 // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
@@ -634,11 +648,15 @@ fn build_chat_request(
 }
 
 /// memory 档目标（蒸馏与 embedding 共用；勘误 #8）——委托 router 单一真源。
+///
+/// 用户决策：UI 不再暴露 memory 档，故此处按「memory 档 → 首个启用自定义平台 →
+/// 内置额度端点 → 空」自动派生（`custom` 由调用方读库后传入，已过滤启用与 LLM 类型）。
 fn resolve_memory_target(
     tiered: &crate::db::models::TieredValue,
     quota_embedded: bool,
+    custom: &[custom_model_settings::CustomModelRow],
 ) -> LlmTarget {
-    crate::llm::router::memory_target(tiered, quota_embedded)
+    crate::llm::router::memory_target_from_sources(tiered, quota_embedded, custom)
 }
 
 fn emit_error(app: &AppHandle, session_id: &str, e: &AppError) {
