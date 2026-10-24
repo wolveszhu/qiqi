@@ -136,6 +136,7 @@ pub fn run() {
             commands::pet::pet_get_state,
             commands::pet::pet_update_state,
             commands::pet::pet_settle_affection,
+            commands::pet::pet_sleep_decay,
             commands::pet::pet_list_affection_logs,
             commands::chat::chat_send_stream,
             commands::chat::chat_abort,
