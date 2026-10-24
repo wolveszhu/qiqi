@@ -15,7 +15,7 @@ use crate::config::EMBEDDING_DIM;
 
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1；`connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 7;
+pub const TARGET_VERSION: usize = 8;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移 → M4 dnd/频率 → M5 自定义模型表 → M6 内置模型表 → M7 清空三档）。
 ///
@@ -54,6 +54,9 @@ pub fn chain() -> Migrations<'static> {
         // M7：清空三档配置（用户决策：三档 UI 合并为平台列表）。
         // 只重置 value、保留行与 is_custom_quota_used；幂等（同值 UPDATE）。
         M::up(include_str!("migrations/M7__clear_llm_tiers.sql")),
+        // M8：内置体验额度用量明细（quota_usage）+ 月度汇总缓存（quota_usage_monthly）。
+        // 只记内置段（tier='builtin'）；自定义 BYOK 不落库、不展示。
+        M::up(include_str!("migrations/M8__quota_usage.sql")),
     ])
 }
 
