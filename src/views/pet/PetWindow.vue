@@ -126,7 +126,7 @@ async function onDragEnd(): Promise<void> {
       await snapToEdge(edge);
       sleepSnap.value = true;
       settingsStore.sleepSnap = true;
-      setEdgeSleep(true); // 只露耳+眼 + 逆时针 90°（D4.4 视觉休眠）
+      setEdgeSleep(true, edge); // 整体躺下：左=顺时针 90° / 右=逆时针 90°（D4.4 视觉休眠）
       refreshIdleFps(); // 吸附休眠 → 待机帧率（E2.3①）
       // 后台联动：广播 Rust 休眠态（日记静默）+ 衰减锚点（enter 先结算睡前累计）
       void setSleepMode(true).catch((e: unknown) =>
@@ -140,7 +140,7 @@ async function onDragEnd(): Promise<void> {
       await restoreFromSnap();
       sleepSnap.value = false;
       settingsStore.sleepSnap = false;
-      setEdgeSleep(false); // 恢复完整形象
+      setEdgeSleep(false); // 唤醒：旋转归零，恢复原姿态
       refreshIdleFps(); // 拖离 → 恢复（仍受 probeIdle 影响）
       // 后台联动：解除休眠态 + 衰减锚点前移（exit 赦免休眠天数，醒来再续）
       void setSleepMode(false).catch((e: unknown) =>

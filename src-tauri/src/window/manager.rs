@@ -62,20 +62,32 @@ pub fn outer_position_view(app: &AppHandle) -> Result<OuterPositionView, AppErro
 
 /// 贴边目标位置**纯函数**（可测）：返回窗口左上角逻辑坐标。
 ///
-/// **仅支持 left/right**（用户决策：上下不吸附）；显示器矩形 (mx,my,mw,mh)，窗口尺寸 (w,h)。
+/// **仅支持 left/right**（用户决策：上下不吸附）。
+/// **纵向位置保留**用户拖到的位置（仅贴横向边缘），并 clamp 到显示器可见范围内
+/// （拖拽可能把窗口带出屏幕上下缘）。
+/// m = 显示器矩形 (mx,my,mw,mh)，win = 窗口尺寸 (w,h)，cur = 当前左上角 (x,y)。
 pub fn snap_target_position(
     edge: &str,
     m: (i32, i32, i32, i32),
     win: (i32, i32),
+    cur: (i32, i32),
 ) -> Result<(i32, i32), AppError> {
     let (mx, my, mw, mh) = m;
     let (w, h) = win;
-    let (x, y) = match edge {
-        "left" => (mx, (my + mh / 2 - h / 2)),
-        "right" => (mx + mw - w, (my + mh / 2 - h / 2)),
+    let (_cur_x, cur_y) = cur;
+    let x = match edge {
+        "left" => mx,
+        "right" => mx + mw - w,
         _ => return Err(AppError::Config(format!("未知 edge（仅支持 left/right）: {edge}"))),
     };
+    let y = clamp_to_monitor(cur_y, my, mh, h);
     Ok((x, y))
+}
+
+/// 把窗口纵向位置限制在显示器内（上缘 ≥ my，下缘 ≤ my+mh）。
+fn clamp_to_monitor(y: i32, my: i32, mh: i32, h: i32) -> i32 {
+    let max_y = (my + mh - h).max(my); // 显示器比窗口还矮时取 my
+    y.clamp(my, max_y)
 }
 
 /// 贴边定位（Rust 经 current_monitor 计算边界 + set_position；窗口操作全 Rust，rule.md §5）。
@@ -95,8 +107,13 @@ pub fn snap_to_edge(app: &AppHandle, edge: &str) -> Result<(), AppError> {
     let mp = monitor.position().to_logical::<i32>(scale);
     let ms = monitor.size().to_logical::<i32>(scale);
     let size = window.outer_size().map_err(AppError::from)?.to_logical::<i32>(scale);
-    let (x, y) =
-        snap_target_position(edge, (mp.x, mp.y, ms.width, ms.height), (size.width, size.height))?;
+    let pos = window.outer_position().map_err(AppError::from)?.to_logical::<i32>(scale);
+    let (x, y) = snap_target_position(
+        edge,
+        (mp.x, mp.y, ms.width, ms.height),
+        (size.width, size.height),
+        (pos.x, pos.y),
+    )?;
     window.set_position(LogicalPosition::new(x as f64, y as f64)).map_err(AppError::from)?;
     Ok(())
 }
@@ -161,12 +178,34 @@ mod tests {
 
     #[test]
     fn snap_target_positions() {
-        // 显示器 1920x1080 左上 (0,0)，窗口 400x400；仅支持 left/right（上下不吸附）
-        let win = (400, 400);
+        // 显示器 1920x1080 左上 (0,0)，窗口 150x150；仅支持 left/right（上下不吸附）
+        let win = (150, 150);
         let mon = (0, 0, 1920, 1080);
-        assert_eq!(snap_target_position("left", mon, win).unwrap(), (0, 340)); // 左缘垂直居中
-        assert_eq!(snap_target_position("right", mon, win).unwrap(), (1520, 340)); // 右缘垂直居中
-        assert!(snap_target_position("top", mon, win).is_err(), "top 已下线（仅左右吸附）");
-        assert!(snap_target_position("bad", mon, win).is_err(), "非法 edge 报错");
+        // 纵向位置**保留**用户拖到的位置（不再强制居中）
+        assert_eq!(snap_target_position("left", mon, win, (900, 200)).unwrap(), (0, 200)); // 贴左缘，y 不变
+        assert_eq!(
+            snap_target_position("right", mon, win, (900, 700)).unwrap(),
+            (1770, 700) // 右缘 = mx+mw-w = 1920-150；y 不变
+        );
+    }
+
+    #[test]
+    fn snap_target_clamps_vertical_into_monitor() {
+        let win = (150, 150);
+        let mon = (0, 0, 1920, 1080);
+        // 拖出上缘 → clamp 到 my
+        assert_eq!(snap_target_position("left", mon, win, (900, -80)).unwrap(), (0, 0));
+        // 拖出下缘 → clamp 到 my+mh-h = 930
+        assert_eq!(snap_target_position("right", mon, win, (900, 5000)).unwrap(), (1770, 930));
+    }
+
+    #[test]
+    fn snap_target_rejects_vertical_edges() {
+        let win = (150, 150);
+        let mon = (0, 0, 1920, 1080);
+        // 上下不吸附（用户决策）：top/bottom 一律报 Config 错误
+        assert!(snap_target_position("top", mon, win, (900, 0)).is_err(), "top 已下线");
+        assert!(snap_target_position("bottom", mon, win, (900, 0)).is_err(), "bottom 不支持");
+        assert!(snap_target_position("bad", mon, win, (900, 0)).is_err(), "非法 edge 报错");
     }
 }

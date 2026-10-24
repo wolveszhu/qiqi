@@ -15,6 +15,7 @@ import { Application, Container, Graphics } from "pixi.js";
 import type { Ticker } from "pixi.js";
 import { breathScales, dampedRecovery, eyeOffset, jellyImpulse } from "./physics";
 import type { HitRegion, IPetRenderer, PetAction, PetExpression } from "./IPetRenderer";
+import type { SnapEdge } from "../utils/edgeSnap";
 
 /** 画布逻辑尺寸初始默认值（mount 时按容器实际尺寸重算）。 */
 const CANVAS_SIZE = 240;
@@ -30,18 +31,8 @@ const CORE_LEFT = -68;
 const CORE_TOP = -96;
 const CORE_W = 136;
 const CORE_H = 154;
-
-/**
- * remnant（耳 + 眼）包围盒（**局部坐标**，未缩放）：
- * 双耳 poly x[-60,60] / y[-96,-50]，眼睛（eyesG 内）y[-27,-1]。
- * 边缘吸附休眠时身体/脸/腮红/鼻/尾全部隐藏，只留这部分并整体逆时针旋转 90°。
- * 命中区用旋转后矩形（宽高互换），故只需宽高与中心 Y（pivot）。
- */
-const FACE_TOP = -96;
-const FACE_W = 120;
-const FACE_H = 95;
-/** remnant 包围盒中心 Y：faceG 的 pivot——保证旋转 -90° 后 remnant 仍居中于窗口。 */
-const FACE_CENTER_Y = FACE_TOP + FACE_H / 2;
+/** 形象核心包围盒中心 Y（**局部坐标**）：吸附旋转的旋转中心。 */
+const CORE_CENTER_Y = CORE_TOP + CORE_H / 2;
 
 /** 配色：与 styles/tokens.css 的 Jelly-Toy 设计 token 对齐。 */
 const COLOR_BODY = 0x7ca65b;
@@ -66,10 +57,8 @@ export class CodeCatRenderer implements IPetRenderer {
   private petRoot: Container | null = null;
   private eyesG: Container | null = null;
   private tailG: Container | null = null;
-  /** 身体 Graphics（含脸/腮红/鼻；休眠时隐藏）。 */
-  private bodyG: Graphics | null = null;
-  /** remnant 容器（双耳 + 眼睛；休眠时唯一可见部分，绕包围盒中心旋转 -90°）。 */
-  private faceG: Container | null = null;
+  /** 形象容器（身体毛发 + 脸 + 双耳 + 眼睛）：吸附休眠时整体旋转 ±90°。 */
+  private headG: Container | null = null;
   /** 边缘吸附休眠态（命中区切换为 remnant 旋转矩形）。 */
   private edgeSleep = false;
 
@@ -172,7 +161,7 @@ export class CodeCatRenderer implements IPetRenderer {
     tailG.addChild(tail);
     this.tailG = tailG;
 
-    // 身体 + 面部 + 腮红 + 鼻子（静态，绘制一次；**双耳已拆出到 faceG**）
+    // 身体（毛发填充）+ 面部 + 腮红 + 鼻子（静态，绘制一次）
     const bodyG = new Graphics()
       .roundRect(-68, -56, 136, 114, 46)
       .fill(COLOR_BODY)
@@ -187,7 +176,6 @@ export class CodeCatRenderer implements IPetRenderer {
       .fill(COLOR_NOSE)
       .ellipse(0, -44, 32, 15)
       .fill(COLOR_BODY);
-    this.bodyG = bodyG;
 
     // 眼睛容器（lookAt / 眨眼 / 表情作用于此）
     const eyesG = new Container();
@@ -199,7 +187,7 @@ export class CodeCatRenderer implements IPetRenderer {
     eyesG.addChild(eyeL, eyeR);
     this.eyesG = eyesG;
 
-    // 双耳（独立 Graphics：休眠 remnant 的组成部分）
+    // 双耳（独立 Graphics：与身体分开，便于整体旋转时保持绘制顺序）
     const earsG = new Graphics()
       .poly([-60, -50, -36, -96, -18, -56])
       .fill(COLOR_BODY)
@@ -208,14 +196,14 @@ export class CodeCatRenderer implements IPetRenderer {
       .fill(COLOR_BODY)
       .stroke({ width: 2, color: COLOR_BODY_DEEP, alpha: 0.8 });
 
-    // remnant 容器：耳 + 眼。**不可用 pivot**——pivot 会永久平移子渲染
-    // （rendered = position + (child − pivot)），awake 态会把耳/眼整体下移。
-    // 旋转居中改由 setEdgeSleep 里的 position 补偿实现。
-    const faceG = new Container();
-    faceG.addChild(earsG, eyesG);
-    this.faceG = faceG;
+    // 形象容器：身体（毛发+脸+腮红+鼻）+ 双耳 + 眼睛。
+    // **不可用 pivot**：PIXI 的 pivot 会永久平移子渲染（rendered = position + (child − pivot)），
+    // awake 态会整体错位。旋转居中改由 setEdgeSleep 的 position 补偿实现。
+    const headG = new Container();
+    headG.addChild(bodyG, earsG, eyesG);
+    this.headG = headG;
 
-    petRoot.addChild(tailG, bodyG, faceG);
+    petRoot.addChild(tailG, headG);
 
     // ---- 命中区：身体核心矩形（挂载时算一次，帧内不再 getBounds） ----
     this.updateHitRegion();
@@ -227,14 +215,17 @@ export class CodeCatRenderer implements IPetRenderer {
     app.ticker.add(this.tick, this);
   }
 
-  /** 命中区 = 身体核心矩形（随居中位置换算到窗口坐标；尾巴与空白角不入命中区）。
-   *  休眠态切换为 remnant 旋转矩形：宽高互换、以窗口中心居中（否则点不到耳眼唤醒）。 */
+  /**
+   * 命中区 = 身体核心矩形（随居中位置换算到窗口坐标；尾巴与空白角不入命中区）。
+   * 吸附休眠态：形象旋转 90° → 矩形**宽高互换**，中心仍为形象中心
+   * （(centerX, centerY + CORE_CENTER_Y·PET_SCALE)），否则点不中唤醒。
+   */
   private updateHitRegion(): void {
     if (this.edgeSleep) {
-      const w = FACE_H * PET_SCALE;
-      const h = FACE_W * PET_SCALE;
+      const w = CORE_H * PET_SCALE;
+      const h = CORE_W * PET_SCALE;
       this.hitRegion.x = this.centerX - w / 2;
-      this.hitRegion.y = this.centerY - h / 2;
+      this.hitRegion.y = this.centerY + CORE_CENTER_Y * PET_SCALE - h / 2;
       this.hitRegion.width = w;
       this.hitRegion.height = h;
       return;
@@ -332,21 +323,25 @@ export class CodeCatRenderer implements IPetRenderer {
     if (this.app) this.app.ticker.maxFPS = enabled ? 30 : 60;
   }
 
-  /** 边缘吸附休眠视觉（D4.4）：只露耳 + 眼并整体逆时针旋转 90°；唤醒恢复完整形象。
-   *  身体/脸/腮红/鼻/尾隐藏，remnant（faceG）旋转 -π/2（PIXI 负角=逆时针）。
-   *  居中补偿：rotation 作用于 faceG 原点，remnant 中心在局部 (0, FACE_CENTER_Y)，
-   *  旋转后落在 (-FACE_CENTER_Y, 0)，故 position.x = -FACE_CENTER_Y 使其回到窗口中心。
-   *  表情保持 neutral（**完整睁眼**）：sleepy 会把眼睛压到 8% 高（直立"闭眼线"），
-   *  旋转后成 2px 细竖线，观感"形象不完整"（回归缺陷）；💤 气泡已足够传达睡意。
-   *  命中区同步切换为 remnant 旋转矩形（见 updateHitRegion）。 */
-  setEdgeSleep(sleeping: boolean): void {
-    const face = this.faceG;
-    if (!face) return;
+  /**
+   * 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下，**保留耳/眼/脸/毛发填充**（不隐藏任何部件）。
+   *
+   * 旋转方向：贴左边缘 → **顺时针** +π/2；贴右边缘 → **逆时针** -π/2
+   * （PIXI 正角=顺时针）。两者都让猫脸朝向屏幕内侧。
+   *
+   * 居中补偿：rotation 绕容器原点 (0,0) 旋转，形象中心在局部 (0, CORE_CENTER_Y)；
+   * 令 position = C − R(θ)·C 即可让形象中心旋转后仍在原地（不位移、不偏心）。
+   */
+  setEdgeSleep(sleeping: boolean, side: SnapEdge | null = null): void {
+    const head = this.headG;
+    if (!head) return;
     this.edgeSleep = sleeping;
-    if (this.tailG) this.tailG.visible = !sleeping;
-    if (this.bodyG) this.bodyG.visible = !sleeping;
-    face.rotation = sleeping ? -Math.PI / 2 : 0;
-    face.position.set(sleeping ? -FACE_CENTER_Y : 0, 0);
+    if (this.tailG) this.tailG.visible = !sleeping; // 躺姿下尾巴收起
+    const rotation = sleeping ? (side === "left" ? Math.PI / 2 : -Math.PI / 2) : 0;
+    head.rotation = rotation;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    head.position.set(sin * CORE_CENTER_Y, CORE_CENTER_Y - cos * CORE_CENTER_Y);
     this.setExpression("neutral");
     this.updateHitRegion();
   }
@@ -357,8 +352,7 @@ export class CodeCatRenderer implements IPetRenderer {
     this.petRoot = null;
     this.eyesG = null;
     this.tailG = null;
-    this.bodyG = null;
-    this.faceG = null;
+    this.headG = null;
     window.removeEventListener("resize", this.relayout);
     app?.destroy(true, { children: true });
   }

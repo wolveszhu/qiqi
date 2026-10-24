@@ -10,6 +10,8 @@
  * 动作名（值域真源：`docs/design/接口契约.md` §5）。
  * click = 点击果冻冲击（C1 交互核心）；drag/stretch/sleep 供 C2/C6 使用；eat 预留 Phase 2。
  */
+import type { SnapEdge } from "../utils/edgeSnap";
+
 export type PetAction = "idle" | "click" | "drag" | "sleep" | "stretch" | "eat";
 
 /** 表情名（C1 最小集 + 情绪反馈；affection:changed 驱动 happy/angry；C6 傲娇 tsundere）。 */
@@ -36,8 +38,8 @@ export interface IPetRenderer {
   getHitRegion(): HitRegion;
   /** 空闲降帧开关（E2 待机 30fps 优化，勘误#18）。 */
   setIdleMode?(enabled: boolean): void;
-  /** 边缘吸附休眠视觉（D4.4）：只露耳+眼并逆时针旋转 90°，命中区随之切换；false 恢复完整形象。 */
-  setEdgeSleep?(sleeping: boolean): void;
+  /** 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），命中区随之切换；false 恢复原状。 */
+  setEdgeSleep?(sleeping: boolean, side?: SnapEdge | null): void;
   /** 卸载：destroy(true) + 移除监听（usePetRenderer onUnmounted 调用）。 */
   dispose(): void;
 }
