@@ -108,7 +108,7 @@ onUnmounted((): void => {
       >
         + 新建对话
       </button>
-      <ul class="chat-list">
+      <ul class="chat-list scroll-area">
         <li
           v-for="s in chatStore.sessions"
           :key="s.sessionId"
@@ -141,7 +141,7 @@ onUnmounted((): void => {
     <section class="chat-panel__main">
       <div
         ref="messageListEl"
-        class="chat-messages"
+        class="chat-messages scroll-area"
       >
         <div
           v-for="m in chatStore.messages"

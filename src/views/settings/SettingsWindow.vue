@@ -59,7 +59,7 @@ onUnmounted((): void => {
         :active="active"
         @change="(k: PanelKey) => (active = k)"
       />
-      <main class="settings-window__content">
+      <main class="settings-window__content scroll-area">
         <!-- KeepAlive：切 Tab 不卸载面板——对话流式期间离开对话 Tab 也能继续收流 -->
         <KeepAlive>
           <ChatPanel v-if="active === 'chat'" />
@@ -92,7 +92,7 @@ onUnmounted((): void => {
 
 .settings-window__content {
   flex: 1;
+  min-height: 0; /* flex 子项允许收缩，溢出才交给 .scroll-area 滚动而非撑高父级 */
   padding: 24px 28px;
-  overflow: hidden;
 }
 </style>

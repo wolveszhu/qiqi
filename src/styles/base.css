@@ -32,3 +32,22 @@ body.pet-window,
 body.pet-window #app {
   background: transparent;
 }
+
+/* 隐藏滚动条但保留滚动能力（窗口 B 内容区与面板内滚动区共用）。
+ *
+ * 为什么不用 overflow:hidden：那会直接裁切内容（设置面板/长会话历史需要完整可达）。
+ * 实现口径：
+ * - Chromium（WebView2/Chrome/Edge）→ `::-webkit-scrollbar { display: none }`；
+ * - Firefox → `scrollbar-width: none`；旧 Edge/IE → `-ms-overflow-style: none`；
+ * - `overscroll-behavior: contain`：滚到边界不把滚动链传递给外层窗口/桌面。
+ * 滚轮与触控板滚动是 overflow-y:auto 的原生能力，不受滚动条隐藏影响。
+ */
+.scroll-area {
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior: contain;
+}
+.scroll-area::-webkit-scrollbar {
+  display: none;
+}
