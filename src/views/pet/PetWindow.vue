@@ -8,24 +8,29 @@ import {
   playAction,
   setExpression,
   setIdleMode,
-  setPetSleeping,
+  setEdgeSleep,
   usePetRenderer,
 } from "../../composables/usePetRenderer";
 import { proactiveBubble, useProactive } from "../../composables/useProactive";
 import { useAffection } from "../../composables/useAffection";
 import { useSystemProbe } from "../../composables/useSystemProbe";
-import { settingsStore, applyDndLocal } from "../../state/settingsStore";
-import { settleAffection } from "../../api/pet";
+import { settingsStore, applyDndLocal, applySnapshot } from "../../state/settingsStore";
+import { settleAffection, sleepDecay } from "../../api/pet";
 import { onChatToggle } from "../../api/probe";
 import {
   getOuterPosition,
   restoreFromSnap,
   setBubbleMode,
+  setSleepMode,
   show,
   snapToEdge,
   startDrag,
 } from "../../api/window";
+import { getTyped } from "../../api/settings";
 import { detectSnapEdge } from "../../utils/edgeSnap";
+
+/** 休眠气泡文案（D4.4：只露耳+眼时，窗口 A 旁边挂一个 💤 小气泡，窗口保持展开态）。 */
+const SLEEP_BUBBLE = "💤 z z z…";
 
 const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
@@ -56,8 +61,11 @@ useSystemProbe({
 
 // 气泡数据源（窗口 A 单气泡覆盖式）：**只显示主动话术**——
 // 对话的流式回复已迁到窗口 B「对话」Tab，A 不再显示（用户决策）。
-const bubbleText = computed(() => proactiveBubble.text);
-const bubbleStreaming = computed(() => proactiveBubble.isStreaming);
+// 休眠态覆盖为 💤 小气泡（D4.4）：主动引擎已在 sleepSnap 下 skip，故兜底用固定文案。
+const bubbleText = computed(() =>
+  sleepSnap.value ? SLEEP_BUBBLE : proactiveBubble.text,
+);
+const bubbleStreaming = computed(() => !sleepSnap.value && proactiveBubble.isStreaming);
 const bubbleVisible = computed(() => bubbleText.value.length > 0);
 
 // ---- 气泡出现 → 窗口 A 临时展开（Rust 侧保持中心：形象屏幕位置不跳） ----
@@ -78,6 +86,8 @@ watch(
  * 切换 Tab 与聚焦由 B 自己完成。
  */
 async function openChatInSettings(): Promise<void> {
+  // D4.4：休眠期间屏蔽对话入口（双击 / Ctrl+Shift+P 均不打开对话 Tab）
+  if (sleepSnap.value) return;
   try {
     await show("settings");
     await emit("window:chat:open", {});
@@ -93,24 +103,40 @@ function onAction(name: string): void {
   else if (name === "wake") playAction("stretch");
 }
 
-// ---- D4.4 拖拽 → 边缘吸附休眠 ----
+// ---- D4.4 拖拽 → 边缘吸附休眠（仅在开关开启时触发）----
 async function onDragEnd(): Promise<void> {
   isDragging.value = false;
   try {
     const { x, y, monitor } = await getOuterPosition();
     const edge = detectSnapEdge({ x, y }, monitor);
-    if (edge) {
+    // 进入休眠：开关开启 + 命中边缘（上/左/右，下边不吸附）
+    if (edge && settingsStore.snapSleepEnabled) {
       await snapToEdge(edge);
       sleepSnap.value = true;
       settingsStore.sleepSnap = true;
-      setPetSleeping(true); // 角色变暗（D4.4 视觉休眠；窗口级 opacity 在 tauri 2.12.4 不可用）
+      setEdgeSleep(true); // 只露耳+眼 + 逆时针 90°（D4.4 视觉休眠）
       refreshIdleFps(); // 吸附休眠 → 待机帧率（E2.3①）
+      // 后台联动：广播 Rust 休眠态（日记静默）+ 衰减锚点（enter 先结算睡前累计）
+      void setSleepMode(true).catch((e: unknown) =>
+        console.warn("[pet] 休眠态广播失败", e),
+      );
+      void sleepDecay("enter").catch((e: unknown) =>
+        console.warn("[pet] 休眠衰减结算失败", e),
+      );
     } else if (sleepSnap.value) {
+      // 拖离边缘 → 唤醒（仅拖动唤醒，单击不唤醒）
       await restoreFromSnap();
       sleepSnap.value = false;
       settingsStore.sleepSnap = false;
-      setPetSleeping(false); // 唤醒恢复不透明
+      setEdgeSleep(false); // 恢复完整形象
       refreshIdleFps(); // 拖离 → 恢复（仍受 probeIdle 影响）
+      // 后台联动：解除休眠态 + 衰减锚点前移（exit 赦免休眠天数，醒来再续）
+      void setSleepMode(false).catch((e: unknown) =>
+        console.warn("[pet] 休眠态解除失败", e),
+      );
+      void sleepDecay("exit").catch((e: unknown) =>
+        console.warn("[pet] 休眠衰减锚点前移失败", e),
+      );
     }
   } catch (e: unknown) {
     console.warn("[pet] 贴边检测失败（降级：不吸附）", e);
@@ -145,6 +171,12 @@ function onPointerDown(e: PointerEvent): void {
   pressX = e.clientX;
   pressY = e.clientY;
   dragStarted = false;
+  if (sleepSnap.value) {
+    // 休眠期：不抚摸、不互动（D4.4：仅拖动可唤醒）；仍注册拖拽监听以便拖离边缘
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp, { once: true });
+    return;
+  }
   playAction("click");
   // 抚摸计分（M1 锚点④：点击猫身即抚摸+1，日上限 20；C5 内部结算与上限控制）
   void settleAffection({ kind: "petStroke" }).catch((e: unknown) =>
@@ -154,7 +186,7 @@ function onPointerDown(e: PointerEvent): void {
   window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
-/** 双击形象 → 打开窗口 B 的对话 Tab。 */
+/** 双击形象 → 打开窗口 B 的对话 Tab（休眠期屏蔽，见 openChatInSettings 守卫）。 */
 function onDoubleClick(): void {
   void openChatInSettings();
 }
@@ -174,9 +206,18 @@ onMounted(async (): Promise<void> => {
       }
     }),
   );
-  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；对话已迁至 B）
+  // 窗口 A 首次挂载拉取设置快照（开关状态 snapSleepEnabled 依赖；窗口 B 才写快照）
+  if (!settingsStore.snapshot) {
+    void getTyped()
+      .then(applySnapshot)
+      .catch((e: unknown) => {
+        console.warn("[pet] 设置快照拉取失败（使用默认 true）", e);
+      });
+  }
+  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；对话已迁至 B；休眠期由 openChatInSettings 屏蔽）
   unlisteners.push(
     await onChatToggle(() => {
+      if (sleepSnap.value) return;
       void openChatInSettings();
     }),
   );
