@@ -10,9 +10,11 @@
 
 import { callCommand } from "./client";
 import type {
+  CustomModelDto,
   DndConfig,
   ProactiveFrequency,
   ProviderPreset,
+  SaveCustomModelPayload,
   SaveTierPayload,
   SettingsSnapshot,
   TierName,
@@ -44,4 +46,24 @@ export async function setQuotaMode(mode: 1 | 2): Promise<void> {
 /** 服务商预设列表（C3：Rust 单一真源经 IPC 下发，禁止前端硬编码 URL）。 */
 export async function listProviders(): Promise<ProviderPreset[]> {
   return callCommand<ProviderPreset[]>("settings_list_providers");
+}
+
+/** 自定义模型列表（按排序；Key 脱敏回传）。 */
+export async function listCustomModels(): Promise<CustomModelDto[]> {
+  return callCommand<CustomModelDto[]>("settings_list_custom_models");
+}
+
+/** 保存自定义模型（id 缺省=新建；返回保存后的 id）。 */
+export async function saveCustomModel(payload: SaveCustomModelPayload): Promise<number> {
+  return callCommand<number>("settings_save_custom_model", { payload });
+}
+
+/** 删除自定义模型。 */
+export async function deleteCustomModel(id: number): Promise<void> {
+  await callCommand("settings_delete_custom_model", { id });
+}
+
+/** 上移/下移一位（调整编排优先级）。 */
+export async function moveCustomModel(id: number, up: boolean): Promise<void> {
+  await callCommand("settings_move_custom_model", { id, up });
 }

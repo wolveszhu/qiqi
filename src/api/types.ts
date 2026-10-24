@@ -116,6 +116,29 @@ export interface ChatMessageDto {
   content: string;
 }
 
+/** 自定义模型视图（settings_list_custom_models 返回；Key 脱敏口径同 LlmTierConfig）。 */
+export interface CustomModelDto {
+  id: number;
+  name: string;
+  baseUrl: string;
+  /** 模型名列表（编排时按序展开）。 */
+  models: string[];
+  hasKey: boolean;
+  keyFingerprint: string | null;
+  /** 是否启用（停用不删，保配置）。 */
+  enabled: boolean;
+}
+
+/** 保存自定义模型入参（id 缺省=新建；apiKey 缺省=不改动，空串=清空）。 */
+export interface SaveCustomModelPayload {
+  id?: number;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  apiKey?: string;
+  enabled?: boolean;
+}
+
 /** 事实条目（memory_list_facts 返回）。 */
 export interface FactDto {
   id: number;
