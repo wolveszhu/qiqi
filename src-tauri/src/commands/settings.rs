@@ -16,7 +16,10 @@ use crate::db::models::{
     ProviderPresetDto, SaveCustomModelPayload, SaveTierPayload, SettingsDndValue,
     SettingsSnapshotDto,
 };
-use crate::db::repositories::{app_settings, custom_model_settings};
+use crate::db::repositories::{
+    app_settings::{self, SNAP_SHOW_RATIO_DEFAULT, SNAP_SHOW_RATIO_MAX, SNAP_SHOW_RATIO_MIN},
+    custom_model_settings,
+};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -103,6 +106,7 @@ fn settings_get_inner(conn: &Connection) -> Result<SettingsSnapshotDto, AppError
         dnd: dnd_full.dnd,
         frequency: dnd_full.frequency,
         snap_sleep_enabled: app_settings::get_snap_sleep_enabled(conn)?,
+        snap_show_ratio: app_settings::get_snap_show_ratio(conn)?,
     })
 }
 
@@ -116,6 +120,21 @@ pub fn settings_set_snap_sleep(enabled: bool, state: State<'_, AppState>) -> Res
 /// inner（薄壳 → inner，便于 `#[test]` 直调）。
 fn set_snap_sleep_inner(conn: &Connection, enabled: bool) -> Result<(), AppError> {
     app_settings::set_snap_sleep_enabled(conn, enabled)
+}
+
+/// 吸附态露出比例（type=3 行；后端 clamp 到 [MIN, MAX] 后落库，返回落库值）。
+#[tauri::command]
+pub fn settings_set_snap_ratio(ratio: f64, state: State<'_, AppState>) -> Result<f64, AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    set_snap_ratio_inner(&conn, ratio)
+}
+
+/// inner（薄壳 → inner，便于 `#[test]` 直调）：clamp 后落库并返回最终值。
+fn set_snap_ratio_inner(conn: &Connection, ratio: f64) -> Result<f64, AppError> {
+    let ratio = if ratio.is_finite() { ratio } else { SNAP_SHOW_RATIO_DEFAULT };
+    let ratio = ratio.clamp(SNAP_SHOW_RATIO_MIN, SNAP_SHOW_RATIO_MAX);
+    app_settings::set_snap_show_ratio(conn, ratio)?;
+    Ok(ratio)
 }
 
 /// 保存单档配置（api_key 为空/缺省 = 不改动存量 Key）。
@@ -522,6 +541,45 @@ mod tests {
         set_snap_sleep_inner(&conn, true).expect("开启");
         let snap = settings_get_inner(&conn).expect("快照");
         assert!(snap.snap_sleep_enabled, "开启后快照应为 true");
+    }
+
+    #[test]
+    fn settings_set_snap_ratio_persists_clamped_value() {
+        use crate::db::repositories::app_settings;
+
+        let (_dir, conn) = crate::test_util::fresh_db();
+        // 缺省 → 0.5
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert_eq!(snap.snap_show_ratio, SNAP_SHOW_RATIO_DEFAULT);
+
+        // 合法值 → 原样落库
+        let saved = set_snap_ratio_inner(&conn, 0.6).expect("写 0.6");
+        assert_eq!(saved, 0.6);
+        assert_eq!(app_settings::get_snap_show_ratio(&conn).expect("读取"), 0.6);
+
+        // 越界 → clamp
+        assert_eq!(set_snap_ratio_inner(&conn, 5.0).expect("写上界外"), SNAP_SHOW_RATIO_MAX);
+        assert_eq!(set_snap_ratio_inner(&conn, -1.0).expect("写下界外"), SNAP_SHOW_RATIO_MIN);
+    }
+
+    #[test]
+    fn settings_set_snap_ratio_roundtrip_and_clamped_via_snapshot() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        // 缺省 → 0.5（半个圆）
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert_eq!(snap.snap_show_ratio, 0.5, "缺省应为半个圆");
+
+        set_snap_ratio_inner(&conn, 0.7).expect("写 0.7");
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert_eq!(snap.snap_show_ratio, 0.7, "应回读 0.7");
+
+        set_snap_ratio_inner(&conn, 0.05).expect("写下界外");
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert_eq!(snap.snap_show_ratio, 0.3, "超下界 → clamp 到 MIN");
+
+        set_snap_ratio_inner(&conn, 9.9).expect("写上界外");
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert_eq!(snap.snap_show_ratio, 0.8, "超上界 → clamp 到 MAX");
     }
 
     #[test]

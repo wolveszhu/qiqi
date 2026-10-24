@@ -22,6 +22,7 @@ use crate::config::{
 use crate::db::models::TieredValue;
 use crate::db::repositories::custom_model_settings::CustomModelRow;
 use crate::db::repositories::default_model_settings::{self, DefaultModelRow};
+use crate::error::AppError;
 
 /// 编排链（目标序列 + 内置段区间；内置段区间供成功回调定位粘性下标）。
 pub struct ModelChain {
@@ -54,52 +55,18 @@ pub fn target_of(tier: &'static str, value: &crate::db::models::LlmTierValue) ->
     }
 }
 
-/// memory 档目标（C4 蒸馏/embedding 与 C7 日记/编辑同步共用；勘误 #8 单一真源）。
+/// 向量 embedding 目标（**唯一**的嵌入能力来源）。
 ///
-/// 内置额度模式下未配 memory 档 → 指向外部端点；model 缺省 → embedding 模型。
-pub fn memory_target(tiered: &TieredValue, quota_embedded: bool) -> LlmTarget {
-    let mut memory = target_of(TIER_MEMORY, &tiered.memory);
-    if quota_embedded && memory.base_url.is_empty() {
-        memory.base_url = crate::config::EMBEDDED_QUOTA_BASE_URL.into();
-        memory.model = crate::config::EMBEDDING_MODEL.into();
+/// 内置（M6）与自定义（M5）都是**对话模型**，不支持 embedding；故向量写入/检索
+/// 统一走内置额度端点（`EMBEDDED_QUOTA_BASE_URL` + `EMBEDDING_MODEL`）。
+/// 该端点不可用时 `embed` 失败，由各调用方降级（检索退化为空、蒸馏跳过写向量）。
+pub fn embed_target() -> LlmTarget {
+    LlmTarget {
+        tier: TIER_BUILTIN,
+        base_url: crate::config::EMBEDDED_QUOTA_BASE_URL.into(),
+        api_key: String::new(),
+        model: crate::config::EMBEDDING_MODEL.into(),
     }
-    if memory.model.is_empty() {
-        memory.model = crate::config::EMBEDDING_MODEL.into();
-    }
-    memory
-}
-
-/// 记忆沉淀目标的**自动派生**（用户决策：UI 不再暴露 memory 档配置）。
-///
-/// 优先序：
-/// 1. memory 档已显式配置（存量数据/M7 前的库）→ 用它；
-/// 2. 首个启用的自定义平台 → 取其第一个模型（蒸馏/事实/共鸣/禁忌判定都可用；
-///    该模型若不支持 embedding，`embed` 调用失败会走 `retrieve_context` 的降级分支——
-///    memory_hits 为空但对话本身不受影响）；
-/// 3. 内置额度端点（`memory_target` 的 quota 分支，未部署时同样失败降级）；
-/// 4. 全空 → 返回空 target（调用方各自优雅降级）。
-pub fn memory_target_from_sources(
-    tiered: &TieredValue,
-    quota_embedded: bool,
-    custom: &[CustomModelRow],
-) -> LlmTarget {
-    // ① memory 档显式配置（M7 清空后的新库不会走到这里；防御存量/回滚库）
-    if !tiered.memory.base_url.is_empty() {
-        return memory_target(tiered, quota_embedded);
-    }
-    // ② 首个启用的自定义平台（调用方已过滤启用与 LLM 类型）
-    if let Some(row) = custom.first()
-        && let Some(model) = row.models().first()
-    {
-        return LlmTarget {
-            tier: TIER_CUSTOM,
-            base_url: row.base_url.clone(),
-            api_key: row.api_key.clone(),
-            model: model.clone(),
-        };
-    }
-    // ③④ 内置额度端点 / 空 target（均由 memory_target 的既有分支表达）
-    memory_target(tiered, quota_embedded)
 }
 
 /// 构建编排链（纯函数：输入行数据 + 轮询参数 → 有序目标列表）。
@@ -217,6 +184,57 @@ pub async fn chat_with_chain(
     let phrase = local_fallback_phrase();
     chain_log.push("全部模型失败 → 本地兜底话术".into());
     (Err(phrase), chain_log)
+}
+
+/// 沿编排链发起**非流式**对话（蒸馏/日记等后台任务用）：同链序 failover，首个成功即收拢全文。
+///
+/// 与 `chat_with_chain` 同源同序（自定义 → 内置 → main/memory/fallback），差别两点：
+/// ① 后台任务不需要流式增量，直接收拢成 `String`；
+/// ② 全失败**不回落本地兜底话术**——话术是给用户看的，喂给蒸馏会污染 JSON 解析，
+///    故返回 `Err`（携带回落链摘要）供调用方静默跳过。
+/// 成功目标落在内置段时同样回写粘性下标（`mark_builtin_success`）。
+pub async fn chat_text_with_chain(
+    client: &dyn LlmClient,
+    chain: &ModelChain,
+    request: ChatRequest,
+) -> Result<String, AppError> {
+    let mut chain_log: Vec<String> = Vec::new();
+
+    for (idx, target) in chain.targets.iter().enumerate() {
+        if !target.is_configured() {
+            chain_log.push(format!("[{}] 未配置，跳过", target.tier));
+            continue;
+        }
+        match collect_full_text(client, target, request.clone()).await {
+            Ok(text) => {
+                if let Some((start, end)) = chain.builtin_range
+                    && idx >= start
+                    && idx < end
+                {
+                    mark_builtin_success(idx - start);
+                }
+                return Ok(text);
+            },
+            Err(e) => chain_log.push(e.to_string()),
+        }
+    }
+
+    Err(AppError::Llm(format!("编排链全部失败: {}", chain_log.join(" | "))))
+}
+
+/// 非流式取全文（后台任务不需要流式——直接收拢增量）。
+async fn collect_full_text(
+    client: &dyn LlmClient,
+    target: &LlmTarget,
+    request: ChatRequest,
+) -> Result<String, AppError> {
+    let stream = client.chat_stream(target, request).await?;
+    let mut out = String::new();
+    let mut stream = std::pin::pin!(stream);
+    while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
+        out.push_str(&delta?);
+    }
+    Ok(out)
 }
 
 /// 命令层便捷入口：传入两个模型源的行数据 + 三档，内部取轮询槽位并构建链。
@@ -382,35 +400,11 @@ mod tests {
     }
 
     #[test]
-    fn memory_target_from_sources_prefers_first_custom_platform() {
-        let mut tiered = fixture();
-        tiered.memory.base_url = String::new(); // 无 memory 档配置 → 走自定义平台分支
-        let custom = [custom_row("我的平台", &["m-a", "m-b"])];
-        let target = memory_target_from_sources(&tiered, false, &custom);
-        assert_eq!(target.tier, "custom", "无 memory 档配置 → 取首个自定义平台");
-        assert_eq!(target.model, "m-a", "取平台第一个模型");
-        assert_eq!(target.base_url, "https://custom/v1");
-        assert_eq!(target.api_key, "sk-custom");
-    }
-
-    #[test]
-    fn memory_target_from_sources_falls_back_to_tier_then_quota() {
-        // ① memory 档已配置 → 优先
-        let tiered = fixture();
-        let target = memory_target_from_sources(&tiered, false, &[]);
-        assert_eq!(target.tier, "memory");
-        assert_eq!(target.model, "m-memory");
-
-        // ③ 无 memory 档 + 无自定义 + 内置额度 → Workers 端点
-        let mut bare = fixture();
-        bare.memory.base_url = String::new();
-        let target = memory_target_from_sources(&bare, true, &[]);
+    fn embed_target_points_to_quota_embedding_endpoint() {
+        let target = embed_target();
         assert_eq!(target.base_url, crate::config::EMBEDDED_QUOTA_BASE_URL);
         assert_eq!(target.model, crate::config::EMBEDDING_MODEL);
-
-        // ④ 全空且非额度模式 → 空 target（调用方降级）
-        let target = memory_target_from_sources(&bare, false, &[]);
-        assert!(!target.is_configured(), "全空 → 未配置 target");
+        assert!(target.is_configured(), "embedding 目标应可用（端点不可用时由调用方降级）");
     }
 
     /// 异步执行辅助（同 client.rs 测试）。
@@ -465,5 +459,37 @@ mod tests {
         );
         // 3 个三档目标失败 + 1 次兜底记录
         assert_eq!(log.len(), 4, "三次失败 + 一次兜底记录");
+    }
+
+    #[test]
+    fn chat_text_with_chain_collects_full_text_from_first_success() {
+        let tiered = fixture();
+        let builtin = [builtin_row("硅基", &["b1", "b2"])];
+        let chain = build_chain(&ChainInput {
+            custom: &[],
+            builtin: &builtin,
+            builtin_cursor: 0,
+            builtin_last_ok: None,
+            tiered: &tiered,
+        });
+        let client = MockLlmClient::ok();
+        let req = ChatRequest { messages: vec![], max_tokens: None };
+        let text = block_on(chat_text_with_chain(&client, &chain, req)).expect("首个目标成功");
+        assert_eq!(text, "你好，我是喵喵", "增量应被收拢为全文");
+    }
+
+    #[test]
+    fn chat_text_with_chain_all_fail_errs_without_local_phrase() {
+        let tiered = fixture();
+        let chain = build_chain(&empty_input(&tiered));
+        let client = MockLlmClient::failing(&["https://"]);
+        let req = ChatRequest { messages: vec![], max_tokens: None };
+        let err = block_on(chat_text_with_chain(&client, &chain, req)).expect_err("全失败应 Err");
+        let msg = err.to_string();
+        assert!(msg.contains("编排链全部失败"), "应给出链路摘要: {msg}");
+        assert!(
+            !crate::config::LOCAL_FALLBACK_PHRASES.iter().any(|p| msg.contains(p)),
+            "蒸馏不回落本地话术（会污染 JSON 解析）"
+        );
     }
 }

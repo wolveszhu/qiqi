@@ -11,7 +11,7 @@ import { onMounted, onUnmounted, reactive } from "vue";
 import { setHitRegion } from "../api/window";
 import { createRenderer } from "../renderer/factory";
 import type { IPetRenderer } from "../renderer/IPetRenderer";
-import type { SnapEdge } from "../utils/edgeSnap";
+import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
 import type { HitRegion } from "../api/types";
 import { petStore } from "../state/petStore";
 
@@ -66,9 +66,16 @@ export function setIdleMode(enabled: boolean): void {
   renderer?.setIdleMode?.(enabled);
 }
 
-/** 边缘吸附休眠视觉（D4.4）：整体旋转 90° 躺下（左=顺时针 / 右=逆时针）；唤醒恢复原状。 */
-export function setEdgeSleep(sleeping: boolean, side: SnapEdge | null = null): void {
-  renderer?.setEdgeSleep?.(sleeping, side);
+/**
+ * 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），
+ * 并按 `showRatio` 决定露出圆盘的比例；唤醒恢复原状。
+ */
+export function setEdgeSleep(
+  sleeping: boolean,
+  side: SnapEdge | null = null,
+  showRatio: number = SNAP_SHOW_RATIO_DEFAULT,
+): void {
+  renderer?.setEdgeSleep?.(sleeping, side, showRatio);
 }
 
 export function lookAt(x: number, y: number): void {

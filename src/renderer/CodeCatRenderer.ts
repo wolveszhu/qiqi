@@ -15,7 +15,7 @@ import { Application, Container, Graphics } from "pixi.js";
 import type { Ticker } from "pixi.js";
 import { breathScales, dampedRecovery, eyeOffset, jellyImpulse } from "./physics";
 import type { HitRegion, IPetRenderer, PetAction, PetExpression } from "./IPetRenderer";
-import type { SnapEdge } from "../utils/edgeSnap";
+import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
 
 /** 画布逻辑尺寸初始默认值（mount 时按容器实际尺寸重算）。 */
 const CANVAS_SIZE = 240;
@@ -355,11 +355,18 @@ export class CodeCatRenderer implements IPetRenderer {
    * - 旋转方向：贴左 → **顺时针** +π/2；贴右 → **逆时针** −π/2，
    *   两者都让头部（耳 + 眼 + 脸）朝向屏幕内侧。
    *
+   * 露出比例 `showRatio`：圆盘直径中被留在窗口内（可见）的比例；0.5 = 半个圆（默认）。
+   * 圆心因此被推到距贴边一侧边线 `(showRatio − 0.5)·直径` 处。
+   *
    * 数学：容器 pivot 为原点、rotation = θ 时，局部点 p 渲染到 `P + R(θ)·p`；
    * 令圆心 D=(0, BODY_CENTER_Y) 落在目标 T 上 → `P = T − R(θ)·D`，
    * 其中 R(θ)·D = (−d·sinθ, d·cosθ)，按 sin/cos 展开避免手算正负号出错。
    */
-  setEdgeSleep(sleeping: boolean, side: SnapEdge | null = null): void {
+  setEdgeSleep(
+    sleeping: boolean,
+    side: SnapEdge | null = null,
+    showRatio: number = SNAP_SHOW_RATIO_DEFAULT,
+  ): void {
     const head = this.headG;
     if (!head) return;
     this.edgeSleep = sleeping;
@@ -369,13 +376,17 @@ export class CodeCatRenderer implements IPetRenderer {
     const rotation = sleeping ? (side === "right" ? -Math.PI / 2 : Math.PI / 2) : 0;
     head.rotation = rotation;
 
-    // 圆盘圆心目标（窗口局部）：贴左 → x=0；贴右 → x=窗口宽（=2·centerX）；纵向保持拖放高度
+    // 圆盘直径（旋转后沿水平方向的尺寸）：决定圆心偏离窗口边线的距离
+    const discDiameter = CORE_H * PET_SCALE;
+    // 圆心目标（窗口局部）：露出比例 r → 圆心距贴边一侧边线 (r − 0.5)·直径
+    const inset = (showRatio - 0.5) * discDiameter;
     const targetWinX = sleeping
       ? side === "right"
-        ? this.centerX * 2
-        : 0
+        ? this.centerX * 2 - inset
+        : inset
       : this.centerX;
-    const targetWinY = this.centerY + BODY_CENTER_Y * PET_SCALE;
+    const targetWinY = this.centerY + BODY_CENTER_Y * PET_SCALE; // 纵向保持拖放高度
+
     // 换算到 petRoot 局部单位（父级缩放 PET_SCALE）
     const targetX = (targetWinX - this.centerX) / PET_SCALE;
     const targetY = (targetWinY - this.centerY) / PET_SCALE;

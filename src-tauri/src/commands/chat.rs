@@ -90,7 +90,8 @@ pub async fn chat_send_stream(
     }
 
     // ① 配置快照（每次实时读取——改配置即生效，冷眼三问③）+ 两个模型源 + 编排链
-    let (tiered, quota_embedded, relation, chain, custom) = {
+    // 背景蒸馏**复用这同一条链**（同源同序 + 完整 failover），不再单独派生模型。
+    let (relation, chain) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = app_settings_tiered(&conn)?;
         let quota = app_settings_quota(&conn)?;
@@ -108,7 +109,7 @@ pub async fn chat_send_stream(
             builtin_last_ok: last_ok,
             tiered: &tiered,
         });
-        (tiered, embedded, (pet.relationship_level, pet.pet_name), chain, custom)
+        ((pet.relationship_level, pet.pet_name), chain)
     };
 
     // ② user 消息落库（图片不持久化内容，仅留标记；MVP 记忆不存图）
@@ -121,10 +122,11 @@ pub async fn chat_send_stream(
         messages::insert(&conn, &session_id, 0, &stored)?;
     }
 
-    // 蒸馏 spawn（不阻塞 done；memory 档失败静默——对话仍正常，计划 §七）
+    // 蒸馏 spawn（不阻塞 done；失败静默——对话仍正常，计划 §七）
     // ③ 混合检索（spawn_blocking：embed + KNN + facts 近因）
+    // 检索只用向量端点（内置/自定义都是对话模型，不支持 embedding）
     let retrieval_client: Arc<dyn LlmClient> = Arc::new(client);
-    let memory_target = resolve_memory_target(&tiered, quota_embedded, &custom);
+    let embed_target = router::embed_target();
     let session_for_retrieval = session_id.clone();
     let text_for_retrieval = text.clone();
     let app_for_retrieval = app.clone();
@@ -133,7 +135,7 @@ pub async fn chat_send_stream(
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         retrieve_context(
             retrieval_client.as_ref(),
-            &memory_target,
+            &embed_target,
             &conn,
             &session_for_retrieval,
             &text_for_retrieval,
@@ -174,13 +176,7 @@ pub async fn chat_send_stream(
     };
 
     async_runtime::spawn(async move {
-        run_chat_task(
-            app,
-            session,
-            request,
-            RunChatParams { chain, tiered, quota_embedded, custom, abort_flag },
-        )
-        .await;
+        run_chat_task(app, session, request, RunChatParams { chain, abort_flag }).await;
     });
     Ok(())
 }
@@ -346,11 +342,8 @@ fn detect_mime(path: &str) -> String {
 /// 对话任务主体（流式 emit → done → assistant 落库 → 蒸馏 spawn）。
 /// 流式任务的运行时依赖（打包避免参数列表超过 clippy `too_many_arguments` 上限）。
 struct RunChatParams {
+    /// 主对话与后台蒸馏**共用**的编排链（自定义 → 内置 → 三档）。
     chain: ModelChain,
-    tiered: crate::db::models::TieredValue,
-    quota_embedded: bool,
-    /// 自定义平台行（记忆沉淀目标派生用；已过滤启用与 LLM 类型）。
-    custom: Vec<custom_model_settings::CustomModelRow>,
     abort_flag: Arc<AtomicBool>,
 }
 
@@ -360,7 +353,7 @@ async fn run_chat_task(
     request: ChatRequest,
     params: RunChatParams,
 ) {
-    let RunChatParams { chain, tiered, quota_embedded, custom, abort_flag } = params;
+    let RunChatParams { chain, abort_flag } = params;
     // E3.5：计时起点（首 token 前到 done 的时长，用于下一轮 slow_reply 判定）
     let started = std::time::Instant::now();
     // 蒸馏输入的用户文本先提取（request 将被 chat_with_fallback 消费）
@@ -457,7 +450,7 @@ async fn run_chat_task(
         }
     }
 
-    // 蒸馏 spawn（不阻塞 done；memory 档失败静默——对话仍正常，计划 §七）
+    // 蒸馏 spawn（不阻塞 done；失败静默——对话仍正常，计划 §七）
     let distill_input = crate::llm::distill::DistillInput {
         session_id: session_id.clone(),
         user_text,
@@ -465,7 +458,14 @@ async fn run_chat_task(
     };
     async_runtime::spawn(async move {
         let distill_client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-        let memory_target = resolve_memory_target(&tiered, quota_embedded, &custom);
+        // 蒸馏**复用主对话链**：自定义始终入链 + 内置额度开时兜底 + 三档尾部，完整 failover。
+        // 向量写入走独立的 embed 端点（失败仅降级，不阻断沉淀）
+        let embed_target = router::embed_target();
+        // 链为空（自定义/内置/三档全未配置）→ 跳过（不盲目请求、不报错）
+        if chain.targets.is_empty() {
+            log_distill_skipped_once();
+            return;
+        }
         let result = async_runtime::spawn_blocking(
             move || -> Result<crate::llm::distill::DistillOutcome, AppError> {
                 // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
@@ -475,7 +475,8 @@ async fn run_chat_task(
                 let rt = tokio::runtime::Handle::current();
                 let out = rt.block_on(crate::llm::distill::run_distill(
                     &distill_client,
-                    &memory_target,
+                    &chain,
+                    &embed_target,
                     &conn,
                     &distill_input,
                     &pet_name,
@@ -553,7 +554,7 @@ async fn run_chat_task(
 /// **阻塞函数**：由调用方 spawn_blocking 包裹。
 fn retrieve_context(
     client: &dyn LlmClient,
-    memory_target: &LlmTarget,
+    embed_target: &LlmTarget,
     conn: &rusqlite::Connection,
     session_id: &str,
     query: &str,
@@ -561,7 +562,7 @@ fn retrieve_context(
     // embed 失败不阻断对话：记忆段退化为仅 facts（降级检索）
     // async_block 返回 Result<F::Output, AppError>，而 embed 的 F::Output 本身
     // 也是 Result（双层）——匹配内层即可，任何一层失败都走降级
-    let memory_hits = match async_block(client.embed(memory_target, vec![query.to_string()])) {
+    let memory_hits = match async_block(client.embed(embed_target, vec![query.to_string()])) {
         Ok(Ok(vectors)) if vectors.len() == 1 => match vectors.first() {
             Some(v) => vec_memory::knn(conn, &vec_memory::embedding_bytes(v), 5)?
                 .into_iter()
@@ -647,16 +648,15 @@ fn build_chat_request(
     Ok(ChatRequest { messages, max_tokens: None })
 }
 
-/// memory 档目标（蒸馏与 embedding 共用；勘误 #8）——委托 router 单一真源。
-///
-/// 用户决策：UI 不再暴露 memory 档，故此处按「memory 档 → 首个启用自定义平台 →
-/// 内置额度端点 → 空」自动派生（`custom` 由调用方读库后传入，已过滤启用与 LLM 类型）。
-fn resolve_memory_target(
-    tiered: &crate::db::models::TieredValue,
-    quota_embedded: bool,
-    custom: &[custom_model_settings::CustomModelRow],
-) -> LlmTarget {
-    crate::llm::router::memory_target_from_sources(tiered, quota_embedded, custom)
+/// 沉淀跳过提示（进程内只打一次，避免每轮对话刷屏）：
+/// 编排链为空（自定义/内置/三档全未配置）→ 没有可用模型，蒸馏静默跳过。
+fn log_distill_skipped_once() {
+    use std::sync::OnceLock;
+    static WARNED: OnceLock<bool> = OnceLock::new();
+    if WARNED.get().is_none() {
+        eprintln!("[distill] 编排链为空（自定义/内置/三档均未配置）；沉淀已跳过");
+        let _ = WARNED.set(true);
+    }
 }
 
 fn emit_error(app: &AppHandle, session_id: &str, e: &AppError) {

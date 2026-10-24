@@ -43,6 +43,8 @@ export interface SettingsSnapshot {
   frequency: ProactiveFrequency;
   /** 边缘吸附休眠开关（type=3 行；缺省 true——拖到屏幕边缘即休眠）。 */
   snapSleepEnabled: boolean;
+  /** 吸附态露出比例（type=3 行；占形象圆盘直径的比例，缺省 0.5）。 */
+  snapShowRatio: number;
 }
 
 /** 勿扰配置（勘误#13：多段时段）。 */

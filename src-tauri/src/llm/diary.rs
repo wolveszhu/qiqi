@@ -5,12 +5,13 @@
 //! 不做 idle 长离开即时触发（登记 E1 评估）。
 //!
 //! 三段式拆分（collect → generate → store）：DB 锁不跨 await（冷眼三问①并发安全）；
-//! 全部走 **memory 档**廉价模型；失败静默重试一次后放弃（只 log）。
+//! 生成**复用主对话编排链**（自定义 → 内置 → 三档）完整 failover；链全失败则静默跳过（只 log）。
 
 use chrono::TimeZone;
 use serde_json::Value;
 
-use super::client::{ChatMessage, ChatRequest, LlmClient, LlmTarget};
+use super::client::{ChatMessage, ChatRequest, LlmClient};
+use super::router::{self, ModelChain};
 use crate::db::repositories::{diaries, messages};
 use crate::error::AppError;
 
@@ -94,10 +95,13 @@ pub fn collect_diary_input(
     Ok(Some(transcript))
 }
 
-/// 生成日记文本（memory 档，重试一次；输出经宽松解析）。
+/// 生成日记文本（沿编排链 failover；输出经宽松解析）。
+///
+/// 目标级重试由 `chat_text_with_chain` 的链路 failover 承担，此处只解析一次——
+/// 解析失败（`parse_diary` 仅在输出为空时返回 None）→ `Err`，由调用方静默跳过。
 pub async fn generate_diary_text(
     client: &dyn LlmClient,
-    memory_target: &LlmTarget,
+    chain: &ModelChain,
     transcript: &str,
     pet_name: &str,
 ) -> Result<DiaryDraft, AppError> {
@@ -108,22 +112,8 @@ pub async fn generate_diary_text(
         ],
         max_tokens: Some(300),
     };
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        let stream = client.chat_stream(memory_target, request.clone()).await?;
-        let mut out = String::new();
-        let mut stream = std::pin::pin!(stream);
-        while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
-            out.push_str(&delta?);
-        }
-        if let Some(draft) = parse_diary(&out) {
-            return Ok(draft);
-        }
-        if attempt >= 2 {
-            return Err(AppError::Llm("日记输出解析失败（重试后仍无效）".into()));
-        }
-    }
+    let out = router::chat_text_with_chain(client, chain, request).await?;
+    parse_diary(&out).ok_or_else(|| AppError::Llm("日记输出为空，无法解析".into()))
 }
 
 /// 落库（upsert 覆盖当日；裁决 #11-5）。
@@ -180,30 +170,45 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
         return Ok(false);
     }
 
-    // ① 配置快照 + 读输入（锁段一）
-    let (target, transcript, pet_name) = {
+    // ① 配置快照 + 编排链 + 读输入（锁段一）
+    let (chain, transcript, pet_name) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = crate::db::repositories::app_settings::get_tiered(&conn)?;
         let quota = crate::db::repositories::app_settings::get_quota_mode(&conn)?;
-        // 记忆沉淀目标自动派生（memory 档 → 首个启用自定义平台 → 内置端点 → 空）
+        let embedded = quota == crate::config::QUOTA_MODE_EMBEDDED;
+        // 与主对话同构：自定义（用户自配，优先）始终入链；内置仅在「内置额度」模式兜底
         let custom = crate::db::repositories::custom_model_settings::list_enabled_llm(&conn)?;
-        let target = crate::llm::router::memory_target_from_sources(
-            &tiered,
-            quota == crate::config::QUOTA_MODE_EMBEDDED,
-            &custom,
-        );
+        let builtin = if embedded {
+            crate::db::repositories::default_model_settings::list_available_llm(&conn)?
+        } else {
+            Vec::new()
+        };
+        let (cursor, last_ok) = router::next_builtin_slot();
+        let chain = router::build_chain(&router::ChainInput {
+            custom: &custom,
+            builtin: &builtin,
+            builtin_cursor: cursor,
+            builtin_last_ok: last_ok,
+            tiered: &tiered,
+        });
         // 宠物名（B 阶段：跟随用户设置；空则 DEFAULT_PET_NAME 回退）
         let pet_name = crate::db::repositories::pet_states::get(&conn)?.pet_name;
         // 借用检查：transcript 拷贝出锁段
         match collect_diary_input(&conn, date, &pet_name)? {
-            Some(t) => (target, t, pet_name),
+            Some(t) => (chain, t, pet_name),
             None => return Ok(false), // 当日无对话：跳过（风险对策）
         }
     }; // conn guard drop
 
-    // ② LLM 生成（无锁段）
+    // 链为空（自定义/内置/三档均未配置）→ 跳过多余请求
+    if chain.targets.is_empty() {
+        eprintln!("[diary] 编排链为空（自定义/内置/三档均未配置）；跳过 {date} 生成");
+        return Ok(false);
+    }
+
+    // ② LLM 生成（无锁段；沿链 failover）
     let client = super::client::ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let draft = generate_diary_text(&client, &target, &transcript, &pet_name).await?;
+    let draft = generate_diary_text(&client, &chain, &transcript, &pet_name).await?;
 
     // ③ 落库（锁段二）
     {

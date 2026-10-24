@@ -1,17 +1,19 @@
 <script setup lang="ts">
 /**
  * 时段胶囊（设计方案 §5.1 / §4.3）：mono 展示 start–end + 内嵌时钟图标；
- * hover 显示 ✕ 删除；可编辑变体（editable）下内联两个 input type=time。
+ * hover 显示 ✕ 删除；可编辑变体（editable）下点击进入行内编辑两个 input type=time，
+ * 起止可连续修改，✓ / Enter 确认上抛 update，Esc 取消。
+ * autoEdit 时挂载即进入编辑态（新增时段场景）。
  * ui/ 红线：零业务依赖，仅受控 range 驱动 + 删除/更新事件。
  */
-import { ref } from "vue";
+import { ref, onMounted, nextTick, watch } from "vue";
 
 interface Range {
   start: string;
   end: string;
 }
 
-const props = defineProps<{ range: Range; editable?: boolean }>();
+const props = defineProps<{ range: Range; editable?: boolean; autoEdit?: boolean }>();
 const emit = defineEmits<{
   (e: "remove"): void;
   (e: "update", range: Range): void;
@@ -20,29 +22,51 @@ const emit = defineEmits<{
 const start = ref(props.range.start);
 const end = ref(props.range.end);
 const editing = ref(false);
+const startInput = ref<HTMLInputElement | null>(null);
 
-function commit(): void {
+watch(
+  () => props.range,
+  (r) => {
+    start.value = r.start;
+    end.value = r.end;
+  },
+);
+
+/** 进入编辑态：回填当前值并聚焦起始输入框，便于立即改时段。 */
+function enterEdit(): void {
+  if (!props.editable) return;
+  start.value = props.range.start;
+  end.value = props.range.end;
+  editing.value = true;
+  void nextTick(() => startInput.value?.focus());
+}
+
+/** 确认改时段：上抛 update 并退出编辑态（不随单次 change 关闭，可连续改起止）。 */
+function confirm(): void {
   editing.value = false;
   emit("update", { start: start.value, end: end.value });
+}
+
+/** 取消编辑：还原为外部值并退出。 */
+function cancel(): void {
+  start.value = props.range.start;
+  end.value = props.range.end;
+  editing.value = false;
 }
 
 function onRemove(): void {
   emit("remove");
 }
 
-function enterEdit(): void {
-  if (!props.editable) return;
-  start.value = props.range.start;
-  end.value = props.range.end;
-  editing.value = true;
-}
+onMounted(() => {
+  if (props.autoEdit) enterEdit();
+});
 </script>
 
 <template>
   <span
     class="time-chip"
     :class="{ 'is-editing': editing }"
-    @dblclick="enterEdit"
   >
     <svg
       v-if="!editing"
@@ -70,7 +94,10 @@ function enterEdit(): void {
     </svg>
 
     <template v-if="!editing">
-      <span class="time-chip__text">{{ range.start }} – {{ range.end }}</span>
+      <span
+        class="time-chip__text"
+        @click="enterEdit"
+      >{{ range.start }} – {{ range.end }}</span>
       <button
         v-if="editable"
         class="time-chip__del"
@@ -84,11 +111,13 @@ function enterEdit(): void {
 
     <template v-else>
       <input
+        ref="startInput"
         v-model="start"
         class="time-chip__input"
         type="time"
         aria-label="开始时间"
-        @change="commit"
+        @keydown.enter="confirm"
+        @keydown.esc="cancel"
       />
       <span class="time-chip__dash">–</span>
       <input
@@ -96,8 +125,17 @@ function enterEdit(): void {
         class="time-chip__input"
         type="time"
         aria-label="结束时间"
-        @change="commit"
+        @keydown.enter="confirm"
+        @keydown.esc="cancel"
       />
+      <button
+        class="time-chip__ok"
+        type="button"
+        aria-label="完成"
+        @click.stop="confirm"
+      >
+        ✓
+      </button>
     </template>
   </span>
 </template>
@@ -136,6 +174,19 @@ function enterEdit(): void {
 }
 .time-chip__del:hover {
   color: var(--peach);
+}
+.time-chip__ok {
+  border: none;
+  background: var(--matcha);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 6px;
+}
+.time-chip__ok:hover {
+  background: var(--matcha-deep);
 }
 .time-chip__input {
   border: 1px solid var(--line);

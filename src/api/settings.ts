@@ -41,6 +41,11 @@ export async function setSnapSleep(enabled: boolean): Promise<void> {
   await callCommand("settings_set_snap_sleep", { enabled });
 }
 
+/** 吸附态露出比例（type=3 行；后端 clamp 到 [MIN, MAX]，返回落库值）。 */
+export async function setSnapRatio(ratio: number): Promise<number> {
+  return callCommand<number>("settings_set_snap_ratio", { ratio });
+}
+
 /** 服务商预设列表（C3：Rust 单一真源经 IPC 下发，禁止前端硬编码 URL）。 */
 export async function listProviders(): Promise<ProviderPreset[]> {
   return callCommand<ProviderPreset[]>("settings_list_providers");

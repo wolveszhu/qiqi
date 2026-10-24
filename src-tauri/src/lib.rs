@@ -129,6 +129,7 @@ pub fn run() {
             commands::settings::settings_list_providers,
             commands::settings::settings_set_quota_mode,
             commands::settings::settings_set_snap_sleep,
+            commands::settings::settings_set_snap_ratio,
             commands::settings::settings_list_custom_models,
             commands::settings::settings_save_custom_model,
             commands::settings::settings_delete_custom_model,

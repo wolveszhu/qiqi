@@ -2,7 +2,7 @@
 //!
 //! 纪律：
 //! - **不阻塞对话**——done 事件后 `tauri::async_runtime::spawn` 后台执行；
-//! - 蒸馏走 **memory 档**廉价模型；失败重试一次后放弃（静默 + 错误日志）；
+//! - 蒸馏**复用主对话编排链**（自定义 → 内置 → 三档）完整 failover；链全失败则静默跳过；
 //! - JSON 解析**宽松三态**：合法数组 / markdown 围栏包裹 / 空输出均处理，非 JSON 静默跳过；
 //! - 向量写入显式维度校验（embed 侧已校验），`rowid = facts.id`、`source_text = content`。
 //!
@@ -12,6 +12,7 @@
 use serde_json::Value;
 
 use super::client::{ChatMessage, ChatRequest, LlmClient, LlmTarget};
+use super::router::{self, ModelChain};
 use crate::db::repositories::{facts, vec_memory};
 use crate::error::AppError;
 
@@ -191,34 +192,51 @@ pub fn add_fact_with_embedding(
 
 /// 执行沉淀（在 async 上下文中调用；DB 阻塞段由调用方 spawn_blocking 包裹）。
 ///
-/// 步骤：① facts 抽取（memory 档）→ 落库 + embed + 向量写入
+/// 两个入参分工：
+/// - `chain`：**与主对话同源同序**的编排链（自定义始终入链 → 内置额度开时兜底 →
+///   main/memory/fallback 三档）。①③④ 的文本生成沿链 failover，任一目标成功即可；
+/// - `embed_target`：**向量端点**（唯一支持 embedding 的源），只用于写向量。
+///
+/// 步骤：① facts 抽取 → 落库 + embed + 向量写入
 /// ② 消息数超阈值 → 会话摘要 upsert
-/// ③ 共鸣检测（memory 档）→ strength（供 C5 结算）
-/// ④ 禁忌判定（C7.1，memory 档）→ TabooHit（供 C5 扣分 + 情绪短句）
-/// 任一 LLM 步骤失败重试一次后放弃（返回 Err 供日志；不改对话主链路）。
+/// ③ 共鸣检测 → strength（供 C5 结算）
+/// ④ 禁忌判定（C7.1）→ TabooHit（供 C5 扣分 + 情绪短句）
+/// 链路全失败 → 返回 Err（调用方静默跳过；不改对话主链路）。
+///
+/// **embed 失败不阻断沉淀**：事实行已入库（仍能被 `facts` 近因检索命中），
+/// 仅跳过该条的向量写入——向量端点不可用时记忆功能降级但不报错。
 pub async fn run_distill(
     client: &dyn LlmClient,
-    memory_target: &LlmTarget,
+    chain: &ModelChain,
+    embed_target: &LlmTarget,
     conn: &rusqlite::Connection,
     input: &DistillInput,
     pet_name: &str,
 ) -> Result<DistillOutcome, AppError> {
-    // ① 事实抽取（一次请求；失败重试一次）
-    let raw = extract_facts(client, memory_target, &input.user_text, &input.assistant_text).await?;
+    // ① 事实抽取（沿链 failover）
+    let raw = extract_facts(client, chain, &input.user_text, &input.assistant_text).await?;
     let extracted = parse_extracted_facts(&raw);
 
-    // 落库 + 向量
+    // 落库 + 向量（embed 失败 → 跳过写向量，事实保留）
     let mut written = 0usize;
     for (content, category, confidence) in &extracted {
         let fact_id = facts::insert(conn, *category, content, *confidence)?;
-        let embedding = client
-            .embed(memory_target, vec![content.clone()])
-            .await?
-            .into_iter()
-            .next()
-            .ok_or_else(|| AppError::Llm("embed 返回空结果".into()))?;
-        vec_memory::insert(conn, fact_id, &vec_memory::embedding_bytes(&embedding), content)?;
         written += 1;
+        match client.embed(embed_target, vec![content.clone()]).await {
+            Ok(vectors) => {
+                if let Some(embedding) = vectors.into_iter().next() {
+                    vec_memory::insert(
+                        conn,
+                        fact_id,
+                        &vec_memory::embedding_bytes(&embedding),
+                        content,
+                    )?;
+                } else {
+                    log_embed_skipped_once();
+                }
+            },
+            Err(_) => log_embed_skipped_once(),
+        }
     }
 
     // ② 会话摘要（消息数超阈值才触发）
@@ -230,28 +248,37 @@ pub async fn run_distill(
         )
         .map_err(AppError::from)?;
     let summarized = if count >= crate::config::SUMMARY_TRIGGER_COUNT {
-        let summary = summarize_session(client, memory_target, conn, &input.session_id).await?;
+        let summary = summarize_session(client, chain, conn, &input.session_id).await?;
         crate::db::repositories::summaries::upsert(conn, &input.session_id, &summary)?;
         true
     } else {
         false
     };
 
-    // ③ 共鸣检测（memory 档；宽松解析，失败/未判定 → None）
+    // ③ 共鸣检测（宽松解析，失败/未判定 → None）
     let resonance =
-        detect_resonance(client, memory_target, &input.user_text, &input.assistant_text, pet_name)
-            .await;
+        detect_resonance(client, chain, &input.user_text, &input.assistant_text, pet_name).await;
 
     // ④ 禁忌判定（C7.1；解析失败/未违规 → None，宁漏勿误）
-    let taboo = detect_taboo(client, memory_target, &input.user_text, &input.assistant_text).await;
+    let taboo = detect_taboo(client, chain, &input.user_text, &input.assistant_text).await;
 
     Ok(DistillOutcome { facts_written: written, summarized, resonance, taboo })
 }
 
-/// 抽取事实（重试一次）。
+/// embed 不可用提示（进程内只打一次，避免每轮沉淀刷屏）。
+fn log_embed_skipped_once() {
+    use std::sync::OnceLock;
+    static WARNED: OnceLock<bool> = OnceLock::new();
+    if WARNED.get().is_none() {
+        eprintln!("[distill] 向量端点不可用，事实已入库但跳过向量写入（语义检索降级）");
+        let _ = WARNED.set(true);
+    }
+}
+
+/// 抽取事实（沿编排链 failover；链路自带多目标重试，无需再自重试）。
 async fn extract_facts(
     client: &dyn LlmClient,
-    target: &LlmTarget,
+    chain: &ModelChain,
     user_text: &str,
     assistant_text: &str,
 ) -> Result<String, AppError> {
@@ -265,25 +292,13 @@ async fn extract_facts(
         ],
         max_tokens: None,
     };
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match collect_full_text(client, target, request.clone()).await {
-            Ok(text) => return Ok(text),
-            Err(e) if attempt == 1 => {
-                // 重试一次（transient 错误容忍）
-                let _ = e;
-                continue;
-            },
-            Err(e) => return Err(e),
-        }
-    }
+    router::chat_text_with_chain(client, chain, request).await
 }
 
-/// 共鸣检测（重试一次；解析失败/未共鸣 → None，宁少不多）。
+/// 共鸣检测（沿链 failover；解析失败/未共鸣 → None，宁少不多）。
 async fn detect_resonance(
     client: &dyn LlmClient,
-    target: &LlmTarget,
+    chain: &ModelChain,
     user_text: &str,
     assistant_text: &str,
     pet_name: &str,
@@ -298,24 +313,16 @@ async fn detect_resonance(
         ],
         max_tokens: None,
     };
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match collect_full_text(client, target, request.clone()).await {
-            Ok(text) => return parse_resonance(&text),
-            Err(e) if attempt == 1 => {
-                let _ = e;
-                continue;
-            },
-            Err(_) => return None,
-        }
+    match router::chat_text_with_chain(client, chain, request).await {
+        Ok(text) => parse_resonance(&text),
+        Err(_) => None, // 链路全失败：宁漏勿误
     }
 }
 
-/// 禁忌检测（重试一次；解析失败/未违规 → None，宁漏勿误）。
+/// 禁忌检测（沿链 failover；解析失败/未违规 → None，宁漏勿误）。
 async fn detect_taboo(
     client: &dyn LlmClient,
-    target: &LlmTarget,
+    chain: &ModelChain,
     user_text: &str,
     assistant_text: &str,
 ) -> Option<TabooHit> {
@@ -329,17 +336,9 @@ async fn detect_taboo(
         ],
         max_tokens: Some(80), // 情绪短句一句话，限短生成
     };
-    let mut attempt = 0;
-    loop {
-        attempt += 1;
-        match collect_full_text(client, target, request.clone()).await {
-            Ok(text) => return parse_taboo(&text),
-            Err(e) if attempt == 1 => {
-                let _ = e;
-                continue;
-            },
-            Err(_) => return None,
-        }
+    match router::chat_text_with_chain(client, chain, request).await {
+        Ok(text) => parse_taboo(&text),
+        Err(_) => None,
     }
 }
 
@@ -366,7 +365,7 @@ pub fn parse_resonance(raw: &str) -> Option<u8> {
 /// 会话摘要（读最近消息拼给 memory 档）。
 async fn summarize_session(
     client: &dyn LlmClient,
-    target: &LlmTarget,
+    chain: &ModelChain,
     conn: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<String, AppError> {
@@ -395,22 +394,7 @@ async fn summarize_session(
         ],
         max_tokens: None,
     };
-    collect_full_text(client, target, request).await
-}
-
-/// 非流式取全文（蒸馏场景不需要流式——直接收拢增量）。
-async fn collect_full_text(
-    client: &dyn LlmClient,
-    target: &LlmTarget,
-    request: ChatRequest,
-) -> Result<String, AppError> {
-    let stream = client.chat_stream(target, request).await?;
-    let mut out = String::new();
-    let mut stream = std::pin::pin!(stream);
-    while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
-        out.push_str(&delta?);
-    }
-    Ok(out)
+    router::chat_text_with_chain(client, chain, request).await
 }
 
 // ---------- C7.3 记忆编辑/删除与向量同步 ----------
@@ -454,7 +438,7 @@ pub fn remove_fact(conn: &rusqlite::Connection, fact_id: i64) -> Result<(), AppE
 /// 生产传 `config::EMBEDDING_DIM`；测试可传小维度配 Mock。
 pub async fn rebuild_vec_memory(
     client: &dyn LlmClient,
-    memory_target: &LlmTarget,
+    embed_target: &LlmTarget,
     conn: &rusqlite::Connection,
     dim: usize,
 ) -> Result<usize, AppError> {
@@ -468,7 +452,7 @@ pub async fn rebuild_vec_memory(
     let mut written = 0usize;
     for batch in rows.chunks(crate::config::REBUILD_BATCH_SIZE) {
         let texts: Vec<String> = batch.iter().map(|(_, c)| c.clone()).collect();
-        let embeddings = client.embed(memory_target, texts).await?;
+        let embeddings = client.embed(embed_target, texts).await?;
         let tx = conn.unchecked_transaction()?;
         for ((id, content), emb) in batch.iter().zip(embeddings) {
             vec_memory::insert(&tx, *id, &vec_memory::embedding_bytes(&emb), content)?;

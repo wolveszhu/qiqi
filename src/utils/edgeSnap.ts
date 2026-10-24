@@ -31,6 +31,16 @@ export interface SnapPosition {
 export const SNAP_THRESHOLD = 32;
 
 /**
+ * 吸附态露出比例（占形象"圆盘"直径的比例）：默认 / 下界 / 上界。
+ *
+ * 0.5 = 露出半个圆（默认）；越大露出越多（如 0.7 连鼻子一起露出）。
+ * 前端滑块与后端 clamp 共用这组常量，避免两端不一致。
+ */
+export const SNAP_SHOW_RATIO_DEFAULT = 0.5;
+export const SNAP_SHOW_RATIO_MIN = 0.3;
+export const SNAP_SHOW_RATIO_MAX = 0.8;
+
+/**
  * 判定 pos 是否贴左右边缘。返回 edge 或 null。
  * - left：窗口左缘 pos.x 距显示器左缘 ≤ threshold
  * - right：窗口右缘 pos.x + width 距显示器右缘 ≤ threshold

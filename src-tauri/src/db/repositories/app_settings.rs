@@ -58,31 +58,80 @@ pub fn set_quota_mode(conn: &Connection, mode: i64) -> Result<(), AppError> {
     Ok(())
 }
 
-// ---------- type=3 桌宠交互配置（边缘吸附休眠开关） ----------
+// ---------- type=3 桌宠交互配置（边缘吸附休眠：开关 + 露出比例） ----------
 
-/// type=3 行：桌宠交互配置（当前仅「边缘吸附休眠」开关；后续交互开关可并行追加键）。
+/// type=3 行：桌宠交互配置（「边缘吸附休眠」开关 + 露出比例；后续交互开关可并行追加键）。
 pub const SETTING_TYPE_PET_INTERACTION: i64 = 3;
-/// type=3 value 的键名（camelCase，与快照 DTO 对齐）。
+/// 边缘吸附休眠开关键名。
 pub const KEY_SNAP_SLEEP_ENABLED: &str = "snapSleepEnabled";
+/// 吸附态露出比例键名（占形象圆盘直径的比例）。
+pub const KEY_SNAP_SHOW_RATIO: &str = "snapShowRatio";
 
-/// 读取边缘吸附休眠开关（**缺省/坏值均回落 true**：保持"拖到边缘即休眠"的现有行为）。
-///
-/// 解析失败/行不存在/键缺失 → true（宁可误触发也不静默失效）。
-pub fn get_snap_sleep_enabled(conn: &Connection) -> Result<bool, AppError> {
+/// 露出比例：默认 / 下界 / 上界。
+pub const SNAP_SHOW_RATIO_DEFAULT: f64 = 0.5;
+pub const SNAP_SHOW_RATIO_MIN: f64 = 0.3;
+pub const SNAP_SHOW_RATIO_MAX: f64 = 0.8;
+
+/// 读取 type=3 行的 JSON 对象（行不存在/坏 JSON → 空对象）。
+fn get_interaction_json(conn: &Connection) -> Result<serde_json::Value, AppError> {
     let raw = get_row(conn, SETTING_TYPE_PET_INTERACTION)?.and_then(|r| r.value);
     let Some(raw) = raw else {
-        return Ok(true);
+        return Ok(serde_json::Value::Object(Default::default()));
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return Ok(true); // 坏 JSON：回落默认
-    };
-    Ok(value.get(KEY_SNAP_SLEEP_ENABLED).and_then(|v| v.as_bool()).unwrap_or(true))
+    match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(value) if value.is_object() => Ok(value),
+        _ => Ok(serde_json::Value::Object(Default::default())), // 坏值：回落默认
+    }
 }
 
-/// 写入边缘吸附休眠开关（整包覆盖 type=3 行；幂等）。
+/// 合并写入 type=3 行的若干键（**保留未提及的键**，避免多键互相覆盖；幂等）。
+fn merge_interaction_value(
+    conn: &Connection,
+    patch: serde_json::Map<String, serde_json::Value>,
+) -> Result<(), AppError> {
+    let mut value = get_interaction_json(conn)?;
+    // get_interaction_json 恒返回 object；防御性取可变引用，避免 expect/panic
+    if let Some(obj) = value.as_object_mut() {
+        for (key, val) in patch {
+            obj.insert(key, val);
+        }
+    }
+    upsert_value(conn, SETTING_TYPE_PET_INTERACTION, &serde_json::to_string(&value)?)
+}
+
+/// 读取边缘吸附休眠开关（**缺省/坏值均回落 true**：保持"拖到边缘即休眠"的现有行为）。
+pub fn get_snap_sleep_enabled(conn: &Connection) -> Result<bool, AppError> {
+    Ok(get_interaction_json(conn)?
+        .get(KEY_SNAP_SLEEP_ENABLED)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true))
+}
+
+/// 写入边缘吸附休眠开关（合并且幂等）。
 pub fn set_snap_sleep_enabled(conn: &Connection, enabled: bool) -> Result<(), AppError> {
-    let value = serde_json::json!({ KEY_SNAP_SLEEP_ENABLED: enabled }).to_string();
-    upsert_value(conn, SETTING_TYPE_PET_INTERACTION, &value)
+    let mut patch = serde_json::Map::new();
+    patch.insert(KEY_SNAP_SLEEP_ENABLED.to_string(), serde_json::json!(enabled));
+    merge_interaction_value(conn, patch)
+}
+
+/// 读取吸附态露出比例（缺省 0.5 = 半个圆；越界值 clamp 到 [MIN, MAX]）。
+///
+/// 含义：形象"圆盘"露出窗口（屏幕内）的宽度占直径的比例。
+pub fn get_snap_show_ratio(conn: &Connection) -> Result<f64, AppError> {
+    let ratio = get_interaction_json(conn)?
+        .get(KEY_SNAP_SHOW_RATIO)
+        .and_then(|v| v.as_f64())
+        .unwrap_or(SNAP_SHOW_RATIO_DEFAULT);
+    Ok(ratio.clamp(SNAP_SHOW_RATIO_MIN, SNAP_SHOW_RATIO_MAX))
+}
+
+/// 写入吸附态露出比例（clamp 到 [MIN, MAX]；合并且幂等）。
+pub fn set_snap_show_ratio(conn: &Connection, ratio: f64) -> Result<(), AppError> {
+    let ratio = if ratio.is_finite() { ratio } else { SNAP_SHOW_RATIO_DEFAULT };
+    let ratio = ratio.clamp(SNAP_SHOW_RATIO_MIN, SNAP_SHOW_RATIO_MAX);
+    let mut patch = serde_json::Map::new();
+    patch.insert(KEY_SNAP_SHOW_RATIO.to_string(), serde_json::json!(ratio));
+    merge_interaction_value(conn, patch)
 }
 
 // ---------- C3 tiered 读写辅助 ----------
@@ -202,5 +251,42 @@ mod tests {
             get_snap_sleep_enabled(&conn).expect("读取"),
             "坏 JSON → 回落默认开启（不静默失效）"
         );
+    }
+
+    #[test]
+    fn snap_show_ratio_defaults_to_half() {
+        let (_dir, conn) = fresh_db();
+        assert_eq!(get_snap_show_ratio(&conn).expect("读取"), SNAP_SHOW_RATIO_DEFAULT);
+    }
+
+    #[test]
+    fn snap_show_ratio_roundtrip_and_clamped() {
+        let (_dir, conn) = fresh_db();
+        set_snap_show_ratio(&conn, 0.65).expect("写 0.65");
+        assert_eq!(get_snap_show_ratio(&conn).expect("读取"), 0.65);
+
+        set_snap_show_ratio(&conn, 0.99).expect("写上界外");
+        assert_eq!(
+            get_snap_show_ratio(&conn).expect("读取"),
+            SNAP_SHOW_RATIO_MAX,
+            "超上界 → clamp"
+        );
+
+        set_snap_show_ratio(&conn, 0.01).expect("写下界外");
+        assert_eq!(
+            get_snap_show_ratio(&conn).expect("读取"),
+            SNAP_SHOW_RATIO_MIN,
+            "超下界 → clamp"
+        );
+    }
+
+    #[test]
+    fn interaction_keys_do_not_overwrite_each_other() {
+        let (_dir, conn) = fresh_db();
+        set_snap_sleep_enabled(&conn, false).expect("写开关");
+        set_snap_show_ratio(&conn, 0.7).expect("写比例");
+        // 后写的比例不得抹掉开关，反之亦然
+        assert!(!get_snap_sleep_enabled(&conn).expect("读取开关"));
+        assert_eq!(get_snap_show_ratio(&conn).expect("读取比例"), 0.7);
     }
 }

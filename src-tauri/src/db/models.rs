@@ -161,6 +161,8 @@ pub struct SettingsSnapshotDto {
     pub frequency: String,
     /// 边缘吸附休眠开关（type=3 行；缺省 true，前端 AvatarPanel 消费）。
     pub snap_sleep_enabled: bool,
+    /// 吸附态露出比例（type=3 行；占形象圆盘直径的比例，缺省 0.5=半个圆）。
+    pub snap_show_ratio: f64,
 }
 
 /// 桌宠状态（pet_get_state / pet_update_state 返回；好感度字段只读透出）。

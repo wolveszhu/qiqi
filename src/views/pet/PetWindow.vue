@@ -27,11 +27,13 @@ import {
   startDrag,
 } from "../../api/window";
 import { getTyped } from "../../api/settings";
-import { detectSnapEdge } from "../../utils/edgeSnap";
+import { detectSnapEdge, type SnapEdge } from "../../utils/edgeSnap";
 
 const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
 const sleepSnap = ref(false);
+/** 当前贴边侧（休眠中改比例时复用；null = 未吸附）。 */
+let snapEdge: SnapEdge | null = null;
 
 // ---- E2.3① 待机降帧：PIXI maxFPS 单一真源（probeIdle || sleepSnap → 30fps，否则 60fps）----
 let probeIdle = false;
@@ -119,9 +121,10 @@ async function onDragEnd(): Promise<void> {
     // 进入休眠：开关开启 + 命中左右边缘（用户决策：上下不吸附）
     if (edge && settingsStore.snapSleepEnabled) {
       await snapToEdge(edge);
+      snapEdge = edge;
       sleepSnap.value = true;
       settingsStore.sleepSnap = true;
-      setEdgeSleep(true, edge); // 整体躺下：左=顺时针 90° / 右=逆时针 90°（D4.4 视觉休眠）
+      setEdgeSleep(true, edge, settingsStore.snapShowRatio); // 整体躺下：左=顺时针 / 右=逆时针
       refreshIdleFps(); // 吸附休眠 → 待机帧率（E2.3①）
       // 后台联动：广播 Rust 休眠态（日记静默）+ 衰减锚点（enter 先结算睡前累计）
       void setSleepMode(true).catch((e: unknown) =>
@@ -133,6 +136,7 @@ async function onDragEnd(): Promise<void> {
     } else if (sleepSnap.value) {
       // 拖离边缘 → 唤醒（仅拖动唤醒，单击不唤醒）
       await restoreFromSnap();
+      snapEdge = null;
       sleepSnap.value = false;
       settingsStore.sleepSnap = false;
       setEdgeSleep(false); // 唤醒：旋转归零，恢复原姿态
@@ -261,6 +265,17 @@ onMounted(async (): Promise<void> => {
       if (settingsStore.snapshot) {
         settingsStore.snapshot.snapSleepEnabled = event.payload.enabled;
       }
+    }),
+  );
+  // 窗口 B 改吸附露出比例 → A 同步（休眠中改比例即时生效）
+  unlisteners.push(
+    await listen<{ ratio: number }>("settings:snap_ratio:changed", (event) => {
+      settingsStore.snapShowRatio = event.payload.ratio;
+      if (settingsStore.snapshot) {
+        settingsStore.snapshot.snapShowRatio = event.payload.ratio;
+      }
+      // 休眠中改比例即时生效（沿用当前贴边侧）
+      if (sleepSnap.value && snapEdge) setEdgeSleep(true, snapEdge, event.payload.ratio);
     }),
   );
   // 窗口 A 首次挂载拉取设置快照（开关状态 snapSleepEnabled 依赖；窗口 B 才写快照）

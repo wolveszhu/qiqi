@@ -23,12 +23,41 @@ const FREQ_OPTIONS = [
 
 const dnd = reactive<DndConfig>({ enabled: false, ranges: [] });
 const frequency = ref<ProactiveFrequency>("normal");
+/** 最近一次新增的时段下标，用于让新胶囊自动进入编辑态。 */
+const autoEditIndex = ref(-1);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let initialized = false;
 
 function toMin(s: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim());
   return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** 分钟数转 HH:MM（用于挑选默认空档）。 */
+function fmt(min: number): string {
+  const h = Math.floor(min / 60) % 24;
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/**
+ * 在已有勿扰时段之外挑第一段空闲 ≥1h 的窗口作为新时段默认值，
+ * 避免「添加即重叠」触发保存拦截（验收：新增不再必为 9:00–18:00）。
+ */
+function findFreeSlot(
+  ranges: ReadonlyArray<{ start: string; end: string }>,
+): { start: string; end: string } {
+  const segs = ranges
+    .map((r) => ({ s: toMin(r.start), e: toMin(r.end) }))
+    .filter((x): x is { s: number; e: number } => x.s != null && x.e != null && x.s < x.e)
+    .sort((a, b) => a.s - b.s);
+  let cursor = 0;
+  for (const seg of segs) {
+    if (seg.s - cursor >= 60) return { start: fmt(cursor), end: fmt(cursor + 60) };
+    cursor = Math.max(cursor, seg.e);
+  }
+  if (24 * 60 - cursor >= 60) return { start: fmt(cursor), end: fmt(cursor + 60) };
+  return { start: "09:00", end: "10:00" };
 }
 
 /** 存在 start>=end 的非法段 → 阻止保存。 */
@@ -118,11 +147,15 @@ async function doSave(): Promise<void> {
 }
 
 function addRange(): void {
-  dnd.ranges.push({ start: "09:00", end: "18:00" });
+  const slot = findFreeSlot(dnd.ranges);
+  dnd.ranges.push(slot);
+  autoEditIndex.value = dnd.ranges.length - 1;
   persist();
 }
 function removeRange(i: number): void {
   dnd.ranges.splice(i, 1);
+  if (autoEditIndex.value === i) autoEditIndex.value = -1;
+  else if (autoEditIndex.value > i) autoEditIndex.value -= 1;
   persist();
 }
 function updateRange(i: number, r: { start: string; end: string }): void {
@@ -162,6 +195,7 @@ onUnmounted(() => {
           :key="i"
           :range="r"
           :editable="true"
+          :auto-edit="i === autoEditIndex"
           @remove="removeRange(i)"
           @update="(nr) => updateRange(i, nr)"
         />

@@ -38,8 +38,15 @@ export interface IPetRenderer {
   getHitRegion(): HitRegion;
   /** 空闲降帧开关（E2 待机 30fps 优化，勘误#18）。 */
   setIdleMode?(enabled: boolean): void;
-  /** 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），命中区随之切换；false 恢复原状。 */
-  setEdgeSleep?(sleeping: boolean, side?: SnapEdge | null): void;
+  /**
+   * 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），
+   * 按 `showRatio` 决定露出圆盘的比例，命中区随之切换；false 恢复原状。
+   */
+  setEdgeSleep?(
+    sleeping: boolean,
+    side?: SnapEdge | null,
+    showRatio?: number,
+  ): void;
   /** 卸载：destroy(true) + 移除监听（usePetRenderer onUnmounted 调用）。 */
   dispose(): void;
 }

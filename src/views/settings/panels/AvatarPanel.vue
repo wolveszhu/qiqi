@@ -13,7 +13,8 @@ import HintBox from "../../../components/ui/HintBox.vue";
 import PetOptionCard from "../../../components/settings/PetOptionCard.vue";
 import PreviewStage from "../../../components/settings/PreviewStage.vue";
 import { updateState } from "../../../api/pet";
-import { getTyped, setSnapSleep } from "../../../api/settings";
+import { getTyped, setSnapRatio, setSnapSleep } from "../../../api/settings";
+import { SNAP_SHOW_RATIO_MAX, SNAP_SHOW_RATIO_MIN } from "../../../utils/edgeSnap";
 import { pushToast } from "../../../composables/useToast";
 import { applyPetState, petStore } from "../../../state/petStore";
 import { applySnapshot, settingsStore } from "../../../state/settingsStore";
@@ -79,6 +80,23 @@ async function toggleSnapSleep(enabled: boolean): Promise<void> {
     void emit("settings:snap_sleep:changed", { enabled });
     pushToast(enabled ? "已开启：拖到屏幕边缘会休眠" : "已关闭：拖到边缘不再休眠");
   } catch (e) {
+    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+  }
+}
+
+/**
+ * 吸附态露出比例（type=3 持久化；后端 clamp 到 [SNAP_SHOW_RATIO_MIN, MAX]）。
+ * 拖动结束（change）才落库，避免拖动过程高频 invoke；落库后回读确认最终值。
+ */
+async function changeSnapRatio(v: number): Promise<void> {
+  try {
+    await setSnapRatio(v);
+    applySnapshot(await getTyped());
+    // 同步窗口 A（休眠中改比例即时生效）
+    void emit("settings:snap_ratio:changed", {
+      ratio: settingsStore.snapShowRatio,
+    });
+  } catch (e: unknown) {
     pushToast(e instanceof Error ? e.message : "保存失败", "error");
   }
 }
@@ -154,6 +172,27 @@ onMounted((): void => {
             :model-value="settingsStore.snapSleepEnabled"
             @update:model-value="toggleSnapSleep($event)"
           />
+        </div>
+        <div class="set-row">
+          <div>
+            <div class="set-row__title">吸附露出比例</div>
+            <div class="set-row__sub">贴边时露出形象圆盘的百分比</div>
+          </div>
+          <div class="ratio-ctl">
+            <input
+              class="ratio-ctl__slider"
+              type="range"
+              :min="SNAP_SHOW_RATIO_MIN"
+              :max="SNAP_SHOW_RATIO_MAX"
+              step="0.05"
+              :value="settingsStore.snapShowRatio"
+              :disabled="!settingsStore.snapSleepEnabled"
+              @change="changeSnapRatio(Number(($event.target as HTMLInputElement).value))"
+            />
+            <span class="ratio-ctl__val"
+              >{{ Math.round(settingsStore.snapShowRatio * 100) }}%</span
+            >
+          </div>
         </div>
       </div>
       <HintBox tone="info">
@@ -242,6 +281,21 @@ onMounted((): void => {
 .set-row__sub {
   font-size: 12px;
   color: var(--ink-soft);
+}
+.ratio-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ratio-ctl__slider {
+  width: 132px;
+  accent-color: var(--mint-strong);
+}
+.ratio-ctl__val {
+  min-width: 38px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: right;
 }
 @media (max-width: 1080px) {
   .avatar-layout {
