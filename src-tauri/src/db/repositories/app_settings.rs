@@ -1,4 +1,4 @@
-//! app_settings 表访问（type=1 三档 LLM 配置，type=2 勿扰配置）。
+//! app_settings 表访问（type=1 三档 LLM 配置，type=2 勿扰配置，type=3 桌宠交互配置）。
 
 use rusqlite::{Connection, params};
 
@@ -56,6 +56,33 @@ pub fn set_quota_mode(conn: &Connection, mode: i64) -> Result<(), AppError> {
         .map_err(AppError::from)?;
     }
     Ok(())
+}
+
+// ---------- type=3 桌宠交互配置（边缘吸附休眠开关） ----------
+
+/// type=3 行：桌宠交互配置（当前仅「边缘吸附休眠」开关；后续交互开关可并行追加键）。
+pub const SETTING_TYPE_PET_INTERACTION: i64 = 3;
+/// type=3 value 的键名（camelCase，与快照 DTO 对齐）。
+pub const KEY_SNAP_SLEEP_ENABLED: &str = "snapSleepEnabled";
+
+/// 读取边缘吸附休眠开关（**缺省/坏值均回落 true**：保持"拖到边缘即休眠"的现有行为）。
+///
+/// 解析失败/行不存在/键缺失 → true（宁可误触发也不静默失效）。
+pub fn get_snap_sleep_enabled(conn: &Connection) -> Result<bool, AppError> {
+    let raw = get_row(conn, SETTING_TYPE_PET_INTERACTION)?.and_then(|r| r.value);
+    let Some(raw) = raw else {
+        return Ok(true);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Ok(true); // 坏 JSON：回落默认
+    };
+    Ok(value.get(KEY_SNAP_SLEEP_ENABLED).and_then(|v| v.as_bool()).unwrap_or(true))
+}
+
+/// 写入边缘吸附休眠开关（整包覆盖 type=3 行；幂等）。
+pub fn set_snap_sleep_enabled(conn: &Connection, enabled: bool) -> Result<(), AppError> {
+    let value = serde_json::json!({ KEY_SNAP_SLEEP_ENABLED: enabled }).to_string();
+    upsert_value(conn, SETTING_TYPE_PET_INTERACTION, &value)
 }
 
 // ---------- C3 tiered 读写辅助 ----------
@@ -128,4 +155,52 @@ pub(crate) fn parse_tiered(raw: Option<&str>) -> Result<TieredValue, AppError> {
         },
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::fresh_db;
+
+    #[test]
+    fn snap_sleep_defaults_to_true_when_row_missing() {
+        let (_dir, conn) = fresh_db();
+        assert!(
+            get_snap_sleep_enabled(&conn).expect("读取"),
+            "无 type=3 行 → 默认开启（保持现有行为）"
+        );
+    }
+
+    #[test]
+    fn snap_sleep_roundtrip_and_idempotent() {
+        let (_dir, conn) = fresh_db();
+        set_snap_sleep_enabled(&conn, false).expect("写 false");
+        assert!(!get_snap_sleep_enabled(&conn).expect("读取"), "应读到 false");
+
+        set_snap_sleep_enabled(&conn, false).expect("重复写 false（幂等）");
+        assert!(!get_snap_sleep_enabled(&conn).expect("读取"));
+
+        set_snap_sleep_enabled(&conn, true).expect("写 true");
+        assert!(get_snap_sleep_enabled(&conn).expect("读取"), "应读到 true");
+
+        // 只应存在一行 type=3（upsert 语义，不累积）
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE type = ?1",
+                params![SETTING_TYPE_PET_INTERACTION],
+                |row| row.get(0),
+            )
+            .expect("计数");
+        assert_eq!(count, 1, "type=3 应只有一行");
+    }
+
+    #[test]
+    fn snap_sleep_tolerates_garbage_value() {
+        let (_dir, conn) = fresh_db();
+        upsert_value(&conn, SETTING_TYPE_PET_INTERACTION, "not-json").expect("写坏值");
+        assert!(
+            get_snap_sleep_enabled(&conn).expect("读取"),
+            "坏 JSON → 回落默认开启（不静默失效）"
+        );
+    }
 }

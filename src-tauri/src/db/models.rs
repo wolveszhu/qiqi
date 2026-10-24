@@ -159,6 +159,8 @@ pub struct SettingsSnapshotDto {
     pub dnd: DndValue,
     /// 主动频率档位（D2.3：随 type=2 行一并下发，前端 settingsStore 消费）。
     pub frequency: String,
+    /// 边缘吸附休眠开关（type=3 行；缺省 true，前端 AvatarPanel 消费）。
+    pub snap_sleep_enabled: bool,
 }
 
 /// 桌宠状态（pet_get_state / pet_update_state 返回；好感度字段只读透出）。

@@ -102,7 +102,20 @@ fn settings_get_inner(conn: &Connection) -> Result<SettingsSnapshotDto, AppError
         is_custom_quota_used: quota_mode,
         dnd: dnd_full.dnd,
         frequency: dnd_full.frequency,
+        snap_sleep_enabled: app_settings::get_snap_sleep_enabled(conn)?,
     })
+}
+
+/// 边缘吸附休眠开关（type=3 行；前端 AvatarPanel 调用）。
+#[tauri::command]
+pub fn settings_set_snap_sleep(enabled: bool, state: State<'_, AppState>) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    set_snap_sleep_inner(&conn, enabled)
+}
+
+/// inner（薄壳 → inner，便于 `#[test]` 直调）。
+fn set_snap_sleep_inner(conn: &Connection, enabled: bool) -> Result<(), AppError> {
+    app_settings::set_snap_sleep_enabled(conn, enabled)
 }
 
 /// 保存单档配置（api_key 为空/缺省 = 不改动存量 Key）。
@@ -493,6 +506,22 @@ mod tests {
         set_quota_mode_inner(&conn, QUOTA_MODE_BYOK).expect("切 BYOK");
         let snap = settings_get_inner(&conn).expect("读取快照");
         assert_eq!(snap.is_custom_quota_used, QUOTA_MODE_BYOK);
+    }
+
+    #[test]
+    fn settings_set_snap_sleep_roundtrip_via_snapshot() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        // 缺省 → 快照为 true（默认开启）
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert!(snap.snap_sleep_enabled, "缺省应开启");
+
+        set_snap_sleep_inner(&conn, false).expect("关闭");
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert!(!snap.snap_sleep_enabled, "关闭后快照应为 false");
+
+        set_snap_sleep_inner(&conn, true).expect("开启");
+        let snap = settings_get_inner(&conn).expect("快照");
+        assert!(snap.snap_sleep_enabled, "开启后快照应为 true");
     }
 
     #[test]
