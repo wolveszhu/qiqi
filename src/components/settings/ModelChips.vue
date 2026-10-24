@@ -44,7 +44,10 @@ function add(raw: string): void {
 
 /** 删除一个模型。 */
 function remove(name: string): void {
-  emit("update:modelValue", props.modelValue.filter((m) => m !== name));
+  emit(
+    "update:modelValue",
+    props.modelValue.filter((m) => m !== name),
+  );
 }
 
 function onKeydown(e: KeyboardEvent): void {
