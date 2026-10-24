@@ -35,6 +35,7 @@ const revealed = ref(false);
     <span class="app-input__wrap">
       <input
         class="app-input__field"
+        :class="{ 'app-input__field--revealable': type === 'password' && revealable }"
         :type="type === 'password' && !revealed ? 'password' : 'text'"
         :placeholder="placeholder"
         :maxlength="maxlength"
@@ -45,6 +46,7 @@ const revealed = ref(false);
         v-if="type === 'password' && revealable"
         class="app-input__reveal"
         type="button"
+        :aria-label="revealed ? '隐藏 API Key' : '显示 API Key'"
         @click="revealed = !revealed"
       >
         {{ revealed ? "隐藏" : "显示" }}
@@ -80,20 +82,46 @@ const revealed = ref(false);
   color: var(--ink);
 }
 
+/* 密码字段为右侧显隐按钮留位，避免长文本压在按钮下 */
+.app-input__field--revealable {
+  padding-right: 56px;
+}
+
+/*
+ * WebView2/Edge 会给 password 输入框渲染**原生显隐"小眼睛"**（::-ms-reveal 伪元素），
+ * 与本组件的「显示/隐藏」按钮重复且位置重叠——此处隐藏原生控件，只保留应用自己的
+ * （跨浏览器一致：Chromium 系走 ::-ms-reveal，其他内核本就不会渲染）。
+ */
+.app-input__field::-ms-reveal {
+  display: none;
+}
+
 .app-input__field:focus {
   outline: 2px solid var(--matcha-soft);
   border-color: var(--matcha);
 }
 
+/* 显隐按钮：小药丸样式，避免与输入框边框/聚焦环视觉冲突 */
 .app-input__reveal {
   position: absolute;
-  right: 8px;
+  right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  border: none;
-  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: var(--bg-window);
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.4;
   cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.app-input__reveal:hover {
+  color: var(--matcha-deep);
+  border-color: var(--matcha);
 }
 </style>
