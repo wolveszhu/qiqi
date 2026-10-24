@@ -15,9 +15,9 @@ use crate::config::EMBEDDING_DIM;
 
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1；`connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 5;
+pub const TARGET_VERSION: usize = 6;
 
-/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移 → M4 dnd/频率 → M5 自定义模型表）。
+/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移 → M4 dnd/频率 → M5 自定义模型表 → M6 内置模型表）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -47,6 +47,10 @@ pub fn chain() -> Migrations<'static> {
         // M5：custom_model_settings 自定义大模型表（与 default_model_settings 对称，
         // 多 sort_order 供前端排序；无种子，用户自配）。
         M::up(include_str!("migrations/M5__custom_models.sql")),
+        // M6：default_model_settings 内置免费额度模型（智谱/硅基流动种子）。
+        // 原加在 M1，但迁移按版本号执行不校验内容，存量库不会重跑 M1，故独立成迁移；
+        // 顺带把额度默认口径切到 BYOK（is_custom_quota_used=2），与 M1 DDL 默认值意图对齐。
+        M::up(include_str!("migrations/M6__default_models.sql")),
     ])
 }
 
@@ -62,6 +66,29 @@ mod tests {
         chain().to_latest(&mut conn).expect("迁移");
         let current: usize = chain().current_version(&conn).expect("版本读取").into();
         assert_eq!(current, TARGET_VERSION);
+    }
+
+    #[test]
+    fn m6_upgrades_existing_db_and_seeds_builtin_models() {
+        // 存量库场景：先跑到 M5（旧 TARGET），再 to_latest → M6 生效且种子写入
+        crate::db::connection::register_vec_extension().expect("vec 注册");
+        let mut conn = rusqlite::Connection::open_in_memory().expect("内存库");
+        chain().to_version(&mut conn, 5).expect("迁移到 M5");
+        chain().to_latest(&mut conn).expect("迁移到 M6");
+        let current: usize = chain().current_version(&conn).expect("版本读取").into();
+        assert_eq!(current, TARGET_VERSION);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM default_model_settings", [], |row| row.get(0))
+            .expect("表应存在");
+        assert_eq!(count, 2, "智谱 + 硅基流动种子应写入");
+
+        // 幂等：重复 to_latest 不重复插入
+        chain().to_latest(&mut conn).expect("重复迁移");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM default_model_settings", [], |row| row.get(0))
+            .expect("表应存在");
+        assert_eq!(count, 2, "幂等：不重复插入");
     }
 
     #[test]
