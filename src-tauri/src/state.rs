@@ -2,7 +2,8 @@
 //!
 //! - `db`：SQLCipher 连接（B4 注入，setup 内 `app.manage`）；
 //! - `hit_region`/`cursor`/`last_ignore`：C2 穿透状态机的进程内缓存（**不走事件**，零 IPC 洪泛）；
-//! - `click_through_enabled`：穿透总闸（D1 输入框可见 / D4 边缘休眠时关闭）。
+//! - `click_through_enabled`：穿透总闸（D1 输入框可见 / D4 边缘休眠时关闭）；
+//! - `sleep_mode`：边缘吸附休眠态（D4.4，**运行时内存态、不落库**；日记等后台任务据此静默）。
 
 use std::sync::Mutex;
 
@@ -42,6 +43,8 @@ pub struct AppState {
     pub last_foreground: Mutex<Option<String>>,
     /// 上一轮对话响应耗时（毫秒，E3.5：超时则下一轮注入慢回复歉意基调；内存态，重启清零）。
     pub last_response_ms: Mutex<Option<u64>>,
+    /// 边缘吸附休眠态（D4.4：true=休眠中；日记生成等后台任务门控；内存态，重启清零）。
+    pub sleep_mode: Mutex<bool>,
 }
 
 impl AppState {
@@ -56,6 +59,31 @@ impl AppState {
             idle_active: Mutex::new(false),
             last_foreground: Mutex::new(None),
             last_response_ms: Mutex::new(None),
+            sleep_mode: Mutex::new(false),
         }
+    }
+
+    /// 是否处于边缘吸附休眠态（锁 poisoning 时按未休眠处理——宁可多跑一次后台任务）。
+    pub fn is_sleep_mode(&self) -> bool {
+        self.sleep_mode.lock().map(|g| *g).unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> AppState {
+        AppState::new(Mutex::new(rusqlite::Connection::open_in_memory().expect("内存库")))
+    }
+
+    #[test]
+    fn sleep_mode_defaults_false_and_toggles() {
+        let s = state();
+        assert!(!s.is_sleep_mode(), "默认未休眠（日记等后台任务正常运行）");
+        *s.sleep_mode.lock().expect("锁") = true;
+        assert!(s.is_sleep_mode(), "置位后应报告休眠（日记门控据此跳过）");
+        *s.sleep_mode.lock().expect("锁") = false;
+        assert!(!s.is_sleep_mode(), "复位后恢复");
     }
 }

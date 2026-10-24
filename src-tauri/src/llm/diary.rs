@@ -173,6 +173,13 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
     use tauri::Manager as _;
     let state = app.state::<crate::state::AppState>();
 
+    // 休眠期暂停后台日记（用户决策：边缘吸附休眠期间彻底静默，省 token 与后台活动）。
+    // 补漏与每日定时两条路径都经本函数，一处门控全覆盖。
+    if state.is_sleep_mode() {
+        eprintln!("[diary] 休眠中，跳过 {date} 生成");
+        return Ok(false);
+    }
+
     // ① 配置快照 + 读输入（锁段一）
     let (target, transcript, pet_name) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;

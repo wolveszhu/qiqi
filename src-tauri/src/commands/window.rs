@@ -90,6 +90,18 @@ pub fn window_set_bubble_mode(expanded: bool, app: AppHandle) -> Result<(), AppE
     window::manager::set_bubble_mode(&app, expanded)
 }
 
+/// 边缘吸附休眠态广播（D4.4）：前端进入/退出休眠时调用。
+///
+/// 作用：Rust 后台任务（日记生成等）据此静默；**内存态不落库**（重启即醒，
+/// 休眠外观由前端 sleepSnap 恢复，开关状态另存 app_settings type=3）。
+#[tauri::command]
+pub fn window_set_sleep_mode(enabled: bool, state: State<'_, AppState>) -> Result<(), AppError> {
+    let mut flag =
+        state.sleep_mode.lock().map_err(|e| AppError::Db(format!("获取休眠态锁失败: {e}")))?;
+    *flag = enabled;
+    Ok(())
+}
+
 /// 解析目标窗口（label 常量校验，禁魔法字符串）。
 fn resolve<R: tauri::Runtime>(
     app: &AppHandle<R>,
