@@ -3,6 +3,7 @@
  * 桌宠面板（设计方案 §4.1）：名字即改即存（pet_update_state, debounce）+ 形象选择 + 预览。
  * 形象仅 code_cat 可选（code_dog/导入为 Phase 3 占位）；边缘吸附/铃铛开关后端持久化命令缺失，占位。
  */
+import { emit } from "@tauri-apps/api/event";
 import { onMounted, ref, watch } from "vue";
 
 import AppCard from "../../../components/ui/AppCard.vue";
@@ -73,6 +74,9 @@ async function toggleSnapSleep(enabled: boolean): Promise<void> {
   try {
     await setSnapSleep(enabled);
     applySnapshot(await getTyped());
+    // 同步窗口 A（双窗口独立 webview，store 不共享；A 只在挂载时拉一次快照，
+    // 不发事件会让 A 缓存陈旧开关 → 吸附门控失效）
+    void emit("settings:snap_sleep:changed", { enabled });
     pushToast(enabled ? "已开启：拖到屏幕边缘会休眠" : "已关闭：拖到边缘不再休眠");
   } catch (e) {
     pushToast(e instanceof Error ? e.message : "保存失败", "error");

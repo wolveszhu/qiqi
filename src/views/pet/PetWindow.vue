@@ -206,6 +206,15 @@ onMounted(async (): Promise<void> => {
       }
     }),
   );
+  // 窗口 B 改边缘吸附休眠开关 → A 同步（A 只在挂载时拉快照，其余全靠事件）
+  unlisteners.push(
+    await listen<{ enabled: boolean }>("settings:snap_sleep:changed", (event) => {
+      settingsStore.snapSleepEnabled = event.payload.enabled;
+      if (settingsStore.snapshot) {
+        settingsStore.snapshot.snapSleepEnabled = event.payload.enabled;
+      }
+    }),
+  );
   // 窗口 A 首次挂载拉取设置快照（开关状态 snapSleepEnabled 依赖；窗口 B 才写快照）
   if (!settingsStore.snapshot) {
     void getTyped()

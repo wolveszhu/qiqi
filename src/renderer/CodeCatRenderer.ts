@@ -68,7 +68,7 @@ export class CodeCatRenderer implements IPetRenderer {
   private tailG: Container | null = null;
   /** 身体 Graphics（含脸/腮红/鼻；休眠时隐藏）。 */
   private bodyG: Graphics | null = null;
-  /** remnant 容器（双耳 + 眼睛；休眠时唯一可见部分，绕 pivot 旋转 -90°）。 */
+  /** remnant 容器（双耳 + 眼睛；休眠时唯一可见部分，绕包围盒中心旋转 -90°）。 */
   private faceG: Container | null = null;
   /** 边缘吸附休眠态（命中区切换为 remnant 旋转矩形）。 */
   private edgeSleep = false;
@@ -208,9 +208,10 @@ export class CodeCatRenderer implements IPetRenderer {
       .fill(COLOR_BODY)
       .stroke({ width: 2, color: COLOR_BODY_DEEP, alpha: 0.8 });
 
-    // remnant 容器：耳 + 眼。pivot 对齐包围盒中心 → 逆时针旋转 90° 后仍居中不偏心。
+    // remnant 容器：耳 + 眼。**不可用 pivot**——pivot 会永久平移子渲染
+    // （rendered = position + (child − pivot)），awake 态会把耳/眼整体下移。
+    // 旋转居中改由 setEdgeSleep 里的 position 补偿实现。
     const faceG = new Container();
-    faceG.pivot.set(0, FACE_CENTER_Y);
     faceG.addChild(earsG, eyesG);
     this.faceG = faceG;
 
@@ -332,9 +333,10 @@ export class CodeCatRenderer implements IPetRenderer {
   }
 
   /** 边缘吸附休眠视觉（D4.4）：只露耳 + 眼并整体逆时针旋转 90°；唤醒恢复完整形象。
-   *  身体/脸/腮红/鼻/尾隐藏，remnant（faceG）绕 pivot 旋转 -π/2（PIXI 负角=逆时针）；
-   *  命中区同步切换为 remnant 旋转矩形（见 updateHitRegion）。
-   *  帧率（maxFPS）不在此管理——由 PetWindow 以 `probeIdle || sleepSnap` 单一真源统一驱动（E2.3①）。 */
+   *  身体/脸/腮红/鼻/尾隐藏，remnant（faceG）旋转 -π/2（PIXI 负角=逆时针）。
+   *  居中补偿：rotation 作用于 faceG 原点，remnant 中心在局部 (0, FACE_CENTER_Y)，
+   *  旋转后落在 (-FACE_CENTER_Y, 0)，故 position.x = -FACE_CENTER_Y 使其回到窗口中心。
+   *  命中区同步切换为 remnant 旋转矩形（见 updateHitRegion）。 */
   setEdgeSleep(sleeping: boolean): void {
     const face = this.faceG;
     if (!face) return;
@@ -342,6 +344,7 @@ export class CodeCatRenderer implements IPetRenderer {
     if (this.tailG) this.tailG.visible = !sleeping;
     if (this.bodyG) this.bodyG.visible = !sleeping;
     face.rotation = sleeping ? -Math.PI / 2 : 0;
+    face.position.set(sleeping ? -FACE_CENTER_Y : 0, 0);
     if (sleeping) this.setExpression("sleepy");
     else this.setExpression("neutral");
     this.updateHitRegion();
