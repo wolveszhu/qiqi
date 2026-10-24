@@ -336,6 +336,8 @@ export class CodeCatRenderer implements IPetRenderer {
    *  身体/脸/腮红/鼻/尾隐藏，remnant（faceG）旋转 -π/2（PIXI 负角=逆时针）。
    *  居中补偿：rotation 作用于 faceG 原点，remnant 中心在局部 (0, FACE_CENTER_Y)，
    *  旋转后落在 (-FACE_CENTER_Y, 0)，故 position.x = -FACE_CENTER_Y 使其回到窗口中心。
+   *  表情保持 neutral（**完整睁眼**）：sleepy 会把眼睛压到 8% 高（直立"闭眼线"），
+   *  旋转后成 2px 细竖线，观感"形象不完整"（回归缺陷）；💤 气泡已足够传达睡意。
    *  命中区同步切换为 remnant 旋转矩形（见 updateHitRegion）。 */
   setEdgeSleep(sleeping: boolean): void {
     const face = this.faceG;
@@ -345,8 +347,7 @@ export class CodeCatRenderer implements IPetRenderer {
     if (this.bodyG) this.bodyG.visible = !sleeping;
     face.rotation = sleeping ? -Math.PI / 2 : 0;
     face.position.set(sleeping ? -FACE_CENTER_Y : 0, 0);
-    if (sleeping) this.setExpression("sleepy");
-    else this.setExpression("neutral");
+    this.setExpression("neutral");
     this.updateHitRegion();
   }
 

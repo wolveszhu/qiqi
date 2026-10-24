@@ -64,10 +64,12 @@ export async function setSleepMode(enabled: boolean): Promise<void> {
   await callCommand("window_set_sleep_mode", { enabled });
 }
 
-/** 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */
+/** 窗口 A 外位置 + 外尺寸 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */
 export interface OuterPositionView {
   x: number;
   y: number;
+  width: number;
+  height: number;
   monitor: { x: number; y: number; width: number; height: number };
 }
 
@@ -75,8 +77,8 @@ export async function getOuterPosition(): Promise<OuterPositionView> {
   return callCommand<OuterPositionView>("window_get_outer_position");
 }
 
-/** 贴边吸附休眠（edge ∈ top/left/right）。 */
-export async function snapToEdge(edge: "top" | "left" | "right"): Promise<void> {
+/** 贴边吸附休眠（仅左右，edge ∈ left/right；上下不吸附）。 */
+export async function snapToEdge(edge: "left" | "right"): Promise<void> {
   await callCommand("window_snap_to_edge", { edge });
 }
 

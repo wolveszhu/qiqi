@@ -31,16 +31,20 @@ pub struct MonitorView {
 pub struct OuterPositionView {
     pub x: i32,
     pub y: i32,
+    /// 窗口外尺寸（逻辑 px）：前端 right 贴边判定需右边缘 = x + width。
+    pub width: i32,
+    pub height: i32,
     pub monitor: MonitorView,
 }
 
-/// 窗口 A 外位置 + 当前显示器逻辑矩形（统一 logical 坐标，规避多屏 DPI 坑；D4.4 贴边判定数据源）。
+/// 窗口 A 外位置 + 外尺寸 + 当前显示器逻辑矩形（统一 logical 坐标，规避多屏 DPI 坑；D4.4 贴边判定数据源）。
 pub fn outer_position_view(app: &AppHandle) -> Result<OuterPositionView, AppError> {
     let window = app
         .get_webview_window(LABEL_MAIN)
         .ok_or_else(|| AppError::Window(format!("窗口不存在: {LABEL_MAIN}")))?;
     let scale = window.scale_factor().map_err(AppError::from)?;
     let pos = window.outer_position().map_err(AppError::from)?.to_logical::<i32>(scale);
+    let size = window.outer_size().map_err(AppError::from)?.to_logical::<i32>(scale);
     let monitor = window
         .current_monitor()
         .map_err(AppError::from)?
@@ -50,12 +54,15 @@ pub fn outer_position_view(app: &AppHandle) -> Result<OuterPositionView, AppErro
     Ok(OuterPositionView {
         x: pos.x,
         y: pos.y,
+        width: size.width,
+        height: size.height,
         monitor: MonitorView { x: mp.x, y: mp.y, width: ms.width, height: ms.height },
     })
 }
 
 /// 贴边目标位置**纯函数**（可测）：返回窗口左上角逻辑坐标。
-/// edge ∈ top/left/right；显示器矩形 (mx,my,mw,mh)，窗口尺寸 (w,h)。
+///
+/// **仅支持 left/right**（用户决策：上下不吸附）；显示器矩形 (mx,my,mw,mh)，窗口尺寸 (w,h)。
 pub fn snap_target_position(
     edge: &str,
     m: (i32, i32, i32, i32),
@@ -64,10 +71,9 @@ pub fn snap_target_position(
     let (mx, my, mw, mh) = m;
     let (w, h) = win;
     let (x, y) = match edge {
-        "top" => ((mx + mw / 2 - w / 2), my),
         "left" => (mx, (my + mh / 2 - h / 2)),
         "right" => (mx + mw - w, (my + mh / 2 - h / 2)),
-        _ => return Err(AppError::Config(format!("未知 edge: {edge}"))),
+        _ => return Err(AppError::Config(format!("未知 edge（仅支持 left/right）: {edge}"))),
     };
     Ok((x, y))
 }
@@ -155,12 +161,12 @@ mod tests {
 
     #[test]
     fn snap_target_positions() {
-        // 显示器 1920x1080 左上 (0,0)，窗口 400x400
+        // 显示器 1920x1080 左上 (0,0)，窗口 400x400；仅支持 left/right（上下不吸附）
         let win = (400, 400);
         let mon = (0, 0, 1920, 1080);
-        assert_eq!(snap_target_position("top", mon, win).unwrap(), (760, 0)); // 居中贴顶
         assert_eq!(snap_target_position("left", mon, win).unwrap(), (0, 340)); // 左缘垂直居中
         assert_eq!(snap_target_position("right", mon, win).unwrap(), (1520, 340)); // 右缘垂直居中
+        assert!(snap_target_position("top", mon, win).is_err(), "top 已下线（仅左右吸附）");
         assert!(snap_target_position("bad", mon, win).is_err(), "非法 edge 报错");
     }
 }

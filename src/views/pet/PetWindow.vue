@@ -119,9 +119,9 @@ async function onDragEnd(): Promise<void> {
   evaluatingDrag = true;
   isDragging.value = false;
   try {
-    const { x, y, monitor } = await getOuterPosition();
-    const edge = detectSnapEdge({ x, y }, monitor);
-    // 进入休眠：开关开启 + 命中边缘（上/左/右，下边不吸附）
+    const { x, y, width, height, monitor } = await getOuterPosition();
+    const edge = detectSnapEdge({ x, y, width, height }, monitor);
+    // 进入休眠：开关开启 + 命中左右边缘（用户决策：上下不吸附）
     if (edge && settingsStore.snapSleepEnabled) {
       await snapToEdge(edge);
       sleepSnap.value = true;
