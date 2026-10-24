@@ -186,6 +186,40 @@ export interface ProviderPreset {
   costTier: string;
 }
 
+/** 内置额度月度汇总（quota_summary 返回；界面展示用，Rust `QuotaSummaryDto` 对齐）。 */
+export interface QuotaSummary {
+  /** 本地自然月周期键 YYYY-MM。 */
+  periodKey: string;
+  /** 本月发放额度（credits）。 */
+  granted: number;
+  /** 本月已用额度（credits）。 */
+  used: number;
+  /** 剩余比例 0–1（进度条直接可用）。 */
+  remainingRatio: number;
+  /** 本月记账请求次数。 */
+  requests: number;
+}
+
+/** 内置额度单次请求明细（quota_usage_records 返回，审计/对账用）。 */
+export interface QuotaUsageRecord {
+  id: number;
+  createdAt: string;
+  periodKey: string;
+  /** 场景：chat 主对话 / proactive 主动话术 / distill 蒸馏 / diary 日记。 */
+  scene: string;
+  /** 命中链段：builtin 内置额度 / custom 自定义 / main / memory / fallback。 */
+  tier: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** 计权后扣减点数（失败为 0）。 */
+  credits: number;
+  ok: boolean;
+  /** 失败原因（成功为 null）。 */
+  error: string | null;
+}
+
 /** LLM 配置档位（C3 常量；与 `TierName` 白名单一致）。 */
 export type TierName = "main" | "memory" | "fallback";
 

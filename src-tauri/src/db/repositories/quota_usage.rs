@@ -175,6 +175,16 @@ pub fn prune_before(conn: &Connection, period_key: &str) -> Result<(), AppError>
     Ok(())
 }
 
+/// 保留最近 `keep_months` 个自然月（含当月），更早的按月清理（周期键字符串序 = 月序）。
+pub fn prune_keep_months(conn: &Connection, keep_months: u32) -> Result<(), AppError> {
+    use chrono::Datelike;
+    let today = chrono::Local::now().date_naive();
+    // 保留窗口：当月 + (keep_months-1) 个前月 → 截断点 = 当月往前数 keep_months-1 个月
+    let total = today.year() * 12 + today.month() as i32 - 1 - (keep_months as i32 - 1);
+    let cutoff = format!("{:04}-{:02}", total.div_euclid(12), total.rem_euclid(12) + 1);
+    prune_before(conn, &cutoff)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

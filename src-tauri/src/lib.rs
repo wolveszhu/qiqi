@@ -107,6 +107,22 @@ pub fn run() {
                 let app_handle = app.handle().clone();
                 crate::llm::diary::spawn_scheduler(app_handle);
             }
+
+            // [额度] 用量明细保留最近 3 个月，超出按月清理（启动时执行一次；失败仅 log）
+            {
+                let state = app.state::<crate::state::AppState>();
+                let conn = state.db.lock();
+                match conn {
+                    Ok(conn) => {
+                        if let Err(e) =
+                            crate::db::repositories::quota_usage::prune_keep_months(&conn, 3)
+                        {
+                            eprintln!("[quota] 明细清理失败: {e}");
+                        }
+                    },
+                    Err(e) => eprintln!("[quota] 明细清理取锁失败: {e}"),
+                }
+            }
             Ok(())
         })
         // [B5] 命令注册：settings/pet/chat/memory 组（B5）；window/probe 组（C2 全量）。
@@ -134,6 +150,8 @@ pub fn run() {
             commands::settings::settings_save_custom_model,
             commands::settings::settings_delete_custom_model,
             commands::settings::settings_move_custom_model,
+            commands::quota::quota_summary,
+            commands::quota::quota_usage_records,
             commands::pet::pet_get_state,
             commands::pet::pet_update_state,
             commands::pet::pet_settle_affection,

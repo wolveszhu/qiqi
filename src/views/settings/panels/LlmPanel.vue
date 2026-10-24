@@ -8,7 +8,7 @@
  * - 模型用 ModelChips（回车/逗号添加为标签）；API Key **必须手动输入**；
  * - 记忆沉淀档由后端自动派生（取首个启用平台），UI 不再暴露。
  */
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 
 import AppButton from "../../../components/ui/AppButton.vue";
 import AppCard from "../../../components/ui/AppCard.vue";
@@ -28,11 +28,14 @@ import {
   saveCustomModel,
   setQuotaMode,
 } from "../../../api/settings";
+import { getQuotaSummary, listQuotaRecords } from "../../../api/quota";
 import { pushToast } from "../../../composables/useToast";
 import { applySnapshot, settingsStore } from "../../../state/settingsStore";
 import type {
   CustomModelDto,
   ProviderPreset,
+  QuotaSummary,
+  QuotaUsageRecord,
   SaveCustomModelPayload,
 } from "../../../api/types";
 
@@ -159,8 +162,55 @@ async function toggleQuota(useBuiltin: boolean): Promise<void> {
     const snap = await getTyped();
     applySnapshot(snap);
     pushToast(useBuiltin ? "已切换到内置额度" : "已切换到自带 Key");
+    await refreshQuota();
   } catch (e) {
     pushToast(e instanceof Error ? e.message : "切换失败", "error");
+  }
+}
+
+/** 内置体验额度：当月汇总 + 明细（仅内置额度记账；BYOK 不展示）。 */
+const quotaSummary = ref<QuotaSummary | null>(null);
+const quotaRecords = ref<QuotaUsageRecord[]>([]);
+const quotaDetailsOpen = ref(false);
+const quotaLoading = ref(false);
+
+/** 场景中文标签（与 Rust scene 常量对齐）。 */
+const sceneLabels: Record<string, string> = {
+  chat: "主对话",
+  proactive: "主动话术",
+  distill: "记忆沉淀",
+  diary: "日记",
+};
+
+/** credits 数字千分位（等宽对齐扫读）。 */
+function fmtCredits(n: number): string {
+  return n.toLocaleString("zh-CN");
+}
+
+/** 徽章状态：BYOK → warn；耗尽 → warn；低余量（<20%）→ warn；否则 ok。 */
+const quotaTone = computed<"ok" | "warn">(() => {
+  if (settingsStore.snapshot?.isCustomQuotaUsed === 2) return "warn";
+  if (!quotaSummary.value) return "ok";
+  return quotaSummary.value.remainingRatio <= 0.2 ? "warn" : "ok";
+});
+
+const quotaBadgeText = computed(() => {
+  if (settingsStore.snapshot?.isCustomQuotaUsed === 2) return "使用自带 Key";
+  if (quotaSummary.value && quotaSummary.value.remainingRatio <= 0) return "额度已用完";
+  return "内置额度启用";
+});
+
+/** 拉取汇总与明细（失败 toast——不让用户以为加载成功）。 */
+async function refreshQuota(): Promise<void> {
+  quotaLoading.value = true;
+  try {
+    const [summary, records] = await Promise.all([getQuotaSummary(), listQuotaRecords()]);
+    quotaSummary.value = summary;
+    quotaRecords.value = records;
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "额度数据加载失败", "error");
+  } finally {
+    quotaLoading.value = false;
   }
 }
 
@@ -171,6 +221,7 @@ onMounted(async (): Promise<void> => {
     console.warn("[llm] 服务商列表拉取失败", e);
   }
   await refreshCustoms();
+  await refreshQuota();
 });
 </script>
 
@@ -363,18 +414,86 @@ onMounted(async (): Promise<void> => {
         <div class="llm-panel__quota-head">
           <span>剩余体验额度</span>
           <StatusBadge
-            :tone="settingsStore.snapshot?.isCustomQuotaUsed === 2 ? 'warn' : 'ok'"
-            :text="
-              settingsStore.snapshot?.isCustomQuotaUsed === 2
-                ? '使用自带 Key'
-                : '内置额度启用'
-            "
+            :tone="quotaTone"
+            :text="quotaBadgeText"
           />
         </div>
-        <QuotaBar :ratio="1" />
-        <p class="llm-panel__quota-note">
-          体验额度用量随后端开放（当前为启用状态占位）。关闭即完全切到自有平台。
+        <QuotaBar :ratio="quotaSummary?.remainingRatio ?? 1" />
+        <div
+          v-if="quotaSummary"
+          class="quota-summary"
+          aria-label="本月用量汇总"
+        >
+          <div class="quota-summary__item">
+            <span class="quota-summary__num">{{ fmtCredits(quotaSummary.used) }}</span>
+            <span class="quota-summary__label">本月已用</span>
+          </div>
+          <div class="quota-summary__item">
+            <span class="quota-summary__num">{{ fmtCredits(quotaSummary.granted) }}</span>
+            <span class="quota-summary__label">月度总量</span>
+          </div>
+          <div class="quota-summary__item">
+            <span class="quota-summary__num">{{ quotaSummary.requests }}</span>
+            <span class="quota-summary__label">请求次数</span>
+          </div>
+          <div class="quota-summary__item">
+            <span class="quota-summary__num">{{ quotaSummary.periodKey }}</span>
+            <span class="quota-summary__label">计费周期</span>
+          </div>
+          <AppButton
+            variant="ghost"
+            class="quota-summary__details-btn"
+            @click="quotaDetailsOpen = !quotaDetailsOpen"
+          >
+            {{ quotaDetailsOpen ? "收起明细" : "查看明细" }}
+          </AppButton>
+        </div>
+        <p
+          v-if="quotaSummary && quotaSummary.remainingRatio <= 0"
+          class="llm-panel__quota-note llm-panel__quota-note--warn"
+        >
+          这个月的体验额度用完啦。配好你自己的平台 Key 就能继续聊～
         </p>
+        <p
+          v-else
+          class="llm-panel__quota-note"
+        >
+          体验额度按自然月发放（每月 1 日重置，不结转）。关闭即完全切到自有平台。
+        </p>
+
+        <!-- 明细抽屉（时间倒序；空状态说明） -->
+        <div
+          v-if="quotaDetailsOpen"
+          class="quota-details"
+        >
+          <p
+            v-if="quotaRecords.length === 0"
+            class="quota-details__empty"
+          >
+            本月还没有消耗记录。和七七聊几句就有了～
+          </p>
+          <ul
+            v-else
+            class="quota-details__list"
+          >
+            <li
+              v-for="r in quotaRecords"
+              :key="r.id"
+              class="quota-details__row"
+              :class="{ 'quota-details__row--fail': !r.ok }"
+            >
+              <span class="quota-details__time">{{ r.createdAt.slice(5, 16) }}</span>
+              <span class="quota-details__scene">{{
+                sceneLabels[r.scene] ?? r.scene
+              }}</span>
+              <span class="quota-details__model">{{ r.model }}</span>
+              <span class="quota-details__tokens"
+                >{{ r.promptTokens }}/{{ r.completionTokens }}</span
+              >
+              <span class="quota-details__credits">-{{ fmtCredits(r.credits) }}</span>
+            </li>
+          </ul>
+        </div>
       </div>
       <AppToggle
         :model-value="settingsStore.snapshot?.isCustomQuotaUsed !== 2"
@@ -555,5 +674,100 @@ onMounted(async (): Promise<void> => {
   font-size: 12px;
   color: var(--ink-soft);
   margin: 0;
+}
+.llm-panel__quota-note--warn {
+  color: var(--peach-deep, #e07a4f);
+}
+/* ---- 用量汇总区（等宽数字对齐，便于扫读） ---- */
+.quota-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-deep);
+}
+.quota-summary__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.quota-summary__num {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.quota-summary__label {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.quota-summary__details-btn {
+  margin-left: auto;
+}
+/* ---- 明细抽屉（时间倒序；滚动区隐藏滚动条，与窗口 B 既有风格一致） ---- */
+.quota-details {
+  max-height: 240px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  border-radius: 12px;
+  background: var(--bg-deep);
+  padding: 4px 12px;
+}
+.quota-details::-webkit-scrollbar {
+  display: none;
+}
+.quota-details__empty {
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: center;
+  padding: 16px 0;
+  margin: 0;
+}
+.quota-details__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.quota-details__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--bg, rgba(0, 0, 0, 0.04));
+}
+.quota-details__row:last-child {
+  border-bottom: none;
+}
+.quota-details__row--fail .quota-details__credits {
+  color: var(--peach);
+}
+.quota-details__time {
+  font-variant-numeric: tabular-nums;
+  min-width: 84px;
+}
+.quota-details__scene {
+  min-width: 56px;
+  color: var(--ink);
+}
+.quota-details__model {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quota-details__tokens {
+  font-variant-numeric: tabular-nums;
+  min-width: 72px;
+  text-align: right;
+}
+.quota-details__credits {
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+  font-weight: 700;
+  color: var(--ink);
 }
 </style>

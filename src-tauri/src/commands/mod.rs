@@ -12,5 +12,6 @@ pub mod chat;
 pub mod memory;
 pub mod pet;
 pub mod probe;
+pub mod quota;
 pub mod settings;
 pub mod window;
