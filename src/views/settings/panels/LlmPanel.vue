@@ -16,12 +16,23 @@ import SegmentedControl from "../../../components/ui/SegmentedControl.vue";
 import StatusBadge from "../../../components/ui/StatusBadge.vue";
 import ProviderChip from "../../../components/settings/ProviderChip.vue";
 import QuotaBar from "../../../components/settings/QuotaBar.vue";
-import { getTyped, listProviders, saveTyped, setQuotaMode } from "../../../api/settings";
+import {
+  deleteCustomModel,
+  getTyped,
+  listCustomModels,
+  listProviders,
+  moveCustomModel,
+  saveCustomModel,
+  saveTyped,
+  setQuotaMode,
+} from "../../../api/settings";
 import { pushToast } from "../../../composables/useToast";
 import { applySnapshot, settingsStore } from "../../../state/settingsStore";
 import type {
+  CustomModelDto,
   LlmTierConfig,
   ProviderPreset,
+  SaveCustomModelPayload,
   SaveTierPayload,
   TierName,
 } from "../../../api/types";
@@ -65,6 +76,115 @@ const forms = reactive<Record<TierName, TierForm>>({
 });
 const saving = ref(false);
 const initialized = ref(false);
+
+// ---- 自定义多模型管理（优先于内置；编排顺序 = 列表顺序）----
+const customs = ref<CustomModelDto[]>([]);
+const customEditorOpen = ref(false);
+const customSaving = ref(false);
+const customForm = reactive({
+  id: null as number | null,
+  name: "",
+  baseUrl: "",
+  modelsText: "",
+  keyInput: "",
+  /** 编辑中是否已存 Key（决定输入框 placeholder 语义）。 */
+  keyHas: false,
+  keyFingerprint: null as string | null,
+  enabled: true,
+});
+
+/** 刷新自定义平台列表（失败 toast——不让用户以为保存成功）。 */
+async function refreshCustoms(): Promise<void> {
+  try {
+    customs.value = await listCustomModels();
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "自定义模型列表加载失败", "error");
+  }
+}
+
+/** 打开编辑器（带参=编辑，无参=新增）。 */
+function openCustomEditor(item?: CustomModelDto): void {
+  customEditorOpen.value = true;
+  customForm.id = item?.id ?? null;
+  customForm.name = item?.name ?? "";
+  customForm.baseUrl = item?.baseUrl ?? "";
+  customForm.modelsText = (item?.models ?? []).join("\n");
+  customForm.keyInput = "";
+  customForm.keyHas = item?.hasKey ?? false;
+  customForm.keyFingerprint = item?.keyFingerprint ?? null;
+  customForm.enabled = item?.enabled ?? true;
+}
+
+/** 解析模型列表输入（换行/逗号分隔，去空白去空项）。 */
+function parseModelsInput(text: string): string[] {
+  return text
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function submitCustom(): Promise<void> {
+  const payload: SaveCustomModelPayload = {
+    id: customForm.id ?? undefined,
+    name: customForm.name.trim(),
+    baseUrl: customForm.baseUrl.trim(),
+    models: parseModelsInput(customForm.modelsText),
+    // 留空 = 不改动存量 Key（新增时即不配 Key，由 UI 提示补配）
+    apiKey: customForm.keyInput || undefined,
+    enabled: customForm.enabled,
+  };
+  customSaving.value = true;
+  try {
+    await saveCustomModel(payload);
+    await refreshCustoms();
+    customEditorOpen.value = false;
+    pushToast("已保存");
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+  } finally {
+    customSaving.value = false;
+  }
+}
+
+/** 删除平台（二次确认由列表按钮 aria 文案承担；误删可重新添加）。 */
+async function removeCustom(id: number): Promise<void> {
+  try {
+    await deleteCustomModel(id);
+    await refreshCustoms();
+    pushToast("已删除");
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "删除失败", "error");
+  }
+}
+
+/** 上移/下移（调整编排优先级；越界时 Rust 静默成功）。 */
+async function moveCustom(id: number, up: boolean): Promise<void> {
+  try {
+    await moveCustomModel(id, up);
+    await refreshCustoms();
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "调整顺序失败", "error");
+  }
+}
+
+/** 启停切换（保存入口；apiKey 缺省 = 不动存量 Key）。 */
+async function toggleCustomEnabled(
+  item: CustomModelDto,
+  enabled: boolean,
+): Promise<void> {
+  try {
+    await saveCustomModel({
+      id: item.id,
+      name: item.name,
+      baseUrl: item.baseUrl,
+      models: item.models,
+      enabled,
+    });
+    await refreshCustoms();
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "切换启用态失败", "error");
+  }
+}
 
 function blankForm(): TierForm {
   return {
@@ -154,6 +274,7 @@ onMounted(async (): Promise<void> => {
   } catch (e) {
     console.warn("[llm] 服务商列表拉取失败", e);
   }
+  await refreshCustoms();
   if (initialized.value) return;
   try {
     const snap = await getTyped();
@@ -280,7 +401,149 @@ onMounted(async (): Promise<void> => {
       </HintBox>
     </AppCard>
 
-    <!-- 卡片 2：内置体验额度 -->
+    <!-- 卡片 2：自定义多模型（优先于内置；顺序 failover） -->
+    <AppCard title="自定义大模型（优先使用）">
+      <HintBox tone="info">
+        按列表顺序依次调用，某个失败自动切下一个；全部失败时回落到内置免费模型
+        （需保持下方「使用内置额度」开启）。
+      </HintBox>
+
+      <ul
+        v-if="customs.length"
+        class="custom-list"
+      >
+        <li
+          v-for="(c, i) in customs"
+          :key="c.id"
+          class="custom-item"
+          :class="{ 'is-off': !c.enabled }"
+        >
+          <div class="custom-item__main">
+            <span class="custom-item__name">{{ c.name }}</span>
+            <span class="custom-item__models">{{
+              c.models.length ? c.models.join(" · ") : "未填写模型"
+            }}</span>
+            <span class="custom-item__url">{{ c.baseUrl }}</span>
+          </div>
+          <div class="custom-item__side">
+            <StatusBadge
+              :tone="c.hasKey ? 'ok' : 'warn'"
+              :text="c.hasKey ? `🔒 ····${c.keyFingerprint ?? ''}` : '未配置 Key'"
+            />
+            <AppToggle
+              :model-value="c.enabled"
+              @update:model-value="(v: boolean) => toggleCustomEnabled(c, v)"
+            />
+            <button
+              class="custom-item__btn"
+              type="button"
+              aria-label="上移"
+              :disabled="i === 0"
+              @click="moveCustom(c.id, true)"
+            >
+              ↑
+            </button>
+            <button
+              class="custom-item__btn"
+              type="button"
+              aria-label="下移"
+              :disabled="i === customs.length - 1"
+              @click="moveCustom(c.id, false)"
+            >
+              ↓
+            </button>
+            <button
+              class="custom-item__btn"
+              type="button"
+              @click="openCustomEditor(c)"
+            >
+              编辑
+            </button>
+            <button
+              class="custom-item__btn custom-item__btn--danger"
+              type="button"
+              aria-label="删除平台"
+              @click="removeCustom(c.id)"
+            >
+              ✕
+            </button>
+          </div>
+        </li>
+      </ul>
+      <p
+        v-else
+        class="custom-empty"
+      >
+        还没有自定义平台。添加后优先于内置模型使用。
+      </p>
+
+      <div class="custom-actions">
+        <AppButton
+          variant="ghost"
+          @click="openCustomEditor()"
+        >
+          ＋ 新增平台
+        </AppButton>
+      </div>
+
+      <div
+        v-if="customEditorOpen"
+        class="custom-editor"
+      >
+        <AppInput
+          v-model="customForm.name"
+          label="平台名称"
+          placeholder="我的 DeepSeek"
+          :maxlength="20"
+        />
+        <AppInput
+          v-model="customForm.baseUrl"
+          label="Base URL"
+          placeholder="https://api.example.com/v1"
+        />
+        <div class="custom-editor__models">
+          <span class="custom-editor__label">模型列表（每行一个，或逗号分隔）</span>
+          <textarea
+            v-model="customForm.modelsText"
+            class="custom-editor__textarea"
+            rows="3"
+            placeholder="deepseek-chat&#10;deepseek-reasoner"
+          ></textarea>
+        </div>
+        <AppInput
+          v-model="customForm.keyInput"
+          type="password"
+          label="API Key"
+          :placeholder="
+            customForm.keyHas
+              ? `已配置 ····${customForm.keyFingerprint ?? ''}（留空=不改动）`
+              : '粘贴服务商 Key（留空=暂不配置）'
+          "
+        />
+        <AppToggle
+          :model-value="customForm.enabled"
+          label="启用该平台"
+          @update:model-value="(v: boolean) => (customForm.enabled = v)"
+        />
+        <div class="custom-editor__actions">
+          <AppButton
+            variant="primary"
+            :loading="customSaving"
+            @click="submitCustom"
+          >
+            保存
+          </AppButton>
+          <AppButton
+            variant="ghost"
+            @click="customEditorOpen = false"
+          >
+            取消
+          </AppButton>
+        </div>
+      </div>
+    </AppCard>
+
+    <!-- 卡片 3：内置体验额度 -->
     <AppCard title="内置体验额度">
       <div class="llm-panel__quota">
         <div class="llm-panel__quota-head">
@@ -367,5 +630,127 @@ onMounted(async (): Promise<void> => {
   font-size: 12px;
   color: var(--ink-soft);
   margin: 0;
+}
+
+/* ---- 自定义多模型管理 ---- */
+.custom-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+.custom-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+}
+.custom-item.is-off {
+  opacity: 0.55;
+}
+.custom-item__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.custom-item__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.custom-item__models {
+  font-size: 12px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-item__url {
+  font-size: 11px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.custom-item__side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.custom-item__btn {
+  border: none;
+  background: var(--bg-window);
+  color: var(--ink-soft);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.custom-item__btn:hover:not(:disabled) {
+  background: var(--matcha-soft, var(--bg-soft));
+  color: var(--matcha-deep);
+}
+.custom-item__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.custom-item__btn--danger:hover {
+  background: var(--peach-soft);
+  color: var(--peach);
+}
+.custom-empty {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 12px 0;
+}
+.custom-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.custom-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--bg-soft);
+  border: 1px dashed var(--line);
+}
+.custom-editor__models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.custom-editor__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.custom-editor__textarea {
+  resize: vertical;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font: 500 13px/1.5 var(--font-ui);
+  outline: none;
+}
+.custom-editor__textarea:focus {
+  border-color: var(--accent-rose);
+}
+.custom-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>
