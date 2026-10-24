@@ -70,7 +70,8 @@ describe("ModelChips", () => {
   it("建议项过滤已添加项且点击即添加", async () => {
     const w = mountChips(["a"], ["a", "b", "c", "d", "e"]);
     const suggests = w.findAll(".chips__suggest");
-    expect(suggests).toHaveLength(4, "已添加的 a 不再展示，最多 4 个");
+    // 已添加的 a 不再展示，最多 4 个
+    expect(suggests).toHaveLength(4);
     expect(suggests.map((s) => s.text())).toEqual(["+ b", "+ c", "+ d", "+ e"]);
 
     await suggests[0].trigger("click");
