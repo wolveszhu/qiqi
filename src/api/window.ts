@@ -64,7 +64,8 @@ export async function setSleepMode(enabled: boolean): Promise<void> {
   await callCommand("window_set_sleep_mode", { enabled });
 }
 
-/** 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */ export interface OuterPositionView {
+/** 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */
+export interface OuterPositionView {
   x: number;
   y: number;
   monitor: { x: number; y: number; width: number; height: number };

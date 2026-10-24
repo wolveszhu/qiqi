@@ -104,7 +104,19 @@ function onAction(name: string): void {
 }
 
 // ---- D4.4 拖拽 → 边缘吸附休眠（仅在开关开启时触发）----
+// 风险#12 深修：系统拖拽（start_dragging）接管鼠标事件后，WebView 会在**拖拽开始瞬间**
+// 收到一个"捕获丢失型" pointerup（此时按键未松开），且松手后**不再有** pointerup
+// （Windows 模态拖拽循环吞掉）。因此不能靠 pointerup 判定拖拽结束：
+// 改为轮询窗口位置，连续稳定 DRAG_STABLE_POLLS 次（~600ms 无位移）视为拖拽结束。
+const DRAG_POLL_INTERVAL_MS = 120;
+const DRAG_STABLE_POLLS = 5;
+let dragTracking = false; // 轮询循环进行中
+let dragPollAbort = false; // 真松开 → 取消轮询（立即判定）
+let evaluatingDrag = false; // 判定重入守卫（轮询/pointerup 双路径竞态）
+
 async function onDragEnd(): Promise<void> {
+  if (evaluatingDrag) return;
+  evaluatingDrag = true;
   isDragging.value = false;
   try {
     const { x, y, monitor } = await getOuterPosition();
@@ -140,6 +152,39 @@ async function onDragEnd(): Promise<void> {
     }
   } catch (e: unknown) {
     console.warn("[pet] 贴边检测失败（降级：不吸附）", e);
+  } finally {
+    evaluatingDrag = false;
+  }
+}
+
+/** 拖拽结束追踪：轮询窗口位置直至稳定（仅拖拽期间，~120ms/次 IPC）。 */
+async function trackDragEnd(): Promise<void> {
+  if (dragTracking) return;
+  dragTracking = true;
+  dragPollAbort = false;
+  try {
+    let lastX = Number.NaN;
+    let lastY = Number.NaN;
+    let stable = 0;
+    while (stable < DRAG_STABLE_POLLS && !dragPollAbort) {
+      await new Promise((resolve) => setTimeout(resolve, DRAG_POLL_INTERVAL_MS));
+      if (dragPollAbort) break;
+      try {
+        const { x, y } = await getOuterPosition();
+        if (x === lastX && y === lastY) stable++;
+        else {
+          stable = 0;
+          lastX = x;
+          lastY = y;
+        }
+      } catch (e: unknown) {
+        console.warn("[pet] 拖拽追踪取位失败（放弃本轮判定）", e);
+        return;
+      }
+    }
+    if (!dragPollAbort) await onDragEnd();
+  } finally {
+    dragTracking = false;
   }
 }
 
@@ -159,12 +204,20 @@ function onPointerMove(e: PointerEvent): void {
   dragStarted = true;
   isDragging.value = true;
   void startDrag(); // 系统接管拖拽（C2）：移动/跨屏/DPI 均由 OS 处理
+  void trackDragEnd(); // 轮询判定拖拽结束（系统拖拽吞 pointerup，见风险#12 深修注释）
 }
 
-function onPointerUp(): void {
+function onPointerUp(e: PointerEvent): void {
   window.removeEventListener("pointermove", onPointerMove);
-  // 仅真正发生过拖拽才做贴边检测（风险#12：拖拽中首次 pointerup 触发一次）
-  if (dragStarted) void onDragEnd();
+  if (!dragStarted) return;
+  if (e.buttons !== 0) {
+    // 捕获丢失型 pointerup（按键未松开，拖拽刚开始瞬间触发）——
+    // 不做贴边判定，交给 trackDragEnd 轮询；否则会在窗口还在屏幕中间时提前判定。
+    return;
+  }
+  // 真松开：取消轮询、立即判定（轮询路径由 evaluatingDrag 守卫防重入）
+  dragPollAbort = true;
+  void onDragEnd();
 }
 
 function onPointerDown(e: PointerEvent): void {
