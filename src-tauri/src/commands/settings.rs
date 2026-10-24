@@ -52,6 +52,7 @@ pub fn settings_list_providers() -> Vec<ProviderPresetDto> {
             label: p.label.into(),
             base_url: p.base_url.into(),
             default_model: p.default_model.into(),
+            default_models: p.default_models.iter().map(|s| (*s).to_string()).collect(),
             required: p.required,
             cost_tier: p.cost_tier.into(),
         })

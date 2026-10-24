@@ -126,19 +126,27 @@ pub struct ProviderPreset {
     pub base_url: &'static str,
     /// 默认模型（随档位而异，见 `default_models`）。
     pub default_model: &'static str,
+    /// 常见模型列表（面板「+ 快速添加」数据源；用户可自行输入任意模型名）。
+    pub default_models: &'static [&'static str],
     /// 是否必选（零门槛配置的最低要求）。
     pub required: bool,
     /// 成本档（展示用，不写死价格）。
     pub cost_tier: &'static str,
 }
 
-/// 预设表（7 组：2 必选 + 5 可选；**全应用唯一真源**，前端经 IPC 下发不复制）。
+/// 预设表（9 家主流平台：2 必选 + 7 可选；**全应用唯一真源**，前端经 IPC 下发不复制）。
+///
+/// 纪律：
+/// - **不写死价格**，只标成本档位；模型名/URL 以各厂商官网当时为准（rule.md 幻觉防范），
+///   面板允许用户改 URL 与自填模型名——预设值只是"常见"而非"正确"的保证；
+/// - baseUrl 全部 OpenAI 兼容 → C4 `client.rs` 单一请求实现覆盖。
 pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
     ProviderPreset {
         id: "deepseek",
         label: "DeepSeek",
         base_url: "https://api.deepseek.com/v1",
         default_model: "deepseek-chat",
+        default_models: &["deepseek-chat", "deepseek-reasoner"],
         required: true,
         cost_tier: "低",
     },
@@ -147,6 +155,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         label: "通义千问（百炼）",
         base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         default_model: "qwen-plus",
+        default_models: &["qwen-plus", "qwen-flash", "qwen-turbo", "qwen-max"],
         required: true,
         cost_tier: "低-中",
     },
@@ -155,6 +164,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         label: "智谱 GLM",
         base_url: "https://open.bigmodel.cn/api/paas/v4",
         default_model: "glm-4-flash",
+        default_models: &["glm-4-flash", "glm-4-plus", "glm-4-air", "glm-4-airx"],
         required: false,
         cost_tier: "免费/极低",
     },
@@ -163,6 +173,12 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         label: "硅基流动",
         base_url: "https://api.siliconflow.cn/v1",
         default_model: "Qwen/Qwen2.5-7B-Instruct",
+        default_models: &[
+            "Qwen/Qwen2.5-7B-Instruct",
+            "THUDM/GLM-4-9B-0414",
+            "Qwen/Qwen3-8B",
+            "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+        ],
         required: false,
         cost_tier: "免费/极低",
     },
@@ -171,6 +187,7 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         label: "豆包（火山方舟）",
         base_url: "https://ark.cn-beijing.volces.com/api/v3",
         default_model: "doubao-lite-32k",
+        default_models: &["doubao-lite-32k", "doubao-pro-32k", "doubao-1.5-pro-32k"],
         required: false,
         cost_tier: "低",
     },
@@ -179,14 +196,39 @@ pub const PROVIDER_PRESETS: &[ProviderPreset] = &[
         label: "腾讯混元",
         base_url: "https://api.hunyuan.cloud.tencent.com/v1",
         default_model: "hunyuan-lite",
+        default_models: &["hunyuan-lite", "hunyuan-standard", "hunyuan-turbos-latest"],
         required: false,
         cost_tier: "免费/低",
+    },
+    ProviderPreset {
+        id: "minimax",
+        label: "MiniMax",
+        base_url: "https://api.minimaxi.com/v1",
+        default_model: "MiniMax-Text-01",
+        default_models: &["MiniMax-Text-01", "MiniMax-M1"],
+        required: false,
+        cost_tier: "低",
+    },
+    ProviderPreset {
+        id: "kimi",
+        label: "Kimi（Moonshot）",
+        base_url: "https://api.moonshot.cn/v1",
+        default_model: "moonshot-v1-8k",
+        default_models: &[
+            "moonshot-v1-8k",
+            "moonshot-v1-32k",
+            "moonshot-v1-128k",
+            "kimi-k2-0905-preview",
+        ],
+        required: false,
+        cost_tier: "低",
     },
     ProviderPreset {
         id: "qianfan",
         label: "百度千帆",
         base_url: "https://qianfan.baidubce.com/v2",
         default_model: "ernie-speed-128k",
+        default_models: &["ernie-speed-128k", "ernie-4.5-turbo-128k", "ernie-lite-128k"],
         required: false,
         cost_tier: "免费/低",
     },
@@ -232,6 +274,31 @@ mod tests {
     fn all_base_urls_are_https() {
         for p in PROVIDER_PRESETS {
             assert!(p.base_url.starts_with("https://"), "{} baseUrl 必须 https", p.id);
+        }
+    }
+
+    #[test]
+    fn presets_cover_mainstream_platforms_with_models() {
+        // 用户要求的 9 家主流平台（含 MiniMax / Kimi）
+        for id in [
+            "deepseek",
+            "tongyi",
+            "zhipu",
+            "siliconflow",
+            "doubao",
+            "hunyuan",
+            "minimax",
+            "kimi",
+            "qianfan",
+        ] {
+            let preset = PROVIDER_PRESETS.iter().find(|p| p.id == id);
+            assert!(preset.is_some(), "缺少平台预设: {id}");
+            let preset = preset.expect("存在");
+            assert!(!preset.default_models.is_empty(), "{id} 应提供常见模型列表（快速添加数据源）");
+            assert!(
+                preset.default_models.contains(&preset.default_model),
+                "{id} 的 default_model 应在 default_models 内（首项即默认）"
+            );
         }
     }
 

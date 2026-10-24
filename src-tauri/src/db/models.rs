@@ -250,6 +250,8 @@ pub struct ProviderPresetDto {
     pub base_url: String,
     /// 默认预填模型（可改；`modelCustom` 兜底）。
     pub default_model: String,
+    /// 常见模型列表（面板「+ 快速添加」数据源）。
+    pub default_models: Vec<String>,
     pub required: bool,
     /// 成本档（展示用，不写死价格）。
     pub cost_tier: String,

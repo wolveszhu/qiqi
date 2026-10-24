@@ -173,6 +173,8 @@ export interface ProviderPreset {
   label: string;
   baseUrl: string;
   defaultModel: string;
+  /** 常见模型列表（面板「+ 快速添加」数据源）。 */
+  defaultModels: string[];
   required: boolean;
   /** 成本档（展示用，不写死价格）。 */
   costTier: string;
