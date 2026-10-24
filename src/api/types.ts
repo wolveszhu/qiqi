@@ -159,7 +159,9 @@ export interface DiaryDto {
   mood: DiaryMood | null;
 }
 
-/** 保存单档配置的入参（api_key 仅在新值时携带；空串 = 不改动存量 Key）。 */
+/** 保存单档配置的入参（api_key 仅在新值时携带；空串 = 不改动存量 Key）。
+ *  注：三档 UI 已合并为「自定义大模型服务商」平台列表（2026-10-24），
+ *  保存入口随之移除；类型保留仅供存量快照读取兼容。 */
 export interface SaveTierPayload {
   baseUrl: string;
   model: string;

@@ -15,19 +15,12 @@ import type {
   ProactiveFrequency,
   ProviderPreset,
   SaveCustomModelPayload,
-  SaveTierPayload,
   SettingsSnapshot,
-  TierName,
 } from "./types";
 
 /** 读取设置快照（回包含 hasKey 与末 4 位指纹，绝无明文 Key）。 */
 export async function getTyped(): Promise<SettingsSnapshot> {
   return callCommand<SettingsSnapshot>("settings_get_typed");
-}
-
-/** 保存单档配置（main / memory / fallback）。 */
-export async function saveTyped(tier: TierName, payload: SaveTierPayload): Promise<void> {
-  await callCommand("settings_save_typed", { tier, payload });
 }
 
 /** 保存勿扰与频率档位（type=2 行；dnd 与 frequency 同段持久化）。 */
