@@ -114,6 +114,8 @@ pub async fn proactive_generate(
         max_tokens: Some(60),
     };
 
+    // 额度记账兜底口径：请求全字符数（request 即将被链消费，先取）
+    let prompt_chars = crate::llm::quota::request_chars(&request);
     let (stream_result, chain_log, hit) =
         router::chat_orchestrated(&client, &custom, &builtin, &tiered, request).await;
     for entry in &chain_log {
@@ -121,6 +123,7 @@ pub async fn proactive_generate(
     }
 
     let mut usage = None;
+    let mut stream_interrupted: Option<String> = None;
     let text = match stream_result {
         Ok(stream) => {
             let mut full = String::new();
@@ -129,7 +132,11 @@ pub async fn proactive_generate(
                 match event {
                     Ok(crate::llm::client::StreamEvent::Delta(d)) => full.push_str(&d),
                     Ok(crate::llm::client::StreamEvent::Usage(u)) => usage = Some(u),
-                    Err(_) => break, // 流中断：用已收集文本
+                    Err(e) => {
+                        // 流中断：用已收集文本；记账记失败条目（0 点）
+                        stream_interrupted = Some(e.to_string());
+                        break;
+                    },
                 }
             }
             full
@@ -137,7 +144,27 @@ pub async fn proactive_generate(
         // 全档位失败：本地兜底话术（Err 携带文本）
         Err(phrase) => phrase,
     };
-    let _ = (hit, usage); // 额度记账于 quota 埋点任务接入
+
+    // 记账（后台任务：失败仅 log，不中断话术）
+    if let Some(h) = &hit {
+        let chars =
+            crate::llm::quota::CallChars { prompt: prompt_chars, completion: text.chars().count() };
+        let charge_result =
+            state.db.lock().map_err(|e| AppError::Db(format!("{e}"))).and_then(|conn| {
+                crate::llm::quota::record_call(
+                    &conn,
+                    "proactive",
+                    Some((h.tier.as_str(), h.model.as_str())),
+                    usage,
+                    chars,
+                    stream_interrupted.is_none(),
+                    stream_interrupted.as_deref(),
+                )
+            });
+        if let Err(e) = charge_result {
+            eprintln!("[quota] 主动话术记账失败: {e}");
+        }
+    }
 
     let text = text.trim().to_string();
     if text.is_empty() {

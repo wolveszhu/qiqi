@@ -140,7 +140,7 @@ pub fn recent(
     let mut stmt = conn
         .prepare(
             "SELECT id, created_at, period_key, scene, tier, model, prompt_tokens, \
-                    completion_tokens, total_tokens, credits, ok, error \
+                    completion_tokens, total_tokens, credits, token_source, ok, error \
              FROM quota_usage WHERE period_key = ?1 ORDER BY id DESC LIMIT ?2",
         )
         .map_err(AppError::from)?;
@@ -157,8 +157,9 @@ pub fn recent(
                 completion_tokens: row.get(7)?,
                 total_tokens: row.get(8)?,
                 credits: row.get(9)?,
-                ok: row.get::<_, i64>(10)? != 0,
-                error: row.get(11)?,
+                token_source: row.get(10)?,
+                ok: row.get::<_, i64>(11)? != 0,
+                error: row.get(12)?,
             })
         })
         .map_err(AppError::from)?;

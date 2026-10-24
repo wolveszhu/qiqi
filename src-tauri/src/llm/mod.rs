@@ -13,6 +13,7 @@ pub mod client;
 pub mod diary;
 pub mod distill;
 pub mod prompt;
+pub mod quota;
 pub mod router;
 
 use serde::Serialize;

@@ -73,6 +73,8 @@ pub struct QuotaUsageDetailRow {
     pub completion_tokens: i64,
     pub total_tokens: i64,
     pub credits: i64,
+    /// token 来源：api（接口 usage）/ estimated（端侧估算）。
+    pub token_source: String,
     pub ok: bool,
     pub error: Option<String>,
 }

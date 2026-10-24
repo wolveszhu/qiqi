@@ -104,7 +104,7 @@ pub async fn generate_diary_text(
     chain: &ModelChain,
     transcript: &str,
     pet_name: &str,
-) -> Result<DiaryDraft, AppError> {
+) -> Result<(DiaryDraft, super::router::TextOutcome), AppError> {
     let request = ChatRequest {
         messages: vec![
             ChatMessage { role: "system".into(), content: build_diary_prompt(pet_name).into() },
@@ -113,7 +113,9 @@ pub async fn generate_diary_text(
         max_tokens: Some(300),
     };
     let outcome = router::chat_text_with_chain(client, chain, request).await?;
-    parse_diary(&outcome.text).ok_or_else(|| AppError::Llm("日记输出为空，无法解析".into()))
+    let draft =
+        parse_diary(&outcome.text).ok_or_else(|| AppError::Llm("日记输出为空，无法解析".into()))?;
+    Ok((draft, outcome))
 }
 
 /// 落库（upsert 覆盖当日；裁决 #11-5）。
@@ -208,11 +210,22 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
 
     // ② LLM 生成（无锁段；沿链 failover）
     let client = super::client::ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let draft = generate_diary_text(&client, &chain, &transcript, &pet_name).await?;
+    let (draft, outcome) = generate_diary_text(&client, &chain, &transcript, &pet_name).await?;
 
-    // ③ 落库（锁段二）
+    // ③ 记账 + 落库（锁段二）
     {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+        // 内置额度记账（失败仅 log，不影响日记落库）
+        let hit = outcome.hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str()));
+        let chars = super::quota::CallChars {
+            prompt: transcript.chars().count(),
+            completion: outcome.text.chars().count(),
+        };
+        if let Err(e) =
+            super::quota::record_call(&conn, "diary", hit, outcome.usage, chars, true, None)
+        {
+            eprintln!("[quota] diary 记账失败: {e}");
+        }
         store_diary(&conn, date, &draft)?;
     }
     eprintln!("[diary] {date} 日记已生成（mood={:?}）", draft.mood);

@@ -217,7 +217,15 @@ pub async fn run_distill(
     // **失败不中断**：③④ 的共鸣/禁忌是好感度来源，不能因抽取失败被一起吞掉。
     let extracted =
         match extract_facts(client, chain, &input.user_text, &input.assistant_text).await {
-            Ok(outcome) => parse_extracted_facts(&outcome.text),
+            Ok(outcome) => {
+                record_outcome(
+                    conn,
+                    "distill",
+                    &outcome,
+                    input.user_text.chars().count() + input.assistant_text.chars().count(),
+                );
+                parse_extracted_facts(&outcome.text)
+            },
             Err(e) => {
                 log_step_failed_once("事实抽取", &e);
                 Vec::new()
@@ -258,6 +266,7 @@ pub async fn run_distill(
     let summarized = if count >= crate::config::SUMMARY_TRIGGER_COUNT {
         match summarize_session(client, chain, conn, &input.session_id).await {
             Ok(outcome) => {
+                record_outcome(conn, "distill", &outcome, outcome.text.chars().count());
                 crate::db::repositories::summaries::upsert(conn, &input.session_id, &outcome.text)?;
                 true
             },
@@ -272,18 +281,51 @@ pub async fn run_distill(
 
     // ③ 共鸣检测（宽松解析，失败/未判定 → None）
     let resonance =
-        detect_resonance(client, chain, &input.user_text, &input.assistant_text, pet_name)
+        match detect_resonance(client, chain, &input.user_text, &input.assistant_text, pet_name)
             .await
-            .map(|o| parse_resonance(&o.text))
-            .unwrap_or(None);
+        {
+            Ok(outcome) => {
+                record_outcome(
+                    conn,
+                    "distill",
+                    &outcome,
+                    input.user_text.chars().count() + input.assistant_text.chars().count(),
+                );
+                parse_resonance(&outcome.text)
+            },
+            Err(_) => None, // 链路全失败：宁漏勿误
+        };
 
     // ④ 禁忌判定（C7.1；解析失败/未违规 → None，宁漏勿误）
-    let taboo = detect_taboo(client, chain, &input.user_text, &input.assistant_text)
-        .await
-        .map(|o| parse_taboo(&o.text))
-        .unwrap_or(None);
+    let taboo = match detect_taboo(client, chain, &input.user_text, &input.assistant_text).await {
+        Ok(outcome) => {
+            record_outcome(
+                conn,
+                "distill",
+                &outcome,
+                input.user_text.chars().count() + input.assistant_text.chars().count(),
+            );
+            parse_taboo(&outcome.text)
+        },
+        Err(_) => None,
+    };
 
     Ok(DistillOutcome { facts_written: written, summarized, resonance, taboo })
+}
+
+/// 记账辅助（蒸馏子步骤；失败仅 log，不影响沉淀主流程）。
+fn record_outcome(
+    conn: &rusqlite::Connection,
+    scene: &str,
+    outcome: &super::router::TextOutcome,
+    prompt_chars: usize,
+) {
+    let hit = outcome.hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str()));
+    let chars =
+        super::quota::CallChars { prompt: prompt_chars, completion: outcome.text.chars().count() };
+    if let Err(e) = super::quota::record_call(conn, scene, hit, outcome.usage, chars, true, None) {
+        eprintln!("[quota] {scene} 记账失败: {e}");
+    }
 }
 
 /// embed 不可用提示（进程内只打一次，避免每轮沉淀刷屏）。

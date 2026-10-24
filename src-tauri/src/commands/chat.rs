@@ -366,12 +366,30 @@ async fn run_chat_task(
         .unwrap_or_default();
 
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
+    // 额度记账兜底口径：请求全字符数（request 即将被链消费，先取）
+    let prompt_chars = crate::llm::quota::request_chars(&request);
     let (stream_result, chain_log, hit) = router::chat_with_chain(&client, &chain, request).await;
 
     for entry in &chain_log {
         // 回落链日志：只打档位与状态摘要，不打 Key/Prompt 全文
         eprintln!("[chat] {entry}");
     }
+    // 记账辅助：hit 转借用对（None = 链路全失败，不落库）
+    let hit_pair = hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str()));
+    // 记账失败不影响对话主流程（仅 log）
+    let charge = |conn: &rusqlite::Connection,
+                  usage: Option<crate::llm::client::TokenUsage>,
+                  completion_chars: usize,
+                  ok: bool,
+                  error: Option<&str>| {
+        let chars =
+            crate::llm::quota::CallChars { prompt: prompt_chars, completion: completion_chars };
+        if let Err(e) =
+            crate::llm::quota::record_call(conn, "chat", hit_pair, usage, chars, ok, error)
+        {
+            eprintln!("[quota] 记账失败: {e}");
+        }
+    };
 
     let mut usage: Option<crate::llm::client::TokenUsage> = None;
     let mut full_text = String::new();
@@ -380,7 +398,13 @@ async fn run_chat_task(
             let mut stream = std::pin::pin!(stream);
             while let Some(event) = futures_util::StreamExt::next(&mut stream).await {
                 if abort_flag.load(Ordering::Relaxed) {
-                    // 中止：不落库完整回复（部分文本不作为完整回复）
+                    // 中止：不落库完整回复（部分文本不作为完整回复）；记账记失败条目（0 点）
+                    {
+                        let state = app.state::<AppState>();
+                        if let Ok(conn) = state.db.lock() {
+                            charge(&conn, usage, full_text.chars().count(), false, Some("已中止"));
+                        }
+                    }
                     let _ = app.emit(
                         "chat:stream:error",
                         StreamError {
@@ -401,6 +425,19 @@ async fn run_chat_task(
                     },
                     Ok(crate::llm::client::StreamEvent::Usage(u)) => usage = Some(u),
                     Err(e) => {
+                        let err_str = e.to_string();
+                        {
+                            let state = app.state::<AppState>();
+                            if let Ok(conn) = state.db.lock() {
+                                charge(
+                                    &conn,
+                                    usage,
+                                    full_text.chars().count(),
+                                    false,
+                                    Some(&err_str),
+                                );
+                            }
+                        }
                         emit_error(&app, &session_id, &e);
                         return;
                     },
@@ -416,7 +453,14 @@ async fn run_chat_task(
             );
         },
     }
-    let _ = (hit, usage); // 额度记账于 quota 埋点任务接入
+
+    // 成功记账（流正常收尾；hit 为 None = 全链失败走本地话术，不落库）
+    if hit.is_some() {
+        let state = app.state::<AppState>();
+        if let Ok(conn) = state.db.lock() {
+            charge(&conn, usage, full_text.chars().count(), true, None);
+        }
+    }
 
     if abort_flag.load(Ordering::Relaxed) {
         let _ = app.emit(
