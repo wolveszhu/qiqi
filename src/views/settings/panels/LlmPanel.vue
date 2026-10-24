@@ -80,13 +80,13 @@ function openCustomEditor(item?: CustomModelDto): void {
   customForm.enabled = item?.enabled ?? true;
 }
 
-/** 点击平台预设 → 预填编辑器（名称/URL/常见模型；Key 永远手输）。 */
+/** 点击平台预设 → 预填编辑器（名称/URL 预填；**模型不默认选中**，由用户在建议里点选或手输；Key 永远手输）。 */
 function openPresetEditor(preset: ProviderPreset): void {
   openCustomEditor();
   customForm.presetId = preset.id;
   customForm.name = preset.label;
   customForm.baseUrl = preset.baseUrl;
-  customForm.models = [...preset.defaultModels];
+  customForm.models = [];
 }
 
 /** 保存平台（新建或更新）。 */
@@ -183,7 +183,7 @@ onMounted(async (): Promise<void> => {
         （需保持下方「使用内置额度」开启）。记忆沉淀档由后台自动选择，无需配置。
       </HintBox>
 
-      <!-- 平台预设：点击即预填（URL 可改、模型可增删、Key 手输） -->
+      <!-- 平台预设：点击即预填（URL 可改、模型按需点选、Key 手输）；手动新增入口跟随其后 -->
       <div class="preset-block">
         <span class="preset-block__label">选择平台快速开始</span>
         <div class="preset-row">
@@ -197,6 +197,13 @@ onMounted(async (): Promise<void> => {
             :quota-candidate="p.costTier.includes('免费')"
             @select="openPresetEditor(p)"
           />
+          <AppButton
+            variant="ghost"
+            class="preset-row__add"
+            @click="openCustomEditor()"
+          >
+            ＋ 手动新增
+          </AppButton>
         </div>
       </div>
 
@@ -270,15 +277,6 @@ onMounted(async (): Promise<void> => {
         还没有配置平台。点击上方平台快速开始，或手动新增。
       </p>
 
-      <div class="custom-actions">
-        <AppButton
-          variant="ghost"
-          @click="openCustomEditor()"
-        >
-          ＋ 手动新增平台
-        </AppButton>
-      </div>
-
       <!-- 编辑器 -->
       <div
         v-if="customEditorOpen"
@@ -289,7 +287,14 @@ onMounted(async (): Promise<void> => {
           label="平台名称"
           placeholder="我的 DeepSeek"
           :maxlength="20"
+          :disabled="customForm.presetId !== null"
         />
+        <p
+          v-if="customForm.presetId !== null"
+          class="custom-editor__hint"
+        >
+          预设平台名称不可修改；如需自定义名称，请点「手动新增」。
+        </p>
         <AppInput
           v-model="customForm.baseUrl"
           label="Base URL"
@@ -308,7 +313,7 @@ onMounted(async (): Promise<void> => {
             v-if="!customForm.models.length"
             class="custom-editor__hint"
           >
-            至少添加一个模型；点击预设平台会自动带上常见模型。
+            至少添加一个模型；可从下方建议快速添加，或手动输入。
           </p>
         </div>
         <AppInput
@@ -321,11 +326,14 @@ onMounted(async (): Promise<void> => {
               : '粘贴该平台的 API Key'
           "
         />
-        <AppToggle
-          :model-value="customForm.enabled"
-          label="启用该平台"
-          @update:model-value="(v: boolean) => (customForm.enabled = v)"
-        />
+        <!-- align-self 收缩包裹：label 默认会随列向 flex 拉伸成整行，点击范围随之扩大到整行 -->
+        <div class="custom-editor__toggle">
+          <AppToggle
+            :model-value="customForm.enabled"
+            label="启用该平台"
+            @update:model-value="(v: boolean) => (customForm.enabled = v)"
+          />
+        </div>
         <div class="custom-editor__actions">
           <AppButton
             variant="primary"
@@ -400,6 +408,18 @@ onMounted(async (): Promise<void> => {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+/* 手动新增入口：缩小到与 chip 同量级，作为预设行最后一项 */
+.preset-row__add {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+}
+.preset-row__add:hover {
+  color: var(--matcha-deep);
+  border-color: var(--matcha);
 }
 /* ---- 自定义平台列表 ---- */
 .custom-list {
@@ -482,9 +502,9 @@ onMounted(async (): Promise<void> => {
   color: var(--ink-soft);
   margin: 12px 0;
 }
-.custom-actions {
-  display: flex;
-  justify-content: flex-end;
+/* 开关收缩包裹：列向 flex 会把子项拉伸成整行，导致 label 点击范围扩大到整行 */
+.custom-editor__toggle {
+  align-self: flex-start;
 }
 /* ---- 编辑器 ---- */
 .custom-editor {

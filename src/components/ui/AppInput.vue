@@ -14,8 +14,10 @@ withDefaults(
     revealable?: boolean;
     /** 最大长度（如桌宠名字 ≤20）。 */
     maxlength?: number;
+    /** 禁用（只读展示；如预设平台名锁定不可改）。 */
+    disabled?: boolean;
   }>(),
-  { type: "text", revealable: true },
+  { type: "text", revealable: true, disabled: false },
 );
 
 const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
@@ -39,6 +41,7 @@ const revealed = ref(false);
         :type="type === 'password' && !revealed ? 'password' : 'text'"
         :placeholder="placeholder"
         :maxlength="maxlength"
+        :disabled="disabled"
         :value="modelValue"
         @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
       />
@@ -99,6 +102,12 @@ const revealed = ref(false);
 .app-input__field:focus {
   outline: 2px solid var(--matcha-soft);
   border-color: var(--matcha);
+}
+
+.app-input__field:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  color: var(--ink-soft);
 }
 
 /* 显隐按钮：小药丸样式，避免与输入框边框/聚焦环视觉冲突 */
