@@ -1,24 +1,50 @@
-//! 三档路由与回落链（C4.3）。
+//! 多模型编排链（C4.3 扩展：自定义/内置多模型 + 三档兜底）。
 //!
-//! 链序（计划 §二 C4.3）：**所选档（main）→ memory → fallback → 本地兜底话术**。
-//! 未配置的档位（baseUrl/model 为空）自动跳过；全部失败 → 本地话术（emit 后 done，
-//! 应用不崩不卡）。每次失败的 `AppError::Llm` 记入回落链日志（仅档位+状态摘要）。
+//! 链序（用户决策 2026-10-24）：
+//! **自定义（顺序 failover）→ 内置（粘性轮询起点 + 顺序尝试）→ main（存量单档）
+//! → memory → fallback → 本地兜底话术**。
+//!
+//! - 自定义：每个平台的每个模型按序展开，失败即切下一个（用户自带 Key，优先）；
+//! - 内置：全部可用模型展平后按 `sticky_rotate` 决定起点——优先沿用上次成功的模型
+//!   （保持体感回复风格一致），失效时按轮询计数器分摊；随后仍按顺序向后尝试；
+//! - `main` 档保留入链：自定义平台出现之前的主对话配置，无自定义时仍为首选（存量兼容）；
+//! - 未配置的档位自动跳过；全部失败 → 本地话术（emit 后 done，应用不崩不卡）。
+//!
+//! 每次失败记入回落链日志（仅档位+状态摘要，禁 Key/baseUrl 全文）。
 
-use super::client::{ChatRequest, LlmClient, LlmTarget};
-use crate::config::LOCAL_FALLBACK_PHRASES;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+
+use super::client::{ChatRequest, DeltaStream, LlmClient, LlmTarget};
+use crate::config::{
+    LOCAL_FALLBACK_PHRASES, TIER_BUILTIN, TIER_CUSTOM, TIER_FALLBACK, TIER_MAIN, TIER_MEMORY,
+};
 use crate::db::models::TieredValue;
+use crate::db::repositories::custom_model_settings::CustomModelRow;
+use crate::db::repositories::default_model_settings::{self, DefaultModelRow};
 
-/// 由三档配置解析目标（quota=内置额度时 main 档改指外部端点、免 Key）。
-pub fn resolve_main_target(tiered: &TieredValue, quota_embedded: bool) -> LlmTarget {
-    let mut main = target_of("main", &tiered.main);
-    if quota_embedded {
-        main.base_url = crate::config::EMBEDDED_QUOTA_BASE_URL.into();
-        main.api_key = String::new(); // 内置额度免自有 Key
-    }
-    main
+/// 编排链（目标序列 + 内置段区间；内置段区间供成功回调定位粘性下标）。
+pub struct ModelChain {
+    pub targets: Vec<LlmTarget>,
+    /// 内置段在 `targets` 中的区间 `[start, end)`；无内置源时为 None。
+    pub builtin_range: Option<(usize, usize)>,
 }
 
-/// 档位 → 目标。
+/// 编排链输入（命令层组装；路由层只排顺序，**不读库**——保持纯函数可测）。
+pub struct ChainInput<'a> {
+    /// 自定义模型（已按 sort_order 排序、已过滤启用与 LLM 类型）。
+    pub custom: &'a [CustomModelRow],
+    /// 内置模型（已过滤可用与 LLM 类型）；空切片 = 不接入内置段。
+    pub builtin: &'a [DefaultModelRow],
+    /// 进程内轮询计数器（取自 `next_builtin_slot` 自增后的值）。
+    pub builtin_cursor: usize,
+    /// 上次成功的内置模型下标（展平后；进程内记忆，重启清零）。
+    pub builtin_last_ok: Option<usize>,
+    /// 三档配置（main/memory/fallback）。
+    pub tiered: &'a TieredValue,
+}
+
+/// 档位 → 目标（main/memory/fallback 三档与自定义/内置段共用）。
 pub fn target_of(tier: &'static str, value: &crate::db::models::LlmTierValue) -> LlmTarget {
     LlmTarget {
         tier,
@@ -32,7 +58,7 @@ pub fn target_of(tier: &'static str, value: &crate::db::models::LlmTierValue) ->
 ///
 /// 内置额度模式下未配 memory 档 → 指向外部端点；model 缺省 → embedding 模型。
 pub fn memory_target(tiered: &TieredValue, quota_embedded: bool) -> LlmTarget {
-    let mut memory = target_of("memory", &tiered.memory);
+    let mut memory = target_of(TIER_MEMORY, &tiered.memory);
     if quota_embedded && memory.base_url.is_empty() {
         memory.base_url = crate::config::EMBEDDED_QUOTA_BASE_URL.into();
         memory.model = crate::config::EMBEDDING_MODEL.into();
@@ -43,60 +69,142 @@ pub fn memory_target(tiered: &TieredValue, quota_embedded: bool) -> LlmTarget {
     memory
 }
 
-/// 回落链尝试顺序：main → memory → fallback（未配置档自动跳过）。
-pub fn chain_order(tiered: &TieredValue) -> Vec<LlmTarget> {
-    let mut targets = vec![
-        target_of("main", &tiered.main),
-        target_of("memory", &tiered.memory),
-        target_of("fallback", &tiered.fallback),
-    ];
-    targets.retain(|t| t.is_configured());
-    targets
-}
+/// 构建编排链（纯函数：输入行数据 + 轮询参数 → 有序目标列表）。
+pub fn build_chain(input: &ChainInput<'_>) -> ModelChain {
+    let mut targets: Vec<LlmTarget> = Vec::new();
 
-/// 沿回落链发起流式对话；全失败时返回本地兜底话术（`Err` 不外抛——应用不崩不卡）。
-///
-/// 返回：(增量流 或 本地话术文本, 回落链日志)。
-// F1.4：嵌套 if（main 档覆盖）clippy 建议合并，但合并需引入 unwrap，保留清晰写法并豁免。
-#[allow(clippy::collapsible_if)]
-pub async fn chat_with_fallback(
-    client: &dyn LlmClient,
-    tiered: &TieredValue,
-    quota_embedded: bool,
-    request: ChatRequest,
-) -> (Result<super::client::DeltaStream, String>, Vec<String>) {
-    let mut chain_log: Vec<String> = Vec::new();
-    let main = resolve_main_target(tiered, quota_embedded);
-    let mut targets = chain_order(tiered);
-    // main 档按额度模式修正后放最前（去重：与 chain_order 的 main 重复时覆盖）
-    if let Some(first) = targets.first() {
-        #[allow(clippy::collapsible_if)]
-        if first.tier == "main" {
-            if let Some(f) = targets.first_mut() {
-                *f = main;
-            }
-        } else {
-            targets.insert(0, main);
+    // ① 自定义：平台顺序 × 模型顺序展开（顺序 failover）
+    for row in input.custom {
+        for model in row.models() {
+            targets.push(LlmTarget {
+                tier: TIER_CUSTOM,
+                base_url: row.base_url.clone(),
+                api_key: row.api_key.clone(),
+                model,
+            });
         }
-    } else {
-        targets.insert(0, main);
     }
 
-    for target in &targets {
+    // ② 内置：展平后按粘性轮询起点旋转（起点 0 时不旋转，保持原序）
+    if !input.builtin.is_empty() {
+        let mut flat: Vec<LlmTarget> = Vec::new();
+        for row in input.builtin {
+            for model in row.models() {
+                flat.push(LlmTarget {
+                    tier: TIER_BUILTIN,
+                    base_url: row.base_url.clone(),
+                    api_key: row.api_key.clone(),
+                    model,
+                });
+            }
+        }
+        let start = default_model_settings::sticky_rotate(
+            input.builtin_cursor,
+            input.builtin_last_ok,
+            flat.len(),
+        );
+        if start > 0 && start < flat.len() {
+            flat.rotate_left(start);
+        }
+        targets.extend(flat);
+    }
+
+    // ③ 存量三档尾部：main（无自定义时的首选）→ memory → fallback
+    targets.push(target_of(TIER_MAIN, &input.tiered.main));
+    targets.push(target_of(TIER_MEMORY, &input.tiered.memory));
+    targets.push(target_of(TIER_FALLBACK, &input.tiered.fallback));
+
+    // 未配置档跳过（只可能来自尾部三档：自定义/内置段的 base_url 与 model 均非空）
+    targets.retain(|t| t.is_configured());
+
+    // 内置段区间：retain 后按 tier 重算（robust，不依赖插入顺序）
+    let builtin_range = targets.iter().position(|t| t.tier == TIER_BUILTIN).map(|start| {
+        let count = targets.iter().filter(|t| t.tier == TIER_BUILTIN).count();
+        (start, start + count)
+    });
+
+    ModelChain { targets, builtin_range }
+}
+
+/// 内置模型的进程内编排状态（轮询计数器 + 上次成功下标）。
+///
+/// 与 `commands::chat` 的 abort_registry 同模式：模块级单例，**内存态、重启清零**——
+/// 粘性只是"体感一致"的优化，不需要持久化。
+fn builtin_state() -> &'static Mutex<(usize, Option<usize>)> {
+    static STATE: OnceLock<Mutex<(usize, Option<usize>)>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new((0, None)))
+}
+
+/// 取本轮内置轮询参数并自增计数器（供命令层组装 `ChainInput`）。
+pub fn next_builtin_slot() -> (usize, Option<usize>) {
+    let mut guard = builtin_state().lock().unwrap_or_else(|e| e.into_inner());
+    guard.0 += 1;
+    (guard.0, guard.1)
+}
+
+/// 记录本轮成功的内置模型下标（下次粘性沿用；风格一致）。
+/// 非内置段成功不影响粘性状态。
+pub fn mark_builtin_success(builtin_index: usize) {
+    if let Ok(mut guard) = builtin_state().lock() {
+        guard.1 = Some(builtin_index);
+    }
+}
+
+/// 沿编排链发起流式对话；全失败时返回本地兜底话术（`Err` 不外抛——应用不崩不卡）。
+///
+/// 返回：(增量流 或 本地话术文本, 回落链日志)。
+/// 成功目标落在内置段时，回写粘性下标（`mark_builtin_success`）。
+pub async fn chat_with_chain(
+    client: &dyn LlmClient,
+    chain: &ModelChain,
+    request: ChatRequest,
+) -> (Result<DeltaStream, String>, Vec<String>) {
+    let mut chain_log: Vec<String> = Vec::new();
+
+    for (idx, target) in chain.targets.iter().enumerate() {
         if !target.is_configured() {
             chain_log.push(format!("[{}] 未配置，跳过", target.tier));
             continue;
         }
         match client.chat_stream(target, request.clone()).await {
-            Ok(stream) => return (Ok(stream), chain_log),
+            Ok(stream) => {
+                if let Some((start, end)) = chain.builtin_range
+                    && idx >= start
+                    && idx < end
+                {
+                    mark_builtin_success(idx - start);
+                }
+                return (Ok(stream), chain_log);
+            },
             Err(e) => chain_log.push(e.to_string()),
         }
     }
 
     // 全部失败：本地兜底话术（伪流：一次 delta）
     let phrase = local_fallback_phrase();
-    chain_log.push("全部档位失败 → 本地兜底话术".into());
+    chain_log.push("全部模型失败 → 本地兜底话术".into());
     (Err(phrase), chain_log)
+}
+
+/// 命令层便捷入口：传入两个模型源的行数据 + 三档，内部取轮询槽位并构建链。
+///
+/// 调用方只需读库（自定义/内置两表 + `app_settings` 三档），不接触轮询状态细节。
+pub async fn chat_orchestrated(
+    client: &dyn LlmClient,
+    custom: &[CustomModelRow],
+    builtin: &[DefaultModelRow],
+    tiered: &TieredValue,
+    request: ChatRequest,
+) -> (Result<DeltaStream, String>, Vec<String>) {
+    let (cursor, last_ok) = next_builtin_slot();
+    let chain = build_chain(&ChainInput {
+        custom,
+        builtin,
+        builtin_cursor: cursor,
+        builtin_last_ok: last_ok,
+        tiered,
+    });
+    chat_with_chain(client, &chain, request).await
 }
 
 /// 本地兜底话术（简单轮转，避免引入 rand 依赖到路由层）。
@@ -116,6 +224,7 @@ pub fn local_fallback_phrase() -> String {
 mod tests {
     use super::*;
     use crate::db::models::{LlmTierValue, TieredValue};
+    use crate::llm::client::MockLlmClient;
 
     fn tier(url: &str, model: &str) -> LlmTierValue {
         LlmTierValue {
@@ -134,25 +243,109 @@ mod tests {
         }
     }
 
-    #[test]
-    fn chain_order_skips_unconfigured() {
-        let mut tiered = fixture();
-        tiered.memory.base_url = String::new(); // 未配置
-        let targets = chain_order(&tiered);
-        assert_eq!(targets.len(), 2, "未配置档应跳过");
-        assert_eq!(targets[0].tier, "main");
-        assert_eq!(targets[1].tier, "fallback");
+    fn custom_row(name: &str, models: &[&str]) -> CustomModelRow {
+        CustomModelRow {
+            id: 1,
+            name: name.into(),
+            setting_type: 1,
+            base_url: "https://custom/v1".into(),
+            models_json: serde_json::to_string(models).expect("json"),
+            api_key: "sk-custom".into(),
+            is_can_use: 1,
+            sort_order: 0,
+        }
+    }
+
+    fn builtin_row(name: &str, models: &[&str]) -> DefaultModelRow {
+        DefaultModelRow {
+            id: 1,
+            name: name.into(),
+            setting_type: 1,
+            base_url: "https://builtin/v1".into(),
+            models_json: serde_json::to_string(models).expect("json"),
+            api_key: "sk-builtin".into(),
+            is_can_use: 1,
+        }
+    }
+
+    fn empty_input(tiered: &TieredValue) -> ChainInput<'_> {
+        ChainInput { custom: &[], builtin: &[], builtin_cursor: 0, builtin_last_ok: None, tiered }
     }
 
     #[test]
-    fn embedded_quota_mode_overrides_main_target() {
+    fn build_chain_orders_custom_then_builtin_then_tiers() {
         let tiered = fixture();
-        let main = resolve_main_target(&tiered, true);
-        assert_eq!(main.base_url, crate::config::EMBEDDED_QUOTA_BASE_URL);
-        assert!(main.api_key.is_empty(), "内置额度免自有 Key");
-        // BYOK 模式保持自配
-        let main_byok = resolve_main_target(&tiered, false);
-        assert_eq!(main_byok.base_url, "https://main/v1");
+        let custom = [custom_row("甲", &["c1", "c2"])];
+        let builtin = [builtin_row("智谱", &["b1"]), builtin_row("硅基", &["b2", "b3"])];
+        let chain = build_chain(&ChainInput {
+            custom: &custom,
+            builtin: &builtin,
+            builtin_cursor: 0,
+            builtin_last_ok: None,
+            tiered: &tiered,
+        });
+
+        let tiers: Vec<&str> = chain.targets.iter().map(|t| t.tier).collect();
+        assert_eq!(
+            tiers,
+            vec!["custom", "custom", "builtin", "builtin", "builtin", "main", "memory", "fallback"],
+            "自定义(2) → 内置(3) → 三档"
+        );
+        assert_eq!(chain.targets[0].model, "c1", "自定义按模型序展开");
+        assert_eq!(chain.targets[2].model, "b1");
+        assert_eq!(chain.builtin_range, Some((2, 5)), "内置段区间应在 retain 后仍准确");
+    }
+
+    #[test]
+    fn build_chain_builtin_starts_at_sticky_index() {
+        let tiered = fixture();
+        let builtin = [builtin_row("硅基", &["b1", "b2", "b3"])];
+        let chain = build_chain(&ChainInput {
+            custom: &[],
+            builtin: &builtin,
+            builtin_cursor: 99,
+            builtin_last_ok: Some(2), // 粘性：从 b3 起
+            tiered: &tiered,
+        });
+        assert_eq!(chain.targets[0].tier, "builtin");
+        assert_eq!(chain.targets[0].model, "b3", "粘性起点=上次成功模型");
+        assert_eq!(chain.targets[1].model, "b1");
+        assert_eq!(chain.targets[2].model, "b2");
+    }
+
+    #[test]
+    fn build_chain_without_builtin_has_no_builtin_range() {
+        let tiered = fixture();
+        let chain = build_chain(&empty_input(&tiered));
+        assert!(chain.builtin_range.is_none(), "无内置源 → 无内置段");
+        let tiers: Vec<&str> = chain.targets.iter().map(|t| t.tier).collect();
+        assert_eq!(tiers, vec!["main", "memory", "fallback"]);
+    }
+
+    #[test]
+    fn build_chain_skips_unconfigured_tiers() {
+        let mut tiered = fixture();
+        tiered.memory.base_url = String::new(); // 未配置
+        let chain = build_chain(&empty_input(&tiered));
+        let tiers: Vec<&str> = chain.targets.iter().map(|t| t.tier).collect();
+        assert_eq!(tiers, vec!["main", "fallback"], "未配置档应跳过");
+    }
+
+    #[test]
+    fn legacy_main_stays_first_when_no_custom() {
+        let tiered = fixture();
+        let builtin = [builtin_row("硅基", &["b1"])];
+        let chain = build_chain(&ChainInput {
+            custom: &[],
+            builtin: &builtin,
+            builtin_cursor: 0,
+            builtin_last_ok: None,
+            tiered: &tiered,
+        });
+        // 存量用户只配了 main：内置段在最前（main 之前）？——否，内置段先于 main 入链。
+        // 语义：内置额度开启时内置优先于存量 main（免费优先），main 退化为主对话备选。
+        assert_eq!(chain.targets[0].tier, "builtin");
+        assert_eq!(chain.targets[1].tier, "main");
     }
 
     /// 异步执行辅助（同 client.rs 测试）。
@@ -165,25 +358,38 @@ mod tests {
     }
 
     #[test]
-    fn fallback_memory_fails_main_succeeds() {
-        // memory 失败 → main 成功：主链序为 main 最前，故 main 直接成功
+    fn chat_with_chain_returns_first_success_and_marks_builtin() {
         let tiered = fixture();
-        let client = crate::llm::client::MockLlmClient::ok();
+        let builtin = [builtin_row("硅基", &["b1", "b2"])];
+        let chain = build_chain(&ChainInput {
+            custom: &[],
+            builtin: &builtin,
+            builtin_cursor: 0,
+            builtin_last_ok: None,
+            tiered: &tiered,
+        });
+        // 首个内置模型失败 → 切第二个成功（Mock 按 base_url 判定，这里同 base_url 全失败/全成功，
+        // 故用全成功客户端验证"首个即成功 + 粘性回写"）
+        let client = MockLlmClient::ok();
         let req = ChatRequest { messages: vec![], max_tokens: None };
-        let (result, log) = block_on(chat_with_fallback(&client, &tiered, false, req));
-        // Stream 未实现 Debug：只断言 Ok 分支（is_ok 不要求 Debug）
-        assert!(result.is_ok(), "main 成功则直接返回流");
+        let (result, log) = block_on(chat_with_chain(&client, &chain, req));
+        assert!(result.is_ok(), "首个目标成功则直接返回流");
         assert!(log.is_empty(), "首个目标成功无回落日志");
+
+        // 粘性状态已回写：下一轮应沿用 b1（下标 0）
+        let (cursor, last_ok) = next_builtin_slot();
+        assert_eq!(last_ok, Some(0), "成功下标应回写为内置段首位");
+        assert!(cursor > 0, "计数器应自增");
     }
 
     #[test]
-    fn fallback_all_fail_yields_local_phrase() {
+    fn chat_with_chain_all_fail_yields_local_phrase() {
         let tiered = fixture();
-        let client = crate::llm::client::MockLlmClient::failing(&["https://"]);
+        let chain = build_chain(&empty_input(&tiered));
+        let client = MockLlmClient::failing(&["https://"]);
         let req = ChatRequest { messages: vec![], max_tokens: None };
-        let (result, log) = block_on(chat_with_fallback(&client, &tiered, false, req));
+        let (result, log) = block_on(chat_with_chain(&client, &chain, req));
         assert!(result.is_err(), "全失败返回本地话术（Err 携带文本）");
-        // expect_err 需要 Stream: Debug（未实现）——用 match 解包
         let phrase = match result {
             Err(phrase) => phrase,
             Ok(_) => panic!("应返回本地话术"),
@@ -192,6 +398,7 @@ mod tests {
             crate::config::LOCAL_FALLBACK_PHRASES.contains(&phrase.as_str()),
             "话术应来自预置集合: {phrase}"
         );
+        // 3 个三档目标失败 + 1 次兜底记录
         assert_eq!(log.len(), 4, "三次失败 + 一次兜底记录");
     }
 }

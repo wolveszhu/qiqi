@@ -16,11 +16,13 @@ use serde::{Deserialize, Serialize};
 use tauri::async_runtime;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::repositories::{messages, vec_memory};
+use crate::db::repositories::{
+    custom_model_settings, default_model_settings, messages, vec_memory,
+};
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, ChatRequest, LlmClient, LlmTarget, ReqwestLlmClient};
 use crate::llm::prompt::{RelationView, RetrievedContext, build_system_prompt};
-use crate::llm::router::chat_with_fallback;
+use crate::llm::router::{self, ModelChain};
 use crate::state::AppState;
 
 /// 会话取消标志注册表（per-session；abort 命令置位，流循环检查）。
@@ -87,17 +89,26 @@ pub async fn chat_send_stream(
         }
     }
 
-    // ① 配置快照（每次实时读取——改配置即生效，冷眼三问③）
-    let (tiered, quota_embedded, relation) = {
+    // ① 配置快照（每次实时读取——改配置即生效，冷眼三问③）+ 两个模型源 + 编排链
+    let (tiered, quota_embedded, relation, chain) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = app_settings_tiered(&conn)?;
         let quota = app_settings_quota(&conn)?;
         let pet = crate::db::repositories::pet_states::get(&conn)?;
-        (
-            tiered,
-            quota == crate::config::QUOTA_MODE_EMBEDDED,
-            (pet.relationship_level, pet.pet_name),
-        )
+        let embedded = quota == crate::config::QUOTA_MODE_EMBEDDED;
+        // 自定义（用户自配，优先）始终入链；内置仅在「内置额度」模式兜底
+        let custom = custom_model_settings::list_enabled_llm(&conn)?;
+        let builtin =
+            if embedded { default_model_settings::list_available_llm(&conn)? } else { Vec::new() };
+        let (cursor, last_ok) = router::next_builtin_slot();
+        let chain = router::build_chain(&router::ChainInput {
+            custom: &custom,
+            builtin: &builtin,
+            builtin_cursor: cursor,
+            builtin_last_ok: last_ok,
+            tiered: &tiered,
+        });
+        (tiered, embedded, (pet.relationship_level, pet.pet_name), chain)
     };
 
     // ② user 消息落库（图片不持久化内容，仅留标记；MVP 记忆不存图）
@@ -163,7 +174,7 @@ pub async fn chat_send_stream(
     };
 
     async_runtime::spawn(async move {
-        run_chat_task(app, session, request, tiered, quota_embedded, abort_flag).await;
+        run_chat_task(app, session, request, chain, tiered, quota_embedded, abort_flag).await;
     });
     Ok(())
 }
@@ -331,6 +342,7 @@ async fn run_chat_task(
     app: AppHandle,
     session_id: String,
     request: ChatRequest,
+    chain: ModelChain,
     tiered: crate::db::models::TieredValue,
     quota_embedded: bool,
     abort_flag: Arc<AtomicBool>,
@@ -347,8 +359,7 @@ async fn run_chat_task(
         .unwrap_or_default();
 
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let (stream_result, chain_log) =
-        chat_with_fallback(&client, &tiered, quota_embedded, request).await;
+    let (stream_result, chain_log) = router::chat_with_chain(&client, &chain, request).await;
 
     for entry in &chain_log {
         // 回落链日志：只打档位与状态摘要，不打 Key/Prompt 全文

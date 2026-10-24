@@ -101,6 +101,11 @@ pub const TIER_MAIN: &str = "main";
 pub const TIER_MEMORY: &str = "memory";
 pub const TIER_FALLBACK: &str = "fallback";
 
+/// 多模型编排新增的链段名（仅排序与日志用；Key 禁入日志）。
+/// 自定义（custom_model_settings）与内置（default_model_settings）两个模型源。
+pub const TIER_CUSTOM: &str = "custom";
+pub const TIER_BUILTIN: &str = "builtin";
+
 /// 额度模式（app_settings.is_custom_quota_used）。
 pub const QUOTA_MODE_EMBEDDED: i64 = 1; // 内置额度
 pub const QUOTA_MODE_BYOK: i64 = 2; // 自带 Key

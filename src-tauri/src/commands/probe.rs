@@ -9,11 +9,13 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::models::TieredValue;
-use crate::db::repositories::{app_settings, pet_states};
+use crate::db::repositories::{
+    app_settings, custom_model_settings, default_model_settings, pet_states,
+};
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, ChatRequest, ReqwestLlmClient};
 use crate::llm::prompt::{ConversationCtx, RelationView, RetrievedContext, build_system_prompt};
-use crate::llm::router::chat_with_fallback;
+use crate::llm::router;
 use crate::state::AppState;
 
 /// 读取最近一次 cursor 坐标（屏幕坐标；未轮询到则为 0,0）。
@@ -72,13 +74,24 @@ pub async fn proactive_generate(
 ) -> Result<(), AppError> {
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
 
-    // 配置快照（每次实时读取——改配置即生效）
-    let (tiered, quota_embedded, relation_level, pet_name) = {
+    // 配置快照（每次实时读取——改配置即生效）+ 两个模型源（自定义优先、内置兜底）
+    let (tiered, _quota_embedded, relation_level, pet_name, custom, builtin) = {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered: TieredValue = app_settings::get_tiered(&conn)?;
         let quota = app_settings::get_quota_mode(&conn)?;
         let pet = pet_states::get(&conn)?;
-        (tiered, quota == crate::config::QUOTA_MODE_EMBEDDED, pet.relationship_level, pet.pet_name)
+        let embedded = quota == crate::config::QUOTA_MODE_EMBEDDED;
+        // 内置额度模式才接入内置模型兜底；BYOK 模式仅自定义 + 三档
+        let builtin =
+            if embedded { default_model_settings::list_available_llm(&conn)? } else { Vec::new() };
+        (
+            tiered,
+            embedded,
+            pet.relationship_level,
+            pet.pet_name,
+            custom_model_settings::list_enabled_llm(&conn)?,
+            builtin,
+        )
     };
 
     let tsundere = tsundere.unwrap_or(false);
@@ -102,7 +115,7 @@ pub async fn proactive_generate(
     };
 
     let (stream_result, chain_log) =
-        chat_with_fallback(&client, &tiered, quota_embedded, request).await;
+        router::chat_orchestrated(&client, &custom, &builtin, &tiered, request).await;
     for entry in &chain_log {
         eprintln!("[proactive] {entry}");
     }
