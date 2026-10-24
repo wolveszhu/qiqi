@@ -29,9 +29,6 @@ import {
 import { getTyped } from "../../api/settings";
 import { detectSnapEdge } from "../../utils/edgeSnap";
 
-/** 休眠气泡文案（D4.4：只露耳+眼时，窗口 A 旁边挂一个 💤 小气泡，窗口保持展开态）。 */
-const SLEEP_BUBBLE = "💤 z z z…";
-
 const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
 const sleepSnap = ref(false);
@@ -61,11 +58,9 @@ useSystemProbe({
 
 // 气泡数据源（窗口 A 单气泡覆盖式）：**只显示主动话术**——
 // 对话的流式回复已迁到窗口 B「对话」Tab，A 不再显示（用户决策）。
-// 休眠态覆盖为 💤 小气泡（D4.4）：主动引擎已在 sleepSnap 下 skip，故兜底用固定文案。
-const bubbleText = computed(() =>
-  sleepSnap.value ? SLEEP_BUBBLE : proactiveBubble.text,
-);
-const bubbleStreaming = computed(() => !sleepSnap.value && proactiveBubble.isStreaming);
+// 休眠态**不再**显示 💤 气泡（用户决策）：贴边后即半个形象静默躺着。
+const bubbleText = computed(() => proactiveBubble.text);
+const bubbleStreaming = computed(() => proactiveBubble.isStreaming);
 const bubbleVisible = computed(() => bubbleText.value.length > 0);
 
 // ---- 气泡出现 → 窗口 A 临时展开（Rust 侧保持中心：形象屏幕位置不跳） ----

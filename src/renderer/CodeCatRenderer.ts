@@ -33,6 +33,14 @@ const CORE_W = 136;
 const CORE_H = 154;
 /** 形象核心包围盒中心 Y（**局部坐标**）：吸附旋转的旋转中心。 */
 const CORE_CENTER_Y = CORE_TOP + CORE_H / 2;
+/**
+ * 形象"圆盘"中心 Y（**局部坐标**）= 身体圆角矩形中心（-56 + 114/2 = 1）。
+ *
+ * 半个圆的裁切基准：把圆盘圆心压到窗口贴边一侧的边线上，
+ * 于是圆盘恰好一半在窗口内可见（另一半溢出被裁掉）；
+ * 因头部在圆盘上半部，露出的正是耳 + 眼 + 脸 + 毛发。
+ */
+const BODY_CENTER_Y = -56 + 114 / 2;
 
 /** 配色：与 styles/tokens.css 的 Jelly-Toy 设计 token 对齐。 */
 const COLOR_BODY = 0x7ca65b;
@@ -59,7 +67,7 @@ export class CodeCatRenderer implements IPetRenderer {
   private tailG: Container | null = null;
   /** 形象容器（身体毛发 + 脸 + 双耳 + 眼睛）：吸附休眠时整体旋转 ±90°。 */
   private headG: Container | null = null;
-  /** 边缘吸附休眠态（命中区切换为 remnant 旋转矩形）。 */
+  /** 边缘吸附休眠态（形象外移半窗宽 + 命中区取可见半边）。 */
   private edgeSleep = false;
 
   // ---- 动画状态（循环外复用，帧内零分配） ----
@@ -222,12 +230,25 @@ export class CodeCatRenderer implements IPetRenderer {
    */
   private updateHitRegion(): void {
     if (this.edgeSleep) {
-      const w = CORE_H * PET_SCALE;
-      const h = CORE_W * PET_SCALE;
-      this.hitRegion.x = this.centerX - w / 2;
-      this.hitRegion.y = this.centerY + CORE_CENTER_Y * PET_SCALE - h / 2;
-      this.hitRegion.width = w;
-      this.hitRegion.height = h;
+      const head = this.headG;
+      if (!head) return;
+      // 旋转后内容中心（窗口局部坐标）：rendered = P + R(θ)·C，C = (0, CORE_CENTER_Y)
+      const cos = Math.cos(head.rotation);
+      const sin = Math.sin(head.rotation);
+      const cx = this.centerX + (head.position.x - CORE_CENTER_Y * sin) * PET_SCALE;
+      const cy = this.centerY + (head.position.y + CORE_CENTER_Y * cos) * PET_SCALE;
+      // 旋转 90° → 宽高互换：半宽 = CORE_H/2，半高 = CORE_W/2
+      const halfW = (CORE_H / 2) * PET_SCALE;
+      const halfH = (CORE_W / 2) * PET_SCALE;
+      // 只报朝屏幕内、落在窗口内的那半边（其余溢出窗口不可见）
+      const left = Math.max(0, cx - halfW);
+      const right = Math.min(this.centerX * 2, cx + halfW);
+      const top = Math.max(0, cy - halfH);
+      const bottom = Math.min(this.centerY * 2, cy + halfH);
+      this.hitRegion.x = left;
+      this.hitRegion.y = top;
+      this.hitRegion.width = Math.max(0, right - left);
+      this.hitRegion.height = Math.max(0, bottom - top);
       return;
     }
     this.hitRegion.x = this.centerX + CORE_LEFT * PET_SCALE;
@@ -324,24 +345,45 @@ export class CodeCatRenderer implements IPetRenderer {
   }
 
   /**
-   * 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下，**保留耳/眼/脸/毛发填充**（不隐藏任何部件）。
+   * 边缘吸附休眠视觉（D4.4）：把形象想象成一个圆——吸附态**只露出半个圆**。
    *
-   * 旋转方向：贴左边缘 → **顺时针** +π/2；贴右边缘 → **逆时针** -π/2
-   * （PIXI 正角=顺时针）。两者都让猫脸朝向屏幕内侧。
+   * 实现（不出屏方案）：
+   * - 窗口仍完全贴在屏幕内侧（`snap_target_position` 负责：left→x=mx，right→x=mx+mw−w）；
+   * - 渲染层把整个形象（身体毛发 + 脸 + 耳 + 眼）沿**朝屏幕外**方向平移半个窗口宽，
+   *   使形象圆心正好落在窗口贴边那侧的边线上 → 朝向屏幕内的半边留在窗口内可见（半圆 D 形），
+   *   另一半溢出窗口被自然裁掉。
+   * - 旋转方向：贴左 → **顺时针** +π/2；贴右 → **逆时针** −π/2，
+   *   两者都让头部（耳 + 眼 + 脸）朝向屏幕内侧。
    *
-   * 居中补偿：rotation 绕容器原点 (0,0) 旋转，形象中心在局部 (0, CORE_CENTER_Y)；
-   * 令 position = C − R(θ)·C 即可让形象中心旋转后仍在原地（不位移、不偏心）。
+   * 数学：容器 pivot 为原点、rotation = θ 时，局部点 p 渲染到 `P + R(θ)·p`；
+   * 令圆心 D=(0, BODY_CENTER_Y) 落在目标 T 上 → `P = T − R(θ)·D`，
+   * 其中 R(θ)·D = (−d·sinθ, d·cosθ)，按 sin/cos 展开避免手算正负号出错。
    */
   setEdgeSleep(sleeping: boolean, side: SnapEdge | null = null): void {
     const head = this.headG;
     if (!head) return;
     this.edgeSleep = sleeping;
     if (this.tailG) this.tailG.visible = !sleeping; // 躺姿下尾巴收起
-    const rotation = sleeping ? (side === "left" ? Math.PI / 2 : -Math.PI / 2) : 0;
+
+    // 顺时针（贴左，头朝屏幕内）为 +π/2；逆时针（贴右）为 −π/2。
+    const rotation = sleeping ? (side === "right" ? -Math.PI / 2 : Math.PI / 2) : 0;
     head.rotation = rotation;
+
+    // 圆盘圆心目标（窗口局部）：贴左 → x=0；贴右 → x=窗口宽（=2·centerX）；纵向保持拖放高度
+    const targetWinX = sleeping
+      ? side === "right"
+        ? this.centerX * 2
+        : 0
+      : this.centerX;
+    const targetWinY = this.centerY + BODY_CENTER_Y * PET_SCALE;
+    // 换算到 petRoot 局部单位（父级缩放 PET_SCALE）
+    const targetX = (targetWinX - this.centerX) / PET_SCALE;
+    const targetY = (targetWinY - this.centerY) / PET_SCALE;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    head.position.set(sin * CORE_CENTER_Y, CORE_CENTER_Y - cos * CORE_CENTER_Y);
+    // P = T − R(θ)·D，其中 R(θ)·D = (−d·sinθ, d·cosθ)，d = BODY_CENTER_Y
+    head.position.set(targetX + BODY_CENTER_Y * sin, targetY - BODY_CENTER_Y * cos);
+
     this.setExpression("neutral");
     this.updateHitRegion();
   }
