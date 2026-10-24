@@ -41,6 +41,8 @@ export interface SettingsSnapshot {
   dnd: DndConfig;
   /** 主动频率档位（D2.3：随 type=2 行下发；C6 引擎读取）。 */
   frequency: ProactiveFrequency;
+  /** 边缘吸附休眠开关（type=3 行；缺省 true——拖到屏幕边缘即休眠）。 */
+  snapSleepEnabled: boolean;
 }
 
 /** 勿扰配置（勘误#13：多段时段）。 */

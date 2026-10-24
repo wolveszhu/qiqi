@@ -56,8 +56,15 @@ export async function setClickThroughEnabled(enabled: boolean): Promise<void> {
   await callCommand("window_set_click_through_enabled", { enabled });
 }
 
-/** 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */
-export interface OuterPositionView {
+/**
+ * 休眠态广播（D4.4）：前端进入/退出边缘吸附休眠时通知 Rust。
+ * Rust 后台任务（日记生成等）据此静默；内存态，不落库。
+ */
+export async function setSleepMode(enabled: boolean): Promise<void> {
+  await callCommand("window_set_sleep_mode", { enabled });
+}
+
+/** 窗口 A 外位置 + 当前显示器逻辑矩形（D4.4 贴边判定数据源）。 */ export interface OuterPositionView {
   x: number;
   y: number;
   monitor: { x: number; y: number; width: number; height: number };

@@ -12,8 +12,10 @@ import HintBox from "../../../components/ui/HintBox.vue";
 import PetOptionCard from "../../../components/settings/PetOptionCard.vue";
 import PreviewStage from "../../../components/settings/PreviewStage.vue";
 import { updateState } from "../../../api/pet";
+import { getTyped, setSnapSleep } from "../../../api/settings";
 import { pushToast } from "../../../composables/useToast";
 import { applyPetState, petStore } from "../../../state/petStore";
+import { applySnapshot, settingsStore } from "../../../state/settingsStore";
 
 const OPTIONS = [
   { id: "code_cat", name: "猫猫", sub: "奶油黄", emoji: "🐱", disabled: false },
@@ -66,8 +68,27 @@ async function saveName(v: string): Promise<void> {
   }
 }
 
+/** 边缘吸附休眠开关（type=3 持久化；保存后刷新快照并 toast）。 */
+async function toggleSnapSleep(enabled: boolean): Promise<void> {
+  try {
+    await setSnapSleep(enabled);
+    applySnapshot(await getTyped());
+    pushToast(enabled ? "已开启：拖到屏幕边缘会休眠" : "已关闭：拖到边缘不再休眠");
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+  }
+}
+
 onMounted((): void => {
   savedName.value = petStore.petName;
+  // 快照缺省拉取一次（窗口 B 首次打开本面板时 snapshot 可能尚未加载）
+  if (!settingsStore.snapshot) {
+    void getTyped()
+      .then(applySnapshot)
+      .catch((e: unknown) => {
+        console.warn("[avatar] 设置快照拉取失败", e);
+      });
+  }
 });
 </script>
 
@@ -118,25 +139,21 @@ onMounted((): void => {
           placeholder="喵喵"
           :maxlength="20"
         />
-        <div class="readonly-size">
-          <span class="readonly-size__label">窗口尺寸</span>
-          <span class="readonly-size__val">400 × 400</span>
-        </div>
       </div>
       <div class="set-rows">
         <div class="set-row">
           <div>
             <div class="set-row__title">边缘吸附休眠</div>
-            <div class="set-row__sub">拖到屏幕边缘自动休眠</div>
+            <div class="set-row__sub">拖到屏幕边缘即休眠：只露耳朵和眼睛，彻底静默</div>
           </div>
           <AppToggle
-            :model-value="false"
-            :disabled="true"
+            :model-value="settingsStore.snapSleepEnabled"
+            @update:model-value="toggleSnapSleep($event)"
           />
         </div>
       </div>
       <HintBox tone="info">
-        形象切换与名字已即时生效；边缘吸附休眠的后端持久化命令将在后续阶段补齐。
+        形象切换与名字已即时生效。休眠期间主动话术、弹窗、好感度衰减与后台日记都会暂停；把桌宠拖离边缘即可唤醒。
       </HintBox>
     </AppCard>
   </div>

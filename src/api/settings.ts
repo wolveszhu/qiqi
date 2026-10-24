@@ -36,6 +36,11 @@ export async function setQuotaMode(mode: 1 | 2): Promise<void> {
   await callCommand("settings_set_quota_mode", { mode });
 }
 
+/** 边缘吸附休眠开关（type=3 行；缺省 true）。 */
+export async function setSnapSleep(enabled: boolean): Promise<void> {
+  await callCommand("settings_set_snap_sleep", { enabled });
+}
+
 /** 服务商预设列表（C3：Rust 单一真源经 IPC 下发，禁止前端硬编码 URL）。 */
 export async function listProviders(): Promise<ProviderPreset[]> {
   return callCommand<ProviderPreset[]>("settings_list_providers");

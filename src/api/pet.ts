@@ -35,3 +35,11 @@ export async function settleAffection(
 export async function listAffectionLogs(limit?: number): Promise<AffectionLogDto[]> {
   return callCommand<AffectionLogDto[]>("pet_list_affection_logs", { limit });
 }
+
+/**
+ * 休眠衰减锚点（D4.4）：enter=入睡前结清累计衰减；exit=赦免休眠天数（不掉分）。
+ * action 非法时后端返回 Config 错误。
+ */
+export async function sleepDecay(action: "enter" | "exit"): Promise<void> {
+  await callCommand("pet_sleep_decay", { action });
+}
