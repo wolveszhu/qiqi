@@ -12,10 +12,11 @@ use crate::config::{
     PROVIDER_PRESETS, QUOTA_MODE_BYOK, QUOTA_MODE_EMBEDDED, TIER_FALLBACK, TIER_MAIN, TIER_MEMORY,
 };
 use crate::db::models::{
-    DndValue, LegacyDndValue, LlmTierSettingsDto, LlmTierValue, ProviderPresetDto, SaveTierPayload,
-    SettingsDndValue, SettingsSnapshotDto,
+    CustomModelSettingsDto, DndValue, LegacyDndValue, LlmTierSettingsDto, LlmTierValue,
+    ProviderPresetDto, SaveCustomModelPayload, SaveTierPayload, SettingsDndValue,
+    SettingsSnapshotDto,
 };
-use crate::db::repositories::app_settings;
+use crate::db::repositories::{app_settings, custom_model_settings};
 use crate::error::AppError;
 use crate::state::AppState;
 
@@ -188,6 +189,142 @@ fn parse_dnd_full(raw: Option<&str>) -> Result<SettingsDndValue, AppError> {
         },
         frequency: String::new(),
     })
+}
+
+// ---------- 自定义多模型管理（custom_model_settings；优先于内置） ----------
+
+/// 自定义模型列表（按 sort_order；Key 脱敏回传）。
+#[tauri::command]
+pub fn settings_list_custom_models(
+    state: State<'_, AppState>,
+) -> Result<Vec<CustomModelSettingsDto>, AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    list_custom_models_inner(&conn)
+}
+
+/// 保存自定义模型（id 缺省 = 新建并追加到队尾；返回保存后的 id）。
+///
+/// Key 语义：`api_key` 缺省（None）= 不改动存量；空串（Some("")）= 显式清空。
+#[tauri::command]
+pub fn settings_save_custom_model(
+    payload: SaveCustomModelPayload,
+    state: State<'_, AppState>,
+) -> Result<i64, AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    save_custom_model_inner(
+        &conn,
+        payload.id,
+        &payload.name,
+        &payload.base_url,
+        &payload.models,
+        payload.api_key.as_deref(),
+        payload.enabled.unwrap_or(true),
+    )
+}
+
+/// 删除自定义模型。
+#[tauri::command]
+pub fn settings_delete_custom_model(id: i64, state: State<'_, AppState>) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    custom_model_settings::delete(&conn, id)
+}
+
+/// 上移/下移一位（调整编排优先级；已在顶/底部时静默成功）。
+#[tauri::command]
+pub fn settings_move_custom_model(
+    id: i64,
+    up: bool,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    custom_model_settings::move_by_one(&conn, id, up)?;
+    Ok(())
+}
+
+/// 列表 inner（薄壳 → inner，便于 `#[test]` 直调，F1.2）。
+fn list_custom_models_inner(conn: &Connection) -> Result<Vec<CustomModelSettingsDto>, AppError> {
+    Ok(custom_model_settings::list_all(conn)?
+        .into_iter()
+        .map(|row| {
+            // 先取借用型字段，再移动 String 字段（避免部分移动后借用）
+            let models = row.models();
+            let fingerprint = key_fingerprint(&row.api_key);
+            let has_key = !row.api_key.is_empty();
+            let enabled = row.is_enabled();
+            CustomModelSettingsDto {
+                id: row.id,
+                name: row.name,
+                base_url: row.base_url,
+                models,
+                has_key,
+                key_fingerprint: fingerprint,
+                enabled,
+            }
+        })
+        .collect())
+}
+
+/// 保存 inner（薄壳 → inner，便于 `#[test]` 直调）。
+fn save_custom_model_inner(
+    conn: &Connection,
+    id: Option<i64>,
+    name: &str,
+    base_url: &str,
+    models: &[String],
+    api_key: Option<&str>,
+    enabled: bool,
+) -> Result<i64, AppError> {
+    // 薄层参数校验（空名/空 URL/空模型列表 → 配置错误，前端 toast 展示）
+    if name.trim().is_empty() {
+        return Err(AppError::Config("模型平台名称不能为空".into()));
+    }
+    if base_url.trim().is_empty() {
+        return Err(AppError::Config("Base URL 不能为空".into()));
+    }
+    if models.iter().all(|m| m.trim().is_empty()) {
+        return Err(AppError::Config("至少填写一个模型名称".into()));
+    }
+    let models: Vec<String> =
+        models.iter().map(|m| m.trim().to_string()).filter(|m| !m.is_empty()).collect();
+    let is_can_use = i64::from(enabled);
+
+    match id {
+        None => {
+            // 新建：Key 缺省按空串落库（has_key=false，UI 提示补 Key）
+            custom_model_settings::insert(
+                conn,
+                name.trim(),
+                base_url.trim(),
+                &models,
+                api_key.unwrap_or(""),
+            )
+        },
+        Some(id) => {
+            custom_model_settings::update(
+                conn,
+                id,
+                name.trim(),
+                base_url.trim(),
+                &models,
+                is_can_use,
+            )?;
+            // Some（含空串=显式清空）= 改 Key；None = 不改动存量
+            if let Some(key) = api_key {
+                custom_model_settings::update_api_key(conn, id, key)?;
+            }
+            Ok(id)
+        },
+    }
+}
+
+/// Key 末 4 位指纹（脱敏口径与三档 `to_dto` 一致：单一真源）。
+fn key_fingerprint(api_key: &str) -> Option<String> {
+    if api_key.len() >= 4 { Some(api_key[api_key.len() - 4..].to_string()) } else { None }
+}
+
+/// 数据库锁错误统一映射（与既有命令层口径一致）。
+fn db_lock_err<T: std::fmt::Display>(e: T) -> AppError {
+    AppError::Db(format!("获取数据库连接失败: {e}"))
 }
 
 /// 库内档位 → 对外 DTO（脱敏：仅 has_key + 末 4 位指纹）。
@@ -365,5 +502,104 @@ mod tests {
             "未知频率档位应报错"
         );
         save_dnd_inner(&conn, DndValue::default(), "quiet".into()).expect("合法频率档位应保存");
+    }
+
+    // ---------- 自定义多模型管理 ----------
+
+    #[test]
+    fn save_custom_model_insert_then_update_semantics() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        let id = save_custom_model_inner(
+            &conn,
+            None,
+            "我的 DeepSeek",
+            "https://api.deepseek.com/v1",
+            &["deepseek-chat".into()],
+            Some("sk-abcd1234"),
+            true,
+        )
+        .expect("新建");
+
+        let list = list_custom_models_inner(&conn).expect("列表");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, id);
+        assert!(list[0].has_key, "Key 应落库");
+        assert_eq!(list[0].key_fingerprint.as_deref(), Some("1234"), "仅末 4 位");
+        assert!(list[0].enabled);
+
+        // 更新：api_key=None → 不动存量；改 models/启用态
+        save_custom_model_inner(
+            &conn,
+            Some(id),
+            "改名",
+            "https://api.deepseek.com/v1",
+            &["a".into(), " b ".into()],
+            None,
+            false,
+        )
+        .expect("更新");
+        let list = list_custom_models_inner(&conn).expect("列表");
+        assert_eq!(list[0].name, "改名");
+        assert_eq!(list[0].models, vec!["a", "b"], "空白项应被剔除并 trim");
+        assert!(!list[0].enabled, "启用态应更新");
+        assert!(list[0].has_key, "None = 不改动存量 Key");
+
+        // 空串 Key = 显式清空
+        save_custom_model_inner(
+            &conn,
+            Some(id),
+            "改名",
+            "https://api.deepseek.com/v1",
+            &["a".into()],
+            Some(""),
+            true,
+        )
+        .expect("清空 Key");
+        let list = list_custom_models_inner(&conn).expect("列表");
+        assert!(!list[0].has_key, "空串 = 清空 Key");
+        assert!(list[0].key_fingerprint.is_none());
+    }
+
+    #[test]
+    fn save_custom_model_rejects_invalid_payloads() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        assert!(
+            save_custom_model_inner(&conn, None, "  ", "https://x/v1", &["m".into()], None, true)
+                .is_err(),
+            "空名称应拒绝"
+        );
+        assert!(
+            save_custom_model_inner(&conn, None, "n", "", &["m".into()], None, true).is_err(),
+            "空 Base URL 应拒绝"
+        );
+        assert!(
+            save_custom_model_inner(&conn, None, "n", "https://x/v1", &[], None, true).is_err(),
+            "空模型列表应拒绝"
+        );
+        assert!(
+            save_custom_model_inner(&conn, None, "n", "https://x/v1", &["  ".into()], None, true)
+                .is_err(),
+            "全空白模型应拒绝"
+        );
+    }
+
+    #[test]
+    fn custom_model_dto_never_leaks_plain_key() {
+        let (_dir, conn) = crate::test_util::fresh_db();
+        save_custom_model_inner(
+            &conn,
+            None,
+            "泄漏测试",
+            "https://api.example.com/v1",
+            &["m".into()],
+            Some("sk-SECRET-9876"),
+            true,
+        )
+        .expect("新建");
+        let list = list_custom_models_inner(&conn).expect("列表");
+        let json = serde_json::to_string(&list).expect("序列化");
+        assert!(!json.contains("sk-SECRET-9876"), "回包泄露明文 Key: {json}");
+        assert!(!json.contains("SECRET"), "连 Key 主体亦不得出现: {json}");
+        assert!(json.contains("9876"), "末 4 位指纹应存在");
     }
 }

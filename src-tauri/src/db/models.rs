@@ -214,6 +214,33 @@ pub struct SaveTierPayload {
     pub model_custom: String,
 }
 
+/// 自定义模型对外视图（`custom_model_settings`；Key 脱敏，口径同 `LlmTierSettingsDto`）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomModelSettingsDto {
+    pub id: i64,
+    pub name: String,
+    pub base_url: String,
+    /// 模型名列表（空 = 该平台不参与编排，UI 应提示至少填一个）。
+    pub models: Vec<String>,
+    pub has_key: bool,
+    pub key_fingerprint: Option<String>,
+    /// 是否启用（停用不删，保配置）。
+    pub enabled: bool,
+}
+
+/// 保存自定义模型入参（`id` 缺省 = 新建；`api_key` 缺省 = 不改动，空串 = 清空）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCustomModelPayload {
+    pub id: Option<i64>,
+    pub name: String,
+    pub base_url: String,
+    pub models: Vec<String>,
+    pub api_key: Option<String>,
+    pub enabled: Option<bool>,
+}
+
 /// 服务商预设（C3；经 IPC 下发，前端不复制列表）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
