@@ -53,6 +53,30 @@ pub struct AffectionLogRow {
     pub created_at: String,
 }
 
+/// quota_usage_monthly 行（内置额度月度汇总缓存）。
+pub struct QuotaUsageMonthlyRow {
+    pub period_key: String,
+    pub granted: i64,
+    pub used: i64,
+    pub requests: i64,
+}
+
+/// quota_usage 行（内置额度用量明细）。
+pub struct QuotaUsageDetailRow {
+    pub id: i64,
+    pub created_at: String,
+    pub period_key: String,
+    pub scene: String,
+    pub tier: String,
+    pub model: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub credits: i64,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
 // ---------- app_settings.value 的存储结构 ----------
 
 /// 单档 LLM 配置（库内存储形态；api_key 依赖 SQLCipher 全库加密，无需二次加密）。
@@ -204,6 +228,44 @@ pub struct AffectionLogDto {
     pub change_value: i64,
     pub reason: String,
     pub created_at: String,
+}
+
+/// 内置额度月度汇总（quota_summary 返回，设置面板展示用）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaSummaryDto {
+    /// 本地自然月周期键 YYYY-MM。
+    pub period_key: String,
+    /// 本月发放额度（credits）。
+    pub granted: i64,
+    /// 本月已用额度（credits）。
+    pub used: i64,
+    /// 剩余比例 0..=1（进度条）；granted<=0 时恒 0。
+    pub remaining_ratio: f64,
+    /// 本月记账请求次数。
+    pub requests: i64,
+}
+
+/// 内置额度单次请求明细（quota_usage_records 返回，审计/对账用）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaUsageRecordDto {
+    pub id: i64,
+    pub created_at: String,
+    pub period_key: String,
+    /// 场景：chat / proactive / distill / diary。
+    pub scene: String,
+    /// 命中链段：builtin（记账）/ custom（不落库）。
+    pub tier: String,
+    pub model: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    /// 计权后扣减点数（失败为 0）。
+    pub credits: i64,
+    pub ok: bool,
+    /// 失败原因（成功为 None）。
+    pub error: Option<String>,
 }
 
 // ---------- 命令入参 DTO ----------

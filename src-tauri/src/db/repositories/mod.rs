@@ -12,6 +12,7 @@ pub mod diaries;
 pub mod facts;
 pub mod messages;
 pub mod pet_states;
+pub mod quota_usage;
 pub mod summaries;
 pub mod vec_memory;
 

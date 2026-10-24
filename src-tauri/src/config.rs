@@ -69,6 +69,29 @@ pub const DIARY_BACKFILL_DAYS: i64 = 7;
 pub const DIARY_CRON_HOUR: u32 = 0;
 pub const DIARY_CRON_MINUTE: u32 = 5;
 
+// ---------- 内置体验额度常量（方案见 docs/billing/内置体验额度方案.md） ----------
+
+/// 每月发放的内置体验额度（credits）。
+///
+/// 口径：**日常陪伴档** ≈ 100 轮/月。按单轮典型构成估算
+/// （system+摘要头 ≈550、上下文 ≈800~1500、记忆注入 ≈300、输入 ≈30~80、
+/// 输出 ≈60~150，输出按 2 倍计权）→ 单轮 ≈1,800 credits，故取 200,000。
+pub const QUOTA_MONTHLY_CREDITS: i64 = 200_000;
+
+/// 单日轮次上限（credits）：防月初一次性刷完后续整月不可用。
+pub const QUOTA_DAILY_CREDITS: i64 = 30_000;
+
+/// 单条用户输入字符上限（超出截断后计价）。
+pub const QUOTA_INPUT_MAX_CHARS: usize = 4_000;
+
+/// 输入 token 默认权重（相对基准模型）。
+pub const WEIGHT_IN_DEFAULT: f64 = 1.0;
+/// 输出 token 默认权重（相对基准模型；多数厂商输出单价高于输入，取 2 为保守可解释值）。
+pub const WEIGHT_OUT_DEFAULT: f64 = 2.0;
+
+/// 端侧 token 估算除数（字符/token）：中文为主取 1.6。
+pub const TOKEN_ESTIMATE_CHARS_PER_TOKEN: f64 = 1.6;
+
 /// 日记生成读取消息的上限条数。
 pub const DIARY_MAX_MESSAGES: usize = 200;
 
