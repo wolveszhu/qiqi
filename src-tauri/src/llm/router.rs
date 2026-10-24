@@ -15,7 +15,7 @@
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-use super::client::{ChatRequest, DeltaStream, LlmClient, LlmTarget};
+use super::client::{ChatRequest, DeltaStream, LlmClient, LlmTarget, TokenUsage};
 use crate::config::{
     LOCAL_FALLBACK_PHRASES, TIER_BUILTIN, TIER_CUSTOM, TIER_FALLBACK, TIER_MAIN, TIER_MEMORY,
 };
@@ -154,11 +154,18 @@ pub fn mark_builtin_success(builtin_index: usize) {
 ///
 /// 返回：(增量流 或 本地话术文本, 回落链日志)。
 /// 成功目标落在内置段时，回写粘性下标（`mark_builtin_success`）。
+/// 成功命中的链段目标（供额度记账：tier 判定记账范围，model 供明细展示）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChainHit {
+    pub tier: String,
+    pub model: String,
+}
+
 pub async fn chat_with_chain(
     client: &dyn LlmClient,
     chain: &ModelChain,
     request: ChatRequest,
-) -> (Result<DeltaStream, String>, Vec<String>) {
+) -> (Result<DeltaStream, String>, Vec<String>, Option<ChainHit>) {
     let mut chain_log: Vec<String> = Vec::new();
 
     for (idx, target) in chain.targets.iter().enumerate() {
@@ -174,7 +181,11 @@ pub async fn chat_with_chain(
                 {
                     mark_builtin_success(idx - start);
                 }
-                return (Ok(stream), chain_log);
+                return (
+                    Ok(stream),
+                    chain_log,
+                    Some(ChainHit { tier: target.tier.to_string(), model: target.model.clone() }),
+                );
             },
             Err(e) => chain_log.push(e.to_string()),
         }
@@ -183,7 +194,7 @@ pub async fn chat_with_chain(
     // 全部失败：本地兜底话术（伪流：一次 delta）
     let phrase = local_fallback_phrase();
     chain_log.push("全部模型失败 → 本地兜底话术".into());
-    (Err(phrase), chain_log)
+    (Err(phrase), chain_log, None)
 }
 
 /// 沿编排链发起**非流式**对话（蒸馏/日记等后台任务用）：同链序 failover，首个成功即收拢全文。
@@ -193,11 +204,21 @@ pub async fn chat_with_chain(
 /// ② 全失败**不回落本地兜底话术**——话术是给用户看的，喂给蒸馏会污染 JSON 解析，
 ///    故返回 `Err`（携带回落链摘要）供调用方静默跳过。
 /// 成功目标落在内置段时同样回写粘性下标（`mark_builtin_success`）。
+/// 非流式调用产出（全文 + 命中目标 + 接口用量，供额度记账）。
+#[derive(Debug, Clone)]
+pub struct TextOutcome {
+    pub text: String,
+    /// 命中的链段目标 (tier, model)；仅成功时有值。
+    pub hit: Option<ChainHit>,
+    /// 接口用量帧；厂商未返回时为 None（调用方按字符数端侧估算兜底）。
+    pub usage: Option<TokenUsage>,
+}
+
 pub async fn chat_text_with_chain(
     client: &dyn LlmClient,
     chain: &ModelChain,
     request: ChatRequest,
-) -> Result<String, AppError> {
+) -> Result<TextOutcome, AppError> {
     let mut chain_log: Vec<String> = Vec::new();
 
     for (idx, target) in chain.targets.iter().enumerate() {
@@ -206,14 +227,21 @@ pub async fn chat_text_with_chain(
             continue;
         }
         match collect_full_text(client, target, request.clone()).await {
-            Ok(text) => {
+            Ok((text, usage)) => {
                 if let Some((start, end)) = chain.builtin_range
                     && idx >= start
                     && idx < end
                 {
                     mark_builtin_success(idx - start);
                 }
-                return Ok(text);
+                return Ok(TextOutcome {
+                    text,
+                    hit: Some(ChainHit {
+                        tier: target.tier.to_string(),
+                        model: target.model.clone(),
+                    }),
+                    usage,
+                });
             },
             Err(e) => chain_log.push(e.to_string()),
         }
@@ -222,19 +250,23 @@ pub async fn chat_text_with_chain(
     Err(AppError::Llm(format!("编排链全部失败: {}", chain_log.join(" | "))))
 }
 
-/// 非流式取全文（后台任务不需要流式——直接收拢增量）。
+/// 非流式取全文（后台任务不需要流式——直接收拢事件流，捕获流末用量帧）。
 async fn collect_full_text(
     client: &dyn LlmClient,
     target: &LlmTarget,
     request: ChatRequest,
-) -> Result<String, AppError> {
+) -> Result<(String, Option<TokenUsage>), AppError> {
     let stream = client.chat_stream(target, request).await?;
     let mut out = String::new();
+    let mut usage = None;
     let mut stream = std::pin::pin!(stream);
-    while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
-        out.push_str(&delta?);
+    while let Some(event) = futures_util::StreamExt::next(&mut stream).await {
+        match event? {
+            super::client::StreamEvent::Delta(d) => out.push_str(&d),
+            super::client::StreamEvent::Usage(u) => usage = Some(u),
+        }
     }
-    Ok(out)
+    Ok((out, usage))
 }
 
 /// 命令层便捷入口：传入两个模型源的行数据 + 三档，内部取轮询槽位并构建链。
@@ -246,7 +278,7 @@ pub async fn chat_orchestrated(
     builtin: &[DefaultModelRow],
     tiered: &TieredValue,
     request: ChatRequest,
-) -> (Result<DeltaStream, String>, Vec<String>) {
+) -> (Result<DeltaStream, String>, Vec<String>, Option<ChainHit>) {
     let (cursor, last_ok) = next_builtin_slot();
     let chain = build_chain(&ChainInput {
         custom,
@@ -431,9 +463,14 @@ mod tests {
         // 故用全成功客户端验证"首个即成功 + 粘性回写"）
         let client = MockLlmClient::ok();
         let req = ChatRequest { messages: vec![], max_tokens: None };
-        let (result, log) = block_on(chat_with_chain(&client, &chain, req));
+        let (result, log, hit) = block_on(chat_with_chain(&client, &chain, req));
         assert!(result.is_ok(), "首个目标成功则直接返回流");
         assert!(log.is_empty(), "首个目标成功无回落日志");
+        assert_eq!(
+            hit,
+            Some(ChainHit { tier: "builtin".into(), model: "b1".into() }),
+            "命中目标应随流返回（供额度记账）"
+        );
 
         // 粘性状态已回写：下一轮应沿用 b1（下标 0）
         let (cursor, last_ok) = next_builtin_slot();
@@ -447,8 +484,9 @@ mod tests {
         let chain = build_chain(&empty_input(&tiered));
         let client = MockLlmClient::failing(&["https://"]);
         let req = ChatRequest { messages: vec![], max_tokens: None };
-        let (result, log) = block_on(chat_with_chain(&client, &chain, req));
+        let (result, log, hit) = block_on(chat_with_chain(&client, &chain, req));
         assert!(result.is_err(), "全失败返回本地话术（Err 携带文本）");
+        assert!(hit.is_none(), "全失败无命中目标");
         let phrase = match result {
             Err(phrase) => phrase,
             Ok(_) => panic!("应返回本地话术"),
@@ -474,8 +512,9 @@ mod tests {
         });
         let client = MockLlmClient::ok();
         let req = ChatRequest { messages: vec![], max_tokens: None };
-        let text = block_on(chat_text_with_chain(&client, &chain, req)).expect("首个目标成功");
-        assert_eq!(text, "你好，我是喵喵", "增量应被收拢为全文");
+        let outcome = block_on(chat_text_with_chain(&client, &chain, req)).expect("首个目标成功");
+        assert_eq!(outcome.text, "你好，我是喵喵", "增量应被收拢为全文");
+        assert_eq!(outcome.hit.map(|h| h.tier), Some("builtin".into()));
     }
 
     #[test]

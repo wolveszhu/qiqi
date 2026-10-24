@@ -114,19 +114,21 @@ pub async fn proactive_generate(
         max_tokens: Some(60),
     };
 
-    let (stream_result, chain_log) =
+    let (stream_result, chain_log, hit) =
         router::chat_orchestrated(&client, &custom, &builtin, &tiered, request).await;
     for entry in &chain_log {
         eprintln!("[proactive] {entry}");
     }
 
+    let mut usage = None;
     let text = match stream_result {
         Ok(stream) => {
             let mut full = String::new();
             let mut stream = std::pin::pin!(stream);
-            while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
-                match delta {
-                    Ok(d) => full.push_str(&d),
+            while let Some(event) = futures_util::StreamExt::next(&mut stream).await {
+                match event {
+                    Ok(crate::llm::client::StreamEvent::Delta(d)) => full.push_str(&d),
+                    Ok(crate::llm::client::StreamEvent::Usage(u)) => usage = Some(u),
                     Err(_) => break, // 流中断：用已收集文本
                 }
             }
@@ -135,6 +137,7 @@ pub async fn proactive_generate(
         // 全档位失败：本地兜底话术（Err 携带文本）
         Err(phrase) => phrase,
     };
+    let _ = (hit, usage); // 额度记账于 quota 埋点任务接入
 
     let text = text.trim().to_string();
     if text.is_empty() {

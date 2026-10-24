@@ -366,18 +366,19 @@ async fn run_chat_task(
         .unwrap_or_default();
 
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
-    let (stream_result, chain_log) = router::chat_with_chain(&client, &chain, request).await;
+    let (stream_result, chain_log, hit) = router::chat_with_chain(&client, &chain, request).await;
 
     for entry in &chain_log {
         // 回落链日志：只打档位与状态摘要，不打 Key/Prompt 全文
         eprintln!("[chat] {entry}");
     }
 
+    let mut usage: Option<crate::llm::client::TokenUsage> = None;
     let mut full_text = String::new();
     match stream_result {
         Ok(stream) => {
             let mut stream = std::pin::pin!(stream);
-            while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
+            while let Some(event) = futures_util::StreamExt::next(&mut stream).await {
                 if abort_flag.load(Ordering::Relaxed) {
                     // 中止：不落库完整回复（部分文本不作为完整回复）
                     let _ = app.emit(
@@ -390,14 +391,15 @@ async fn run_chat_task(
                     );
                     return;
                 }
-                match delta {
-                    Ok(d) => {
+                match event {
+                    Ok(crate::llm::client::StreamEvent::Delta(d)) => {
                         full_text.push_str(&d);
                         let _ = app.emit(
                             "chat:stream:delta",
                             StreamDelta { session_id: session_id.clone(), delta: d },
                         );
                     },
+                    Ok(crate::llm::client::StreamEvent::Usage(u)) => usage = Some(u),
                     Err(e) => {
                         emit_error(&app, &session_id, &e);
                         return;
@@ -414,6 +416,7 @@ async fn run_chat_task(
             );
         },
     }
+    let _ = (hit, usage); // 额度记账于 quota 埋点任务接入
 
     if abort_flag.load(Ordering::Relaxed) {
         let _ = app.emit(
@@ -447,6 +450,29 @@ async fn run_chat_task(
         let state = app.state::<AppState>();
         if let Ok(mut m) = state.last_response_ms.lock() {
             *m = Some(started.elapsed().as_millis() as u64);
+        }
+    }
+
+    // C5 深度对话：单轮回复字数 ≥ 阈值 → +5（每消息至多一次）。
+    //
+    // **必须独立于蒸馏结算**：深聊判定只看回复长度、不依赖 LLM；原先挂在蒸馏闭包里
+    // `run_distill(...)?` 之后，蒸馏一失败（`?` 短路）本轮应得的好感度就被一起吞掉
+    // ——表现为"聊了天却没有任何流水"。
+    let deep_chat = full_text.chars().count() >= crate::config::DEEP_CHAT_MIN_CHARS;
+    if deep_chat {
+        let settled = {
+            let state = app.state::<AppState>();
+            match state.db.lock() {
+                Ok(conn) => crate::affection::settle_signal(
+                    &conn,
+                    &app,
+                    crate::affection::rules::AffectionSignal::DeepChat,
+                ),
+                Err(e) => Err(AppError::Db(format!("获取数据库连接失败: {e}"))),
+            }
+        };
+        if let Err(e) = settled {
+            eprintln!("[affection] 深聊结算失败: {e}");
         }
     }
 
@@ -514,17 +540,7 @@ async fn run_chat_task(
                         },
                     );
                 }
-                // C5 深度对话：单轮回复字数 ≥ 阈值 → +5（每消息至多一次）
-                if distill_input.assistant_text.chars().count()
-                    >= crate::config::DEEP_CHAT_MIN_CHARS
-                    && let Err(e) = crate::affection::settle_signal(
-                        &conn,
-                        &app,
-                        crate::affection::rules::AffectionSignal::DeepChat,
-                    )
-                {
-                    eprintln!("[affection] 深聊结算失败: {e}");
-                }
+                // 深聊结算已移至本函数蒸馏**之前**（不依赖蒸馏成败），此处不再重复结算。
                 Ok(out)
             },
         )

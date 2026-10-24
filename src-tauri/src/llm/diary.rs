@@ -112,8 +112,8 @@ pub async fn generate_diary_text(
         ],
         max_tokens: Some(300),
     };
-    let out = router::chat_text_with_chain(client, chain, request).await?;
-    parse_diary(&out).ok_or_else(|| AppError::Llm("日记输出为空，无法解析".into()))
+    let outcome = router::chat_text_with_chain(client, chain, request).await?;
+    parse_diary(&outcome.text).ok_or_else(|| AppError::Llm("日记输出为空，无法解析".into()))
 }
 
 /// 落库（upsert 覆盖当日；裁决 #11-5）。

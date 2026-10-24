@@ -213,9 +213,16 @@ pub async fn run_distill(
     input: &DistillInput,
     pet_name: &str,
 ) -> Result<DistillOutcome, AppError> {
-    // ① 事实抽取（沿链 failover）
-    let raw = extract_facts(client, chain, &input.user_text, &input.assistant_text).await?;
-    let extracted = parse_extracted_facts(&raw);
+    // ① 事实抽取（沿链 failover）。
+    // **失败不中断**：③④ 的共鸣/禁忌是好感度来源，不能因抽取失败被一起吞掉。
+    let extracted =
+        match extract_facts(client, chain, &input.user_text, &input.assistant_text).await {
+            Ok(outcome) => parse_extracted_facts(&outcome.text),
+            Err(e) => {
+                log_step_failed_once("事实抽取", &e);
+                Vec::new()
+            },
+        };
 
     // 落库 + 向量（embed 失败 → 跳过写向量，事实保留）
     let mut written = 0usize;
@@ -247,20 +254,34 @@ pub async fn run_distill(
             |row| row.get(0),
         )
         .map_err(AppError::from)?;
+    // 摘要失败同样不中断（同上：不能连累 ③④ 的好感度结算）
     let summarized = if count >= crate::config::SUMMARY_TRIGGER_COUNT {
-        let summary = summarize_session(client, chain, conn, &input.session_id).await?;
-        crate::db::repositories::summaries::upsert(conn, &input.session_id, &summary)?;
-        true
+        match summarize_session(client, chain, conn, &input.session_id).await {
+            Ok(outcome) => {
+                crate::db::repositories::summaries::upsert(conn, &input.session_id, &outcome.text)?;
+                true
+            },
+            Err(e) => {
+                log_step_failed_once("会话摘要", &e);
+                false
+            },
+        }
     } else {
         false
     };
 
     // ③ 共鸣检测（宽松解析，失败/未判定 → None）
     let resonance =
-        detect_resonance(client, chain, &input.user_text, &input.assistant_text, pet_name).await;
+        detect_resonance(client, chain, &input.user_text, &input.assistant_text, pet_name)
+            .await
+            .map(|o| parse_resonance(&o.text))
+            .unwrap_or(None);
 
     // ④ 禁忌判定（C7.1；解析失败/未违规 → None，宁漏勿误）
-    let taboo = detect_taboo(client, chain, &input.user_text, &input.assistant_text).await;
+    let taboo = detect_taboo(client, chain, &input.user_text, &input.assistant_text)
+        .await
+        .map(|o| parse_taboo(&o.text))
+        .unwrap_or(None);
 
     Ok(DistillOutcome { facts_written: written, summarized, resonance, taboo })
 }
@@ -275,13 +296,25 @@ fn log_embed_skipped_once() {
     }
 }
 
+/// 子步骤失败提示（进程内只打一次，避免每轮沉淀刷屏）。
+///
+/// 步骤失败只**降级**该步骤，不中断整轮沉淀——否则后面的共鸣/禁忌好感度结算会被连累。
+fn log_step_failed_once(step: &str, e: &AppError) {
+    use std::sync::OnceLock;
+    static WARNED: OnceLock<bool> = OnceLock::new();
+    if WARNED.get().is_none() {
+        eprintln!("[distill] {step} 失败（跳过该步骤，不影响好感度结算）: {e}");
+        let _ = WARNED.set(true);
+    }
+}
+
 /// 抽取事实（沿编排链 failover；链路自带多目标重试，无需再自重试）。
 async fn extract_facts(
     client: &dyn LlmClient,
     chain: &ModelChain,
     user_text: &str,
     assistant_text: &str,
-) -> Result<String, AppError> {
+) -> Result<super::router::TextOutcome, AppError> {
     let request = ChatRequest {
         messages: vec![
             ChatMessage { role: "system".into(), content: FACT_EXTRACT_PROMPT.into() },
@@ -295,14 +328,14 @@ async fn extract_facts(
     router::chat_text_with_chain(client, chain, request).await
 }
 
-/// 共鸣检测（沿链 failover；解析失败/未共鸣 → None，宁少不多）。
+/// 共鸣检测（沿链 failover；产出供调用方解析，额度记账取 hit/usage）。
 async fn detect_resonance(
     client: &dyn LlmClient,
     chain: &ModelChain,
     user_text: &str,
     assistant_text: &str,
     pet_name: &str,
-) -> Option<u8> {
+) -> Result<super::router::TextOutcome, AppError> {
     let request = ChatRequest {
         messages: vec![
             ChatMessage { role: "system".into(), content: build_resonance_prompt(pet_name).into() },
@@ -313,19 +346,16 @@ async fn detect_resonance(
         ],
         max_tokens: None,
     };
-    match router::chat_text_with_chain(client, chain, request).await {
-        Ok(text) => parse_resonance(&text),
-        Err(_) => None, // 链路全失败：宁漏勿误
-    }
+    router::chat_text_with_chain(client, chain, request).await
 }
 
-/// 禁忌检测（沿链 failover；解析失败/未违规 → None，宁漏勿误）。
+/// 禁忌检测（沿链 failover；产出供调用方解析，额度记账取 hit/usage）。
 async fn detect_taboo(
     client: &dyn LlmClient,
     chain: &ModelChain,
     user_text: &str,
     assistant_text: &str,
-) -> Option<TabooHit> {
+) -> Result<super::router::TextOutcome, AppError> {
     let request = ChatRequest {
         messages: vec![
             ChatMessage { role: "system".into(), content: taboo_prompt().into() },
@@ -336,10 +366,7 @@ async fn detect_taboo(
         ],
         max_tokens: Some(80), // 情绪短句一句话，限短生成
     };
-    match router::chat_text_with_chain(client, chain, request).await {
-        Ok(text) => parse_taboo(&text),
-        Err(_) => None,
-    }
+    router::chat_text_with_chain(client, chain, request).await
 }
 
 /// 解析共鸣检测输出（宽松三态）：合法 JSON / 围栏 / 其它 → 命中则返回 strength（夹取 1..=2），否则 None。
@@ -368,7 +395,7 @@ async fn summarize_session(
     chain: &ModelChain,
     conn: &rusqlite::Connection,
     session_id: &str,
-) -> Result<String, AppError> {
+) -> Result<super::router::TextOutcome, AppError> {
     let history = crate::db::repositories::messages::recent(
         conn,
         session_id,

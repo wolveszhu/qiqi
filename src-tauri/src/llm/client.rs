@@ -97,9 +97,29 @@ impl LlmTarget {
     }
 }
 
-/// 流式增量流：每项为一段文本增量（或错误）。
+/// 一次 LLM 请求的 token 用量（接口 `usage` 优先；缺失时由调用方端侧估算兜底）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TokenUsage {
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+}
+
+impl TokenUsage {
+    pub fn total_tokens(&self) -> i64 {
+        self.prompt_tokens + self.completion_tokens
+    }
+}
+
+/// 流式事件：文本增量或流末用量帧（`stream_options.include_usage` 触发）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum StreamEvent {
+    Delta(String),
+    Usage(TokenUsage),
+}
+
+/// 流式事件流：每项为一段文本增量、流末用量帧（或错误）。
 pub type DeltaStream =
-    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<String, AppError>> + Send>>;
+    std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<StreamEvent, AppError>> + Send>>;
 
 /// LLM 客户端抽象（Mock 驱动下游单测，无网络依赖）。
 #[async_trait]
@@ -140,11 +160,15 @@ impl ReqwestLlmClient {
     }
 
     /// OpenAI 兼容 chat/completions（stream）请求体。
+    ///
+    /// 携带 `stream_options.include_usage`：流末返回一次用量帧（额度记账的数据源，
+    /// 见 `docs/billing/内置体验额度方案.md`）；不支持的厂商会忽略该字段，走端侧估算兜底。
     fn chat_body(target: &LlmTarget, request: &ChatRequest) -> serde_json::Value {
         let mut body = serde_json::json!({
             "model": target.model,
             "messages": request.messages,
             "stream": true,
+            "stream_options": { "include_usage": true },
         });
         // 主动话术等非流式短生成：仅当显式设置 max_tokens 时加入（不影响对话主链路）
         if let Some(mt) = request.max_tokens {
@@ -189,8 +213,8 @@ impl LlmClient for ReqwestLlmClient {
             |(mut bytes, mut buffer)| async move {
                 loop {
                     // 先尝试从缓冲解析一个完整 SSE event
-                    if let Some(delta) = next_sse_delta(&mut buffer) {
-                        return Some((Ok(delta), (bytes, buffer)));
+                    if let Some(event) = next_sse_event(&mut buffer) {
+                        return Some((Ok(event), (bytes, buffer)));
                     }
                     match bytes.next().await {
                         Some(Ok(chunk)) => {
@@ -204,9 +228,9 @@ impl LlmClient for ReqwestLlmClient {
                         },
                         None => {
                             // 流结束：处理残余缓冲（若有完整 event）
-                            let delta = next_sse_delta(&mut buffer);
-                            if let Some(d) = delta {
-                                return Some((Ok(d), (bytes, buffer)));
+                            let event = next_sse_event(&mut buffer);
+                            if let Some(e) = event {
+                                return Some((Ok(e), (bytes, buffer)));
                             }
                             return None;
                         },
@@ -269,12 +293,12 @@ struct EmbeddingItem {
 
 // ---------- SSE 解析（纯函数，单测覆盖） ----------
 
-/// 从缓冲中取出下一个完整 SSE event 的 delta 文本。
+/// 从缓冲中取出下一个完整 SSE event（文本增量或流末用量帧）。
 ///
 /// 分帧规则：空行分隔 event；`data: ` 行取负载；`data: [DONE]` 视为流结束
 /// （返回 None 前清空缓冲使后续读取自然结束）。
 /// 返回 `None` 表示缓冲中没有完整 event（等待更多数据）。
-pub fn next_sse_delta(buffer: &mut String) -> Option<String> {
+pub fn next_sse_event(buffer: &mut String) -> Option<StreamEvent> {
     while let Some(pos) = buffer.find("\n\n") {
         let event: String = buffer.drain(..pos + 2).collect();
         for line in event.lines() {
@@ -285,22 +309,33 @@ pub fn next_sse_delta(buffer: &mut String) -> Option<String> {
             if payload == "[DONE]" {
                 return None;
             }
-            if let Ok(frame) = serde_json::from_str::<SseFrame>(payload)
-                && let Some(delta) = frame.choices.into_iter().next().and_then(|c| c.delta.content)
-            {
-                return Some(delta);
+            if let Ok(frame) = serde_json::from_str::<SseFrame>(payload) {
+                // 流末用量帧（include_usage：choices 为空 + usage 有值）——不再丢弃，
+                // 额度记账以此为准（缺失时调用方端侧估算兜底）
+                if let Some(usage) = frame.usage {
+                    return Some(StreamEvent::Usage(TokenUsage {
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                    }));
+                }
+                if let Some(delta) = frame.choices.into_iter().next().and_then(|c| c.delta.content)
+                {
+                    return Some(StreamEvent::Delta(delta));
+                }
             }
-            // 非 chat 帧（如 usage 帧）忽略，继续找下一个 event
+            // 无法解析的帧忽略，继续找下一个 event
         }
     }
     None
 }
 
-/// OpenAI 流式帧（只关心 `choices[].delta.content`）。
-#[derive(Debug, Deserialize)]
+/// OpenAI 流式帧（关心 `choices[].delta.content` 与流末 `usage`）。
+#[derive(Debug, Default, Deserialize)]
 struct SseFrame {
     #[serde(default)]
     choices: Vec<SseChoice>,
+    #[serde(default)]
+    usage: Option<SseUsage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -315,6 +350,15 @@ struct SseDelta {
     content: Option<String>,
 }
 
+/// OpenAI 用量帧（include_usage；字段缺失按 0 处理）。
+#[derive(Debug, Default, Deserialize)]
+struct SseUsage {
+    #[serde(default)]
+    prompt_tokens: i64,
+    #[serde(default)]
+    completion_tokens: i64,
+}
+
 // ---------- Mock（下游单测桩，无网络） ----------
 
 /// Mock 客户端：按 base_url 决定成功（返回 canned deltas）或失败。
@@ -326,6 +370,8 @@ pub struct MockLlmClient {
     pub fail_urls: Vec<String>,
     /// 成功时的增量序列。
     pub deltas: Vec<String>,
+    /// 流末用量帧（None = 不模拟 usage，调用方走端侧估算）。
+    pub usage: Option<TokenUsage>,
     /// embed 失败模拟。
     pub fail_embed: bool,
     /// embed 返回的向量维度（默认 8；对接 1536 维虚拟表时用 `with_embed_dim`）。
@@ -338,6 +384,7 @@ impl MockLlmClient {
         Self {
             fail_urls: vec![],
             deltas: vec!["你好".into(), "，我是".into(), "喵喵".into()],
+            usage: None,
             fail_embed: false,
             embed_dim: 8,
         }
@@ -347,9 +394,16 @@ impl MockLlmClient {
         Self {
             fail_urls: urls.iter().map(|s| s.to_string()).collect(),
             deltas: vec![],
+            usage: None,
             fail_embed: false,
             embed_dim: 8,
         }
+    }
+
+    /// 指定流末用量帧（额度记账链路的单测桩）。
+    pub fn with_usage(mut self, prompt: i64, completion: i64) -> Self {
+        self.usage = Some(TokenUsage { prompt_tokens: prompt, completion_tokens: completion });
+        self
     }
 
     /// 指定 embed 维度（C7 集成测试对接真实 1536 维 vec_memory）。
@@ -372,7 +426,12 @@ impl LlmClient for MockLlmClient {
             return Err(AppError::Llm(format!("[{}] HTTP 500 Internal Server Error", target.tier)));
         }
         let deltas = self.deltas.clone();
-        let stream = futures_util::stream::iter(deltas.into_iter().map(Ok::<_, AppError>));
+        let mut items: Vec<Result<StreamEvent, AppError>> =
+            deltas.into_iter().map(|d| Ok(StreamEvent::Delta(d))).collect();
+        if let Some(u) = self.usage {
+            items.push(Ok(StreamEvent::Usage(u)));
+        }
+        let stream = futures_util::stream::iter(items);
         Ok(Box::pin(stream))
     }
 
@@ -393,12 +452,12 @@ impl LlmClient for MockLlmClient {
 mod tests {
     use super::*;
 
-    /// 喂入多行 SSE 文本，收集全部 delta。
-    fn collect(sse: &str) -> Vec<String> {
+    /// 喂入多行 SSE 文本，收集全部事件。
+    fn collect(sse: &str) -> Vec<StreamEvent> {
         let mut buffer = sse.to_string();
         let mut out = Vec::new();
-        while let Some(d) = next_sse_delta(&mut buffer) {
-            out.push(d);
+        while let Some(e) = next_sse_event(&mut buffer) {
+            out.push(e);
         }
         out
     }
@@ -407,7 +466,10 @@ mod tests {
     fn sse_parses_normal_delta_sequence() {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}\n\n\
                    data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}]}\n\n";
-        assert_eq!(collect(sse), vec!["你", "好"]);
+        assert_eq!(
+            collect(sse),
+            vec![StreamEvent::Delta("你".into()), StreamEvent::Delta("好".into())]
+        );
     }
 
     #[test]
@@ -415,23 +477,53 @@ mod tests {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n\
                    data: [DONE]\n\n\
                    data: {\"choices\":[{\"delta\":{\"content\":\"never\"}}]}\n\n";
-        assert_eq!(collect(sse), vec!["a"]);
+        assert_eq!(collect(sse), vec![StreamEvent::Delta("a".into())]);
     }
 
     #[test]
     fn sse_handles_cross_chunk_frames() {
         // 帧被切在中间：两次喂入
         let mut buffer = String::from("data: {\"choices\":[{\"delta\":{\"cont");
-        assert_eq!(next_sse_delta(&mut buffer), None, "不完整帧应等待");
+        assert_eq!(next_sse_event(&mut buffer), None, "不完整帧应等待");
         buffer.push_str("ent\":\"跨\"}}]}\n\n");
-        assert_eq!(next_sse_delta(&mut buffer), Some("跨".into()));
+        assert_eq!(next_sse_event(&mut buffer), Some(StreamEvent::Delta("跨".into())));
     }
 
     #[test]
-    fn sse_ignores_non_chat_frames() {
-        let sse = "data: {\"usage\":{\"total_tokens\":10}}\n\n\
-                   data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n";
-        assert_eq!(collect(sse), vec!["ok"]);
+    fn sse_surfaces_usage_frame_from_include_usage() {
+        // include_usage 的流末帧：choices 为空 + usage 有值 → Usage 事件（不再丢弃）
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n\
+                   data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":30}}\n\n\
+                   data: [DONE]\n\n";
+        assert_eq!(
+            collect(sse),
+            vec![
+                StreamEvent::Delta("ok".into()),
+                StreamEvent::Usage(TokenUsage { prompt_tokens: 120, completion_tokens: 30 }),
+            ]
+        );
+    }
+
+    #[test]
+    fn sse_regular_frames_with_null_usage_stay_deltas() {
+        // 常规帧通常带 "usage": null → 不应误判为用量帧
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}],\"usage\":null}\n\n";
+        assert_eq!(collect(sse), vec![StreamEvent::Delta("a".into())]);
+    }
+
+    #[test]
+    fn chat_body_includes_stream_options_for_usage() {
+        let target = LlmTarget {
+            tier: "builtin",
+            base_url: "https://x/v1".into(),
+            api_key: "k".into(),
+            model: "m".into(),
+        };
+        let body = ReqwestLlmClient::chat_body(
+            &target,
+            &ChatRequest { messages: vec![], max_tokens: None },
+        );
+        assert_eq!(body["stream_options"]["include_usage"], serde_json::json!(true));
     }
 
     #[test]
@@ -451,12 +543,41 @@ mod tests {
         let got = futures_executor_block_on(async move {
             let mut stream = stream;
             let mut got = String::new();
-            while let Some(delta) = futures_util::StreamExt::next(&mut stream).await {
-                got.push_str(&delta.expect("delta"));
+            while let Some(event) = futures_util::StreamExt::next(&mut stream).await {
+                match event.expect("event") {
+                    StreamEvent::Delta(d) => got.push_str(&d),
+                    StreamEvent::Usage(_) => {},
+                }
             }
             got
         });
         assert_eq!(got, "你好，我是喵喵");
+    }
+
+    #[test]
+    fn mock_client_yields_usage_when_configured() {
+        let mock = MockLlmClient::ok().with_usage(11, 7);
+        let target = LlmTarget {
+            tier: "builtin",
+            base_url: "https://mock/v1".into(),
+            api_key: "k".into(),
+            model: "m".into(),
+        };
+        let stream = futures_executor_block_on(
+            mock.chat_stream(&target, ChatRequest { messages: vec![], max_tokens: None }),
+        )
+        .expect("mock 成功");
+        let events = futures_executor_block_on(async move {
+            futures_util::StreamExt::collect::<Vec<_>>(stream).await
+        });
+        let usage: Vec<TokenUsage> = events
+            .into_iter()
+            .filter_map(|e| match e.expect("event") {
+                StreamEvent::Usage(u) => Some(u),
+                StreamEvent::Delta(_) => None,
+            })
+            .collect();
+        assert_eq!(usage, vec![TokenUsage { prompt_tokens: 11, completion_tokens: 7 }]);
     }
 
     /// 极简同步执行器（测试用；避免引入 tokio 测试宏依赖差异）。
