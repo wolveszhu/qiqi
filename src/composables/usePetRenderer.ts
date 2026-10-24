@@ -65,9 +65,9 @@ export function setIdleMode(enabled: boolean): void {
   renderer?.setIdleMode?.(enabled);
 }
 
-/** 吸附休眠视觉（D4.4）：角色变暗 + 睡姿；唤醒恢复。 */
-export function setPetSleeping(sleeping: boolean): void {
-  renderer?.setSleeping?.(sleeping);
+/** 边缘吸附休眠视觉（D4.4）：只露耳+眼 + 逆时针 90°；唤醒恢复完整形象。 */
+export function setEdgeSleep(sleeping: boolean): void {
+  renderer?.setEdgeSleep?.(sleeping);
 }
 
 export function lookAt(x: number, y: number): void {
