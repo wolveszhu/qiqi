@@ -152,6 +152,8 @@ pub fn run() {
             commands::settings::settings_move_custom_model,
             commands::quota::quota_summary,
             commands::quota::quota_usage_records,
+            commands::search_settings::search_settings_get,
+            commands::search_settings::search_settings_save,
             commands::pet::pet_get_state,
             commands::pet::pet_update_state,
             commands::pet::pet_settle_affection,

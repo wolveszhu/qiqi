@@ -15,6 +15,8 @@ import type {
   ProactiveFrequency,
   ProviderPreset,
   SaveCustomModelPayload,
+  SaveSearchSettings,
+  SearchSettings,
   SettingsSnapshot,
 } from "./types";
 
@@ -31,7 +33,7 @@ export async function saveDnd(
   await callCommand("settings_save_dnd", { dnd, frequency });
 }
 
-/** 切换额度模式（1=内置额度 / 2=BYOK；BYOK 需 main 档已配 Key，否则报 Config 错误）。 */
+/** 切换额度模式（1=内置额度 / 2=BYOK；BYOK 需存在已启用且已填 Key 的自定义平台，否则报 Config 错误）。 */
 export async function setQuotaMode(mode: 1 | 2): Promise<void> {
   await callCommand("settings_set_quota_mode", { mode });
 }
@@ -64,6 +66,16 @@ export async function saveCustomModel(payload: SaveCustomModelPayload): Promise<
 /** 删除自定义模型。 */
 export async function deleteCustomModel(id: number): Promise<void> {
   await callCommand("settings_delete_custom_model", { id });
+}
+
+/** 读取联网搜索服务配置（Key 脱敏；未配置 Key 时 hasKey=false）。 */
+export async function getSearchSettings(): Promise<SearchSettings> {
+  return callCommand<SearchSettings>("search_settings_get");
+}
+
+/** 保存联网搜索服务配置（apiKey 缺省=不改动存量 Key，空串=清空）。 */
+export async function saveSearchSettings(payload: SaveSearchSettings): Promise<void> {
+  await callCommand("search_settings_save", { payload });
 }
 
 /** 上移/下移一位（调整编排优先级）。 */

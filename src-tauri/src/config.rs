@@ -98,6 +98,19 @@ pub const DIARY_MAX_MESSAGES: usize = 200;
 /// 向量全量重建的分批大小（embed 每批条数）。
 pub const REBUILD_BATCH_SIZE: usize = 32;
 
+// ---------- 联网搜索（应用侧检索增强）常量 ----------
+
+/// 单次联网搜索结果上限（防止 prompt 膨胀与延迟失控）。
+pub const SEARCH_MAX_RESULTS: usize = 5;
+/// 单条搜索结果摘要截断字符数（约 400 字 ≈ 250 token）。
+pub const SEARCH_SNIPPET_MAX_CHARS: usize = 400;
+/// 注入 system 的「联网检索资料」总量上限（字符）；超出截断最旧结果，防 prompt 爆炸。
+pub const SEARCH_CONTEXT_MAX_CHARS: usize = 2000;
+/// 搜索 API 总超时（秒）：连接 10s / 总 30s（复用 client 连接池超时口径）。
+pub const SEARCH_TIMEOUT_SECS: u64 = 30;
+/// 默认搜索服务商（用户可在设置切换）。
+pub const SEARCH_DEFAULT_PROVIDER: &str = "tavily";
+
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
 ///
 /// 注意：此处**不含宠物名**——名字由 `pet_states.pet_name` 动态注入

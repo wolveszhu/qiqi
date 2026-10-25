@@ -21,11 +21,13 @@ import ProviderChip from "../../../components/settings/ProviderChip.vue";
 import QuotaBar from "../../../components/settings/QuotaBar.vue";
 import {
   deleteCustomModel,
+  getSearchSettings,
   getTyped,
   listCustomModels,
   listProviders,
   moveCustomModel,
   saveCustomModel,
+  saveSearchSettings,
   setQuotaMode,
 } from "../../../api/settings";
 import { getQuotaSummary, listQuotaRecords } from "../../../api/quota";
@@ -37,6 +39,8 @@ import type {
   QuotaSummary,
   QuotaUsageRecord,
   SaveCustomModelPayload,
+  SaveSearchSettings,
+  SearchSettings,
 } from "../../../api/types";
 
 /** 服务商预设（Rust 单一真源经 IPC 下发，前端不复制）。 */
@@ -59,6 +63,24 @@ const customForm = reactive({
   keyFingerprint: null as string | null,
   enabled: true,
 });
+
+/** 联网搜索服务配置（BYOK；默认关，未配置 Key 时后端自动回落普通对话）。 */
+const searchSaving = ref(false);
+const searchForm = reactive({
+  provider: "tavily",
+  apiKey: "",
+  hasKey: false,
+  keyFingerprint: null as string | null,
+  enabled: false,
+  maxResults: 5,
+  lang: "zh",
+});
+/** 可选搜索服务商（与 Rust `SearchProvider` 对齐；前端仅展示，真源在后端）。 */
+const searchProviders: Array<{ id: string; label: string }> = [
+  { id: "tavily", label: "Tavily（推荐，AI 搜索）" },
+  { id: "brave", label: "Brave Search" },
+  { id: "serpapi", label: "SerpAPI（Google）" },
+];
 
 /** 刷新自定义平台列表（失败 toast——不让用户以为保存成功）。 */
 async function refreshCustoms(): Promise<void> {
@@ -134,6 +156,43 @@ async function moveCustom(id: number, up: boolean): Promise<void> {
     await refreshCustoms();
   } catch (e) {
     pushToast(e instanceof Error ? e.message : "调整顺序失败", "error");
+  }
+}
+
+/** 读取联网搜索配置（填充表单；失败仅 console，不阻断主流程）。 */
+async function refreshSearch(): Promise<void> {
+  try {
+    const s: SearchSettings = await getSearchSettings();
+    searchForm.provider = s.provider;
+    searchForm.hasKey = s.hasKey;
+    searchForm.keyFingerprint = s.keyFingerprint;
+    searchForm.enabled = s.enabled;
+    searchForm.maxResults = s.maxResults;
+    searchForm.lang = s.lang;
+    searchForm.apiKey = "";
+  } catch (e) {
+    console.warn("[llm] 联网搜索配置读取失败", e);
+  }
+}
+
+/** 保存联网搜索配置（apiKey 留空 = 不改动存量 Key）。 */
+async function saveSearch(): Promise<void> {
+  const payload: SaveSearchSettings = {
+    provider: searchForm.provider,
+    apiKey: searchForm.apiKey || undefined,
+    enabled: searchForm.enabled,
+    maxResults: searchForm.maxResults,
+    lang: searchForm.lang,
+  };
+  searchSaving.value = true;
+  try {
+    await saveSearchSettings(payload);
+    await refreshSearch();
+    pushToast("已保存");
+  } catch (e) {
+    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+  } finally {
+    searchSaving.value = false;
   }
 }
 
@@ -222,6 +281,7 @@ onMounted(async (): Promise<void> => {
   }
   await refreshCustoms();
   await refreshQuota();
+  await refreshSearch();
 });
 </script>
 
@@ -501,6 +561,79 @@ onMounted(async (): Promise<void> => {
         @update:model-value="toggleQuota($event)"
       />
     </AppCard>
+
+    <!-- 卡片 3：联网搜索（实时资料，BYOK） -->
+    <AppCard title="联网搜索（实时资料）">
+      <HintBox tone="info">
+        开启后，发送消息会先检索实时资料注入对话——回答更有时效性，但会多消耗额度。 未配置
+        Key 时自动回落普通对话，不会报错。
+      </HintBox>
+      <div class="search-form">
+        <label class="search-form__label">搜索服务商</label>
+        <select
+          v-model="searchForm.provider"
+          class="search-form__select"
+        >
+          <option
+            v-for="p in searchProviders"
+            :key="p.id"
+            :value="p.id"
+          >
+            {{ p.label }}
+          </option>
+        </select>
+
+        <AppInput
+          v-model="searchForm.apiKey"
+          type="password"
+          label="API Key（手动输入）"
+          :placeholder="
+            searchForm.hasKey
+              ? `已配置 ····${searchForm.keyFingerprint ?? ''}（留空=不改动）`
+              : '粘贴搜索服务的 API Key'
+          "
+        />
+
+        <div class="search-form__row">
+          <label class="search-form__label">单次结果上限</label>
+          <input
+            v-model.number="searchForm.maxResults"
+            class="search-form__num"
+            type="number"
+            min="1"
+            max="10"
+          />
+        </div>
+
+        <div class="search-form__row">
+          <label class="search-form__label">结果语言</label>
+          <select
+            v-model="searchForm.lang"
+            class="search-form__select search-form__select--sm"
+          >
+            <option value="zh">中文</option>
+            <option value="en">英文</option>
+          </select>
+        </div>
+
+        <div class="search-form__toggle">
+          <AppToggle
+            :model-value="searchForm.enabled"
+            label="启用联网搜索"
+            @update:model-value="(v: boolean) => (searchForm.enabled = v)"
+          />
+        </div>
+      </div>
+      <div class="search-form__actions">
+        <AppButton
+          variant="primary"
+          :loading="searchSaving"
+          @click="saveSearch"
+        >
+          保存
+        </AppButton>
+      </div>
+    </AppCard>
   </div>
 </template>
 
@@ -769,5 +902,58 @@ onMounted(async (): Promise<void> => {
   text-align: right;
   font-weight: 700;
   color: var(--ink);
+}
+/* ---- 联网搜索卡片 ---- */
+.search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+}
+.search-form__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.search-form__select {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--ink);
+  padding: 7px 10px;
+  font: 500 13px var(--font-ui);
+  outline: none;
+}
+.search-form__select:focus {
+  border-color: var(--accent-rose);
+}
+.search-form__select--sm {
+  width: 120px;
+}
+.search-form__num {
+  width: 96px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--ink);
+  padding: 7px 10px;
+  font: 500 13px var(--font-ui);
+  outline: none;
+}
+.search-form__num:focus {
+  border-color: var(--accent-rose);
+}
+.search-form__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.search-form__toggle {
+  align-self: flex-start;
+}
+.search-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

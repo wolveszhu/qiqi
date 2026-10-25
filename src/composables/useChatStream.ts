@@ -23,10 +23,11 @@ import {
   clearStream,
   finishStream,
   pushUserMessage,
+  setStreamSources,
   startStream,
 } from "../state/chatStore";
 import { chatStore } from "../state/chatStore";
-import type { FilePayload } from "../api/types";
+import type { ChatSource, FilePayload } from "../api/types";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 /** 帧节流缓冲（delta 先入缓冲，rAF 时一次性 flush）。 */
@@ -51,8 +52,8 @@ function scheduleFlush(): void {
 
 /** useChatStream 暴露的 API（ChatPanel 调用）。 */
 export interface UseChatStreamApi {
-  /** 发送一条消息（续聊当前会话；无会话则新建；attachments 可选，D1.5 多模态）。 */
-  send: (text: string, attachments?: FilePayload[]) => void;
+  /** 发送一条消息（续聊当前会话；无会话则新建；attachments 可选，D1.5 多模态；webSearch=联网搜索开关）。 */
+  send: (text: string, attachments?: FilePayload[], webSearch?: boolean) => void;
   /** 中止当前流。 */
   abortCurrent: () => void;
 }
@@ -89,6 +90,13 @@ export function useChatStream(): UseChatStreamApi {
             finishStream();
           },
         ),
+        await listen<{ sessionId: string; sources: ChatSource[] }>(
+          "chat:stream:sources",
+          (event) => {
+            if (event.payload.sessionId !== activeSessionId) return;
+            setStreamSources(event.payload.sources);
+          },
+        ),
       );
     } catch (e) {
       console.warn("[chat] 事件订阅失败", e);
@@ -101,7 +109,7 @@ export function useChatStream(): UseChatStreamApi {
   });
 
   return {
-    send: (text: string, attachments: FilePayload[] = []): void => {
+    send: (text: string, attachments: FilePayload[] = [], webSearch = false): void => {
       const content = text.trim();
       if (!content && attachments.length === 0) return;
       // 续聊：有 currentId 就复用（多轮上下文由 Rust 按 session_id 组装）
@@ -109,7 +117,7 @@ export function useChatStream(): UseChatStreamApi {
       activeSessionId = sessionId;
       startStream(sessionId);
       pushUserMessage(content || "（附件）");
-      void sendStream(sessionId, content, attachments).catch((e: unknown) => {
+      void sendStream(sessionId, content, attachments, webSearch).catch((e: unknown) => {
         // 命令本身失败（如 DB 故障）：结束流 + 提示，不崩溃
         appendDelta("……（好像没连上我自己的脑子）");
         finishStream();

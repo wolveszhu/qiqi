@@ -6,6 +6,7 @@
 
 use crate::affection::level::{self, Level};
 use crate::config::PERSONA_BASELINE;
+use crate::llm::web_search::SearchResult;
 use chrono::TimeZone;
 
 /// 混合检索结果（KNN 命中 + facts 近因）。
@@ -111,6 +112,31 @@ pub fn build_system_prompt(
     }
 
     prompt
+}
+
+/// 联网检索资料的 system 上下文段（应用侧检索增强；C4 扩展）。
+///
+/// 仅当 `results` 非空时返回非空串：每段 `- [title](url): snippet`，
+/// 总量受 `config::SEARCH_CONTEXT_MAX_CHARS` 约束（超出截断最旧结果），防 prompt 膨胀。
+/// 纯函数、可测（见 `tests::format_web_results_*`）。由 `build_chat_request` 在
+/// `build_system_prompt` 之后追加——不改动后者签名，避免扩散到全部调用点。
+pub fn format_web_results(results: &[SearchResult]) -> String {
+    if results.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("【联网检索到的资料】（仅供你参考作答，引用时标注来源）\n");
+    let mut budget = crate::config::SEARCH_CONTEXT_MAX_CHARS;
+    for r in results {
+        let line = format!("- [{}]({}): {}\n", r.title, r.url, r.snippet);
+        if budget == 0 {
+            break;
+        }
+        let take = line.chars().count().min(budget);
+        out.push_str(&line.chars().take(take).collect::<String>());
+        budget -= take;
+    }
+    out.push('\n');
+    out
 }
 
 #[cfg(test)]
@@ -221,6 +247,38 @@ mod tests {
         assert!(p.contains("你叫团子"), "名字来自参数（库 pet_name）");
         assert!(!p.contains("七七"), "不得残留旧硬编码七七");
         assert!(!p.contains("喵喵"), "不得残留旧硬编码喵喵");
+    }
+
+    #[test]
+    fn format_web_results_injects_section_and_respects_budget() {
+        // 空结果 → 空串（不注入段）
+        assert!(format_web_results(&[]).is_empty(), "空结果不注入");
+
+        let results = vec![
+            SearchResult {
+                title: "实时新闻".into(),
+                url: "https://news.test/a".into(),
+                snippet: "今天发生了大事。".into(),
+            },
+            SearchResult {
+                title: "百科".into(),
+                url: "https://wiki.test/b".into(),
+                snippet: "背景知识补充。".into(),
+            },
+        ];
+        let block = format_web_results(&results);
+        assert!(block.contains("【联网检索到的资料】"), "含资料段标题");
+        assert!(block.contains("[实时新闻](https://news.test/a)"), "含标题+链接");
+        assert!(block.contains("今天发生了大事。"), "含摘要");
+
+        // 预算约束：极小预算下截断（不 panic、仍为合法段）
+        let tiny = vec![SearchResult {
+            title: "X".into(),
+            url: "https://x.test".into(),
+            snippet: "字".repeat(crate::config::SEARCH_CONTEXT_MAX_CHARS + 100),
+        }];
+        let out = format_web_results(&tiny);
+        assert!(out.chars().count() <= crate::config::SEARCH_CONTEXT_MAX_CHARS + 40);
     }
 
     #[test]

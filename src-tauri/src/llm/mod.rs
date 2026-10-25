@@ -15,6 +15,7 @@ pub mod distill;
 pub mod prompt;
 pub mod quota;
 pub mod router;
+pub mod web_search;
 
 use serde::Serialize;
 

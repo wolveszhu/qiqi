@@ -270,6 +270,30 @@ pub struct QuotaUsageRecordDto {
     pub error: Option<String>,
 }
 
+/// 联网搜索服务配置（search_settings_get 返回；Key 脱敏）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchSettingsDto {
+    pub provider: String,
+    pub has_key: bool,
+    /// Key 末 4 位指纹（脱敏；无 Key 时为 None）。
+    pub key_fingerprint: Option<String>,
+    pub enabled: bool,
+    pub max_results: i64,
+    pub lang: String,
+}
+
+/// 保存联网搜索配置（api_key 缺省 = 不改动存量 Key；空串 = 清空）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSearchSettingsPayload {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub enabled: bool,
+    pub max_results: i64,
+    pub lang: String,
+}
+
 // ---------- 命令入参 DTO ----------
 
 /// 保存单档配置（api_key 为空/缺省 = 不改动存量 Key）。

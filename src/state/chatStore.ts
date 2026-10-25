@@ -9,7 +9,7 @@
 
 import { reactive } from "vue";
 
-import type { ChatMessageDto, ChatSessionDto } from "../api/types";
+import type { ChatMessageDto, ChatSessionDto, ChatSource } from "../api/types";
 
 /** 消息视图模型（消息区渲染用）。 */
 export interface ChatMessageVm {
@@ -18,6 +18,8 @@ export interface ChatMessageVm {
   /** 0=user / 1=assistant（与 Rust `messages.role` 一致）。 */
   role: number;
   content: string;
+  /** 联网搜索引用来源（仅 assistant 消息可能携带；气泡底部渲染）。 */
+  sources?: ChatSource[];
 }
 
 export interface ChatState {
@@ -30,6 +32,8 @@ export interface ChatState {
   /** 当前流的增量文本（尚未并入消息区）。 */
   streamingText: string;
   isStreaming: boolean;
+  /** 当前流的引用来源（chat:stream:sources 下发；finishStream 时并入 assistant 消息）。 */
+  streamingSources: ChatSource[];
 }
 
 const state = reactive<ChatState>({
@@ -38,6 +42,7 @@ const state = reactive<ChatState>({
   messages: [],
   streamingText: "",
   isStreaming: false,
+  streamingSources: [],
 });
 
 /** 乐观插入的本地序号（与 DB id 空间隔离）。 */
@@ -85,6 +90,7 @@ export function pushUserMessage(text: string): void {
 export function startStream(sessionId: string): void {
   state.currentId = sessionId;
   state.streamingText = "";
+  state.streamingSources = [];
   state.isStreaming = true;
 }
 
@@ -93,14 +99,26 @@ export function appendDelta(delta: string): void {
   state.streamingText += delta;
 }
 
+/** 设置当前流的引用来源（chat:stream:sources 事件回调）。 */
+export function setStreamSources(sources: ChatSource[]): void {
+  state.streamingSources = sources;
+}
+
 /** 流结束：把流文本并入消息区作为 assistant 消息（空文本则丢弃，如 abort）。 */
 export function finishStream(): void {
   state.isStreaming = false;
   const text = state.streamingText;
+  const sources = state.streamingSources;
   state.streamingText = "";
+  state.streamingSources = [];
   if (!text) return;
   localSeq += 1;
-  state.messages.push({ key: `local-${localSeq}`, role: 1, content: text });
+  state.messages.push({
+    key: `local-${localSeq}`,
+    role: 1,
+    content: text,
+    sources: sources.length ? [...sources] : undefined,
+  });
 }
 
 /** 清空当前流缓冲（中止场景：部分文本不作为完整回复）。 */

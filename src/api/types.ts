@@ -282,3 +282,34 @@ export interface ProactiveShowPayload {
   /** 表情指令（与 PetExpression 值域一致；C7 禁忌补充 angry）。 */
   mood: "happy" | "tsundere" | "angry";
 }
+
+/** 联网搜索服务配置（search_settings_get 返回；Key 脱敏，接口契约 §2）。 */
+export interface SearchSettings {
+  /** 服务商：tavily / brave / serpapi。 */
+  provider: string;
+  /** 是否已配置 Key（用于 UI 提示「未配置则回落普通对话」）。 */
+  hasKey: boolean;
+  /** Key 末 4 位指纹；未配置为 null。 */
+  keyFingerprint: string | null;
+  /** 是否启用联网搜索。 */
+  enabled: boolean;
+  /** 单次搜索结果上限。 */
+  maxResults: number;
+  /** 结果语言偏好：zh / en。 */
+  lang: string;
+}
+
+/** 保存联网搜索配置（apiKey 缺省=不改动存量 Key，空串=清空）。 */
+export interface SaveSearchSettings {
+  provider: string;
+  apiKey?: string;
+  enabled: boolean;
+  maxResults: number;
+  lang: string;
+}
+
+/** 联网搜索引用来源（chat:stream:sources 事件负载；气泡底部渲染）。 */
+export interface ChatSource {
+  title: string;
+  url: string;
+}

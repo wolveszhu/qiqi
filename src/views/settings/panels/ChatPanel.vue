@@ -29,6 +29,8 @@ import {
 const stream = useChatStream();
 const unlisteners: UnlistenFn[] = [];
 const messageListEl = ref<HTMLDivElement | null>(null);
+/** 联网搜索开关（默认关；经 ChatInput 受控切换，随发送透传给后端）。 */
+const webSearch = ref(false);
 
 /** 刷新会话列表（后端按最后活跃倒序）。 */
 async function refreshSessions(): Promise<void> {
@@ -63,7 +65,7 @@ async function dropSession(sessionId: string): Promise<void> {
 }
 
 function onSend(text: string): void {
-  stream.send(text);
+  stream.send(text, [], webSearch.value);
   scrollToBottom();
 }
 
@@ -149,18 +151,98 @@ onUnmounted((): void => {
           class="chat-msg"
           :class="m.role === 0 ? 'is-user' : 'is-pet'"
         >
-          {{ m.content }}
+          <div class="chat-msg__text">{{ m.content }}</div>
+          <ul
+            v-if="m.role === 1 && m.sources && m.sources.length"
+            class="chat-sources"
+          >
+            <li
+              v-for="(s, i) in m.sources"
+              :key="i"
+              class="chat-sources__item"
+            >
+              <a
+                :href="s.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="chat-sources__link"
+              >
+                <svg
+                  class="ico-globe"
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                  />
+                  <path d="M3 12h18" />
+                  <path d="M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18" />
+                </svg>
+                <span class="chat-sources__title">{{ s.title || s.url }}</span>
+              </a>
+            </li>
+          </ul>
         </div>
         <div
           v-if="chatStore.streamingText || chatStore.isStreaming"
           class="chat-msg is-pet"
         >
-          {{ chatStore.streamingText
-          }}<span
-            v-if="chatStore.isStreaming"
-            class="caret"
-            >▍</span
+          <div class="chat-msg__text">
+            {{ chatStore.streamingText
+            }}<span
+              v-if="chatStore.isStreaming"
+              class="caret"
+              >▍</span
+            >
+          </div>
+          <ul
+            v-if="chatStore.streamingSources.length"
+            class="chat-sources"
           >
+            <li
+              v-for="(s, i) in chatStore.streamingSources"
+              :key="i"
+              class="chat-sources__item"
+            >
+              <a
+                :href="s.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="chat-sources__link"
+              >
+                <svg
+                  class="ico-globe"
+                  viewBox="0 0 24 24"
+                  width="12"
+                  height="12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                  />
+                  <path d="M3 12h18" />
+                  <path d="M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18" />
+                </svg>
+                <span class="chat-sources__title">{{ s.title || s.url }}</span>
+              </a>
+            </li>
+          </ul>
         </div>
         <p
           v-if="!chatStore.messages.length && !chatStore.streamingText"
@@ -170,6 +252,7 @@ onUnmounted((): void => {
         </p>
       </div>
       <ChatInput
+        v-model:web-search="webSearch"
         class="chat-composer"
         :disabled="chatStore.isStreaming"
         @send="onSend"
@@ -307,6 +390,46 @@ onUnmounted((): void => {
   background: var(--matcha-deep);
   color: #fff;
   border-bottom-right-radius: 6px;
+}
+/* 气泡内引用来源条 */
+.chat-msg__text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-sources {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chat-sources__item {
+  font-size: 11px;
+}
+.chat-sources__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.ico-globe {
+  flex-shrink: 0;
+}
+.chat-sources__link:hover {
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+.chat-sources__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
 }
 .caret {
   margin-left: 1px;

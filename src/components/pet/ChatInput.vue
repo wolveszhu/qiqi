@@ -4,6 +4,9 @@
  *
  * 原窗口 A 版本里的点击穿透切换（`setClickThroughEnabled`）与可见性 prop 属**桌宠层专属**，
  * 对话迁入窗口 B（普通窗口、无穿透）后已移除，本组件只保留纯输入职责。
+ *
+ * 「联网搜索」开关：受控 `webSearch`（`v-model:webSearch`），开/关状态由父级持有，
+ * 仅做展示与 emit，不耦合任何业务逻辑（搜索是否真正发起由后端按配置裁决）。
  */
 
 import { ref } from "vue";
@@ -12,11 +15,16 @@ withDefaults(
   defineProps<{
     /** 流式中禁用发送（防并发流）。 */
     disabled?: boolean;
+    /** 联网搜索开关（受控）。 */
+    webSearch?: boolean;
   }>(),
-  { disabled: false },
+  { disabled: false, webSearch: false },
 );
 
-const emit = defineEmits<{ (e: "send", text: string): void }>();
+const emit = defineEmits<{
+  (e: "send", text: string): void;
+  (e: "update:webSearch", v: boolean): void;
+}>();
 
 const draft = ref("");
 
@@ -45,6 +53,36 @@ function onKeydown(e: KeyboardEvent): void {
       :disabled="disabled"
       @keydown="onKeydown"
     ></textarea>
+    <button
+      class="composer__web"
+      type="button"
+      :class="{ 'is-on': webSearch }"
+      :title="webSearch ? '联网搜索已开启（消耗更多额度）' : '联网搜索已关闭'"
+      :aria-pressed="webSearch"
+      @click="emit('update:webSearch', !webSearch)"
+    >
+      <svg
+        class="ico-globe"
+        viewBox="0 0 24 24"
+        width="15"
+        height="15"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <circle
+          cx="12"
+          cy="12"
+          r="9"
+        />
+        <path d="M3 12h18" />
+        <path d="M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18" />
+      </svg>
+      <span>联网</span>
+    </button>
     <button
       class="composer__send"
       type="button"
@@ -79,6 +117,31 @@ function onKeydown(e: KeyboardEvent): void {
 }
 .composer__field:disabled {
   opacity: 0.6;
+}
+.composer__web {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface-panel);
+  color: var(--ink-soft);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.composer__web:hover {
+  border-color: var(--peach);
+  color: var(--peach-deep, #e07a4f);
+}
+.composer__web.is-on {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--peach, #ffc3a0), var(--butter, #ffe3a3));
+  color: var(--ink);
 }
 .composer__send {
   align-self: stretch;

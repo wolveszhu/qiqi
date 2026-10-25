@@ -15,7 +15,7 @@ use crate::config::EMBEDDING_DIM;
 
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1；`connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 8;
+pub const TARGET_VERSION: usize = 9;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移 → M4 dnd/频率 → M5 自定义模型表 → M6 内置模型表 → M7 清空三档）。
 ///
@@ -57,6 +57,9 @@ pub fn chain() -> Migrations<'static> {
         // M8：内置体验额度用量明细（quota_usage）+ 月度汇总缓存（quota_usage_monthly）。
         // 只记内置段（tier='builtin'）；自定义 BYOK 不落库、不展示。
         M::up(include_str!("migrations/M8__quota_usage.sql")),
+        // M9：联网搜索服务配置（search_settings，单一行 id=1，BYOK）。
+        // provider/api_key/enabled/max_results/lang；Key 仅库内流转，接口不回明文。
+        M::up(include_str!("migrations/M9__search_settings.sql")),
     ])
 }
 

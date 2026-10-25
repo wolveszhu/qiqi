@@ -8,13 +8,15 @@ import { callCommand } from "./client";
 import type { ChatMessageDto, ChatSessionDto, FilePayload } from "./types";
 
 /** 发起一次对话（流式结果经事件返回）。sessionId 由调用方生成（crypto.randomUUID()）。
- *  attachments 可选（D1.5 多模态；缺省纯文本，向后兼容）。 */
+ *  attachments 可选（D1.5 多模态；缺省纯文本，向后兼容）。
+ *  webSearch 可选：开启「联网搜索」开关时传 true（后端按配置回落普通对话）。 */
 export async function sendStream(
   sessionId: string,
   text: string,
   attachments: FilePayload[] = [],
+  webSearch = false,
 ): Promise<void> {
-  await callCommand("chat_send_stream", { sessionId, text, attachments });
+  await callCommand("chat_send_stream", { sessionId, text, attachments, webSearch });
 }
 
 /** 解析拖入文件（Rust 读文件边界隔离；返回结构化负载，超限/非法 → AppError）。 */

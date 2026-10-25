@@ -17,12 +17,13 @@ use tauri::async_runtime;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::db::repositories::{
-    custom_model_settings, default_model_settings, messages, vec_memory,
+    custom_model_settings, default_model_settings, messages, search_settings, vec_memory,
 };
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, ChatRequest, LlmClient, LlmTarget, ReqwestLlmClient};
-use crate::llm::prompt::{RelationView, RetrievedContext, build_system_prompt};
+use crate::llm::prompt::{RelationView, RetrievedContext, build_system_prompt, format_web_results};
 use crate::llm::router::{self, ModelChain};
+use crate::llm::web_search::{self, SearchResult};
 use crate::state::AppState;
 
 /// 会话取消标志注册表（per-session；abort 命令置位，流循环检查）。
@@ -54,6 +55,22 @@ struct StreamError {
     message: String,
 }
 
+/// 联网搜索引用来源（随 `chat:stream:sources` 下发，前端气泡底部渲染）。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamSources {
+    session_id: String,
+    sources: Vec<ChatSource>,
+}
+
+/// 单条引用来源（标题 + 链接；前端按 URL 新窗口打开）。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatSource {
+    title: String,
+    url: String,
+}
+
 /// 拖入/附件负载（D1.5；与前端 FilePayload 对齐，向后兼容：缺省纯文本）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +95,7 @@ pub async fn chat_send_stream(
     session_id: String,
     text: String,
     attachments: Vec<FilePayload>,
+    web_search: bool,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let client = ReqwestLlmClient::new(crate::config::EMBEDDING_DIM);
@@ -144,6 +162,44 @@ pub async fn chat_send_stream(
     .await
     .map_err(|e| AppError::Llm(format!("检索任务失败: {e}")))??;
 
+    // ③.5 联网搜索（应用侧检索增强；仅开关开启且已配置 Key 时发起）。
+    // 失败/未配置/空结果 → 静默回落普通对话（不中断、不报错，应用不崩不卡）。
+    let web_results: Option<Vec<SearchResult>> = if web_search {
+        let settings = {
+            let conn = state
+                .db
+                .lock()
+                .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+            search_settings::get(&conn)
+        };
+        match settings {
+            Ok(s) if s.is_ready() => match web_search::web_search(&s, &text).await {
+                Ok(r) if !r.is_empty() => {
+                    // 下发引用来源（前端气泡底部渲染）；注入上下文在 build_chat_request 内追加
+                    let _ = app.emit(
+                        "chat:stream:sources",
+                        StreamSources {
+                            session_id: session_id.clone(),
+                            sources: r
+                                .iter()
+                                .map(|x| ChatSource { title: x.title.clone(), url: x.url.clone() })
+                                .collect(),
+                        },
+                    );
+                    Some(r)
+                },
+                Ok(_) => None,
+                Err(e) => {
+                    eprintln!("[web_search] 失败，回落普通对话: {e}");
+                    None
+                },
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // ④ 组装请求（系统 Prompt + 摘要头 + 最近 N 条 + 本条）
     // E3.5：慢回复基调——读取上一轮响应耗时，超阈值则本轮回注轻量歉意（下一轮生效）
     let slow_reply = {
@@ -159,10 +215,13 @@ pub async fn chat_send_stream(
             &conn,
             &session_id,
             &retrieved,
-            (relation.0, relation.1),
-            &text,
-            &attachments,
-            slow_reply,
+            ChatBuildInput {
+                relation: (relation.0, relation.1),
+                text: &text,
+                attachments: &attachments,
+                slow_reply,
+                web_results: web_results.as_deref(),
+            },
         )?
     };
 
@@ -645,17 +704,25 @@ fn async_block<F: std::future::Future>(fut: F) -> Result<F::Output, AppError> {
     }
 }
 
+/// `build_chat_request` 入参（打包避免 `too_many_arguments`；生命周期随请求组装）。
+struct ChatBuildInput<'a> {
+    relation: (i64, String),
+    text: &'a str,
+    attachments: &'a [FilePayload],
+    slow_reply: bool,
+    web_results: Option<&'a [SearchResult]>,
+}
+
 /// 组装对话请求：System Prompt + 摘要头 + 最近 N 条 + 本条消息（含多模态附件）。
+///
+/// `web_results`：联网检索到的资料（应用侧检索增强）；非空时追加到 system 上下文段。
 fn build_chat_request(
     conn: &rusqlite::Connection,
     session_id: &str,
     retrieved: &RetrievedContext,
-    relation: (i64, String),
-    text: &str,
-    attachments: &[FilePayload],
-    slow_reply: bool,
+    input: ChatBuildInput<'_>,
 ) -> Result<ChatRequest, AppError> {
-    let view = RelationView { level: relation.0, pet_name: relation.1 };
+    let view = RelationView { level: input.relation.0, pet_name: input.relation.1 };
     // C6.6 傲娇：距上次互动 ≥3 天 → 注入傲娇基调（用户主动对话同样生效）
     let last_interaction =
         crate::db::repositories::pet_states::get(conn).ok().and_then(|p| p.last_interaction);
@@ -664,9 +731,11 @@ fn build_chat_request(
             last_interaction.as_deref(),
             chrono::Local::now(),
         ),
-        slow_reply,
+        slow_reply: input.slow_reply,
     };
     let mut system = build_system_prompt(retrieved, &view, &ctx);
+    // 联网检索资料段（空则无追加；纯函数，见 prompt::format_web_results）
+    system.push_str(&format_web_results(input.web_results.unwrap_or(&[])));
 
     // 摘要头（会话超阈值后由蒸馏生成）
     if let Some(summary) = crate::db::repositories::summaries::get(conn, session_id)? {
@@ -686,11 +755,12 @@ fn build_chat_request(
         });
     }
     // 本条消息：有附件 → vision content 数组（文本 part + 图片 part）；否则纯文本
-    let user_content = if attachments.is_empty() {
-        crate::llm::client::MessageContent::Text(text.to_string())
+    let user_content = if input.attachments.is_empty() {
+        crate::llm::client::MessageContent::Text(input.text.to_string())
     } else {
-        let mut parts = vec![crate::llm::client::ContentPart::Text { text: text.to_string() }];
-        for a in attachments {
+        let mut parts =
+            vec![crate::llm::client::ContentPart::Text { text: input.text.to_string() }];
+        for a in input.attachments {
             if a.kind == "image" {
                 parts.push(crate::llm::client::ContentPart::ImageUrl {
                     image_url: crate::llm::client::ImageUrl { url: a.content.clone() },
