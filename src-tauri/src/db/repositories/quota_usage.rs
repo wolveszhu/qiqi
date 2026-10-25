@@ -132,6 +132,10 @@ pub fn monthly(conn: &Connection, period_key: &str) -> Result<QuotaUsageMonthlyR
 }
 
 /// 读月度明细（倒序；limit 用于限制条数）。
+///
+/// 存储口径与全应用一致：`created_at` 为 UTC（`CURRENT_TIMESTAMP`），此处经
+/// `datetime(created_at, 'localtime')` 转本地时区再返回，避免前端把 UTC 当本地时间展示
+/// （UTC+8 用户会看到慢 8 小时）。排序仍按原始 UTC 列，单调平移不影响顺序。
 pub fn recent(
     conn: &Connection,
     period_key: &str,
@@ -139,9 +143,9 @@ pub fn recent(
 ) -> Result<Vec<QuotaUsageDetailRow>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, created_at, period_key, scene, tier, model, prompt_tokens, \
-                    completion_tokens, total_tokens, credits, token_source, ok, error \
-             FROM quota_usage WHERE period_key = ?1 ORDER BY id DESC LIMIT ?2",
+            "SELECT id, datetime(created_at, 'localtime') AS created_at, period_key, scene, tier, \
+                    model, prompt_tokens, completion_tokens, total_tokens, credits, token_source, ok, error \
+             FROM quota_usage WHERE period_key = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2",
         )
         .map_err(AppError::from)?;
     let rows = stmt
@@ -318,5 +322,24 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM quota_usage_monthly", [], |r| r.get(0))
             .expect("查汇总");
         assert_eq!(count, 1, "旧月汇总同步清理");
+    }
+
+    #[test]
+    fn recent_returns_local_time_not_raw_utc() {
+        let (_dir, conn) = fresh_db();
+        record(&conn, &input("2026-10-25", "chat", "builtin", 1, 0, true, None)).expect("记账");
+        // 裸库存储为 UTC（与全应用约定一致）
+        let raw: String =
+            conn.query_row("SELECT created_at FROM quota_usage", [], |r| r.get(0)).expect("读裸值");
+        // recent 必经 localtime 转换，结果应与「裸值 + localtime」一致
+        let converted: String = conn
+            .query_row("SELECT datetime(created_at, 'localtime') FROM quota_usage", [], |r| {
+                r.get(0)
+            })
+            .expect("读转换值");
+        let rows = recent(&conn, "2026-10", 10).expect("读明细");
+        assert_eq!(rows[0].created_at, converted, "recent 应返回本地时间而非 UTC 原文");
+        // UTC+8 环境下本地值应领先裸值 8 小时；CI(UTC) 下两者相等也属正确，仅校验格式合法
+        assert!(chrono::NaiveDateTime::parse_from_str(&raw, "%Y-%m-%d %H:%M:%S").is_ok());
     }
 }
