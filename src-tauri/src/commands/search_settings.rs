@@ -39,14 +39,7 @@ fn get_inner(conn: &Connection) -> Result<SearchSettingsDto, AppError> {
     let max_results = row.max_results;
     let provider = row.provider;
     let lang = row.lang;
-    Ok(SearchSettingsDto {
-        provider,
-        has_key,
-        key_fingerprint,
-        enabled,
-        max_results,
-        lang,
-    })
+    Ok(SearchSettingsDto { provider, has_key, key_fingerprint, enabled, max_results, lang })
 }
 
 /// inner（薄壳 → inner）：provider 校验已下沉至仓储 `save`，此处仅转发。
@@ -63,11 +56,7 @@ fn save_inner(conn: &Connection, payload: SaveSearchSettingsPayload) -> Result<(
 
 /// Key 末 4 位指纹（脱敏口径与 settings 档位一致：单一真源）。
 fn key_fingerprint(api_key: &str) -> Option<String> {
-    if api_key.len() >= 4 {
-        Some(api_key[api_key.len() - 4..].to_string())
-    } else {
-        None
-    }
+    if api_key.len() >= 4 { Some(api_key[api_key.len() - 4..].to_string()) } else { None }
 }
 
 /// 数据库锁错误统一映射（与既有命令层口径一致）。

@@ -1,10 +1,11 @@
 //! pet 命令域（薄层）：桌宠资料读写；**好感度结算/流水查询属 C5（`affection` 域）**。
 //!
 //! 纪律（commands/ 红线）：本文件只做参数校验 + 转发领域模块；不写业务规则、
-//! 不直接拼 SQL、不 emit——emit 在 `affection` 域完成。
+//! 不直接拼 SQL。好感度结算的 emit 在 `affection` 域完成；
+//! 本域仅 `pet_update_state` 在形象 id 变化时 emit `pet:renderer:changed`（窗口 A 重建渲染器）。
 
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use rusqlite::Connection;
 
@@ -31,6 +32,7 @@ pub fn pet_get_state(app: AppHandle, state: State<'_, AppState>) -> Result<PetSt
         relationship_level: row.relationship_level,
         affection_points: row.affection_points,
         last_interaction: row.last_interaction,
+        active_renderer: row.active_renderer,
     })
 }
 
@@ -67,13 +69,29 @@ fn sleep_decay_inner(conn: &Connection, action: &str) -> Result<(), AppError> {
 /// 更新桌宠资料（pet_name / active_renderer / renderer_config）。
 ///
 /// 注意：好感度相关字段不接受修改——加分与衰减结算属 C5（`pet_settle_affection`）。
+///
+/// 形象即时生效：仅当 `active_renderer` **确实变化**时才 emit `pet:renderer:changed`
+/// （双窗口独立 webview、store 不共享，窗口 A 靠该事件当场重建渲染器；
+/// 不改形象时不多读一次库，避免干扰 petName 的 300ms 防抖保存）。
 #[tauri::command]
 pub fn pet_update_state(
     payload: UpdatePetPayload,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<PetStateDto, AppError> {
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
-    pet_update_inner(&conn, payload)
+    let prev_renderer = if payload.active_renderer.is_some() {
+        Some(pet_states::get(&conn)?.active_renderer)
+    } else {
+        None
+    };
+    let dto = pet_update_inner(&conn, payload)?; // 纯逻辑（无 AppHandle），可直测
+    if let Some(prev) = prev_renderer
+        && dto.active_renderer != prev
+    {
+        let _ = app.emit("pet:renderer:changed", &dto.active_renderer);
+    }
+    Ok(dto)
 }
 
 /// 纯逻辑（F1.2 可直测）：资料更新（好感度字段只读）。
@@ -93,6 +111,7 @@ fn pet_update_inner(conn: &Connection, payload: UpdatePetPayload) -> Result<PetS
         relationship_level: row.relationship_level,
         affection_points: row.affection_points,
         last_interaction: row.last_interaction,
+        active_renderer: row.active_renderer,
     })
 }
 

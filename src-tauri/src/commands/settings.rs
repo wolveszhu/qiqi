@@ -77,8 +77,16 @@ fn set_quota_mode_inner(conn: &Connection, mode: i64) -> Result<(), AppError> {
     if mode != QUOTA_MODE_EMBEDDED && mode != QUOTA_MODE_BYOK {
         return Err(AppError::Config(format!("未知额度模式: {mode}")));
     }
-    if mode == QUOTA_MODE_BYOK && !app_settings::main_tier_has_key(conn)? {
-        return Err(AppError::Config("切换自带 Key 前请先配置主对话档（main）的 API Key".into()));
+    // BYOK 前置：必须有可用 Key 来源，否则该模式下编排链无目标、对话直接落到本地兜底话术。
+    // 三档（main）已被自定义平台取代、UI 不再暴露，故以**自定义平台**为准；
+    // legacy main 档仍有 Key 的存量库一并放行（兼容）。
+    if mode == QUOTA_MODE_BYOK
+        && !(custom_model_settings::has_enabled_key(conn)?
+            || app_settings::main_tier_has_key(conn)?)
+    {
+        return Err(AppError::Config(
+            "切换自带 Key 前，请先在上方添加并启用一个自定义平台（填好 API Key）".into(),
+        ));
     }
     app_settings::set_quota_mode(conn, mode)
 }
