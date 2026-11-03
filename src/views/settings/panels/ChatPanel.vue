@@ -9,7 +9,7 @@
  * 重启应用即开新会话（用户决策），历史仍可从左侧列表回看。
  */
 
-import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { nextTick, onActivated, onMounted, onUnmounted, ref, watch } from "vue";
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -93,6 +93,12 @@ onMounted(async (): Promise<void> => {
       void refreshSessions();
     }),
   );
+});
+
+// 切回对话 Tab（KeepAlive 激活）→ 锚定到最新一条。
+// 用户在历史回看后切走再回来，应直接见最新消息，而非停留在之前的滚动位置（可能在顶部）。
+onActivated((): void => {
+  scrollToBottom();
 });
 
 onUnmounted((): void => {
