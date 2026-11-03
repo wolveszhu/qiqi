@@ -15,6 +15,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import ChatInput from "../../../components/pet/ChatInput.vue";
 import { deleteSession, getMessages, listSessions } from "../../../api/chat";
+import { getWebSearch, setWebSearch } from "../../../api/settings";
 import { useChatStream } from "../../../composables/useChatStream";
 import { pushToast } from "../../../composables/useToast";
 import {
@@ -82,7 +83,16 @@ watch(
   () => scrollToBottom(),
 );
 
+// 联网开关持久化：切走/重启后保持开启状态（含首次加载失败回落默认关闭）
+watch(webSearch, (value: boolean): void => {
+  void setWebSearch(value).catch((e: unknown) =>
+    console.warn("[chat] 联网搜索开关保存失败", e),
+  );
+});
+
 onMounted(async (): Promise<void> => {
+  // 恢复上次保存的联网开关（跨重启持久化；读取失败不影响对话，回落默认关闭）
+  webSearch.value = await getWebSearch().catch(() => false);
   await refreshSessions();
   // 继续最近会话；无历史会话则保持空白（首条消息发送时才生成 sessionId）
   const recent = chatStore.sessions[0];
