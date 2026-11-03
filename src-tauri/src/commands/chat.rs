@@ -166,10 +166,8 @@ pub async fn chat_send_stream(
     // 失败/未配置/空结果 → 静默回落普通对话（不中断、不报错，应用不崩不卡）。
     let web_results: Option<Vec<SearchResult>> = if web_search {
         let settings = {
-            let conn = state
-                .db
-                .lock()
-                .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+            let conn =
+                state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
             search_settings::get(&conn)
         };
         match settings {

@@ -400,6 +400,14 @@ impl MockLlmClient {
         }
     }
 
+    /// 空响应桩：**连接正常但一个 delta 都没有**。
+    ///
+    /// 复现推理型模型（R1 / Qwen3 / GLM 思考模式）把 `max_tokens` 耗在
+    /// `reasoning_content` 上、`delta.content` 全程为空的场景。
+    pub fn empty_text() -> Self {
+        Self { fail_urls: vec![], deltas: vec![], usage: None, fail_embed: false, embed_dim: 8 }
+    }
+
     /// 指定流末用量帧（额度记账链路的单测桩）。
     pub fn with_usage(mut self, prompt: i64, completion: i64) -> Self {
         self.usage = Some(TokenUsage { prompt_tokens: prompt, completion_tokens: completion });

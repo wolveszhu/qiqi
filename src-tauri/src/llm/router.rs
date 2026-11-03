@@ -228,6 +228,18 @@ pub async fn chat_text_with_chain(
         }
         match collect_full_text(client, target, request.clone()).await {
             Ok((text, usage)) => {
+                // **空响应不算成功**：推理型模型（R1 / Qwen3 / GLM 思考模式）把思维链放在
+                // `delta.reasoning_content`，而 client 只收 `delta.content`；
+                // 当 `max_tokens` 被思考过程耗光时正文就是空的。
+                // 此时必须继续 failover，否则"成功"了一个空结果，
+                // 日记/蒸馏拿到空串只能报错（且白白占了链上第一个位置）。
+                if text.trim().is_empty() {
+                    chain_log.push(format!(
+                        "[{}] {} 返回空内容（可能被推理过程耗光 max_tokens）",
+                        target.tier, target.model
+                    ));
+                    continue;
+                }
                 if let Some((start, end)) = chain.builtin_range
                     && idx >= start
                     && idx < end
@@ -515,6 +527,26 @@ mod tests {
         let outcome = block_on(chat_text_with_chain(&client, &chain, req)).expect("首个目标成功");
         assert_eq!(outcome.text, "你好，我是喵喵", "增量应被收拢为全文");
         assert_eq!(outcome.hit.map(|h| h.tier), Some("builtin".into()));
+    }
+
+    #[test]
+    fn chat_text_with_chain_treats_empty_text_as_failure() {
+        // 空响应（推理型模型耗光 max_tokens）必须算失败，
+        // 否则会被当成成功、占住链位，日记/蒸馏只能拿到空串报错。
+        let tiered = fixture();
+        let builtin = [builtin_row("硅基", &["b1"])];
+        let chain = build_chain(&ChainInput {
+            custom: &[],
+            builtin: &builtin,
+            builtin_cursor: 0,
+            builtin_last_ok: None,
+            tiered: &tiered,
+        });
+        let client = MockLlmClient::empty_text();
+        let req = ChatRequest { messages: vec![], max_tokens: None };
+        let err =
+            block_on(chat_text_with_chain(&client, &chain, req)).expect_err("空文本不应被视为成功");
+        assert!(err.to_string().contains("空内容"), "失败原因应点明是空内容: {err}");
     }
 
     #[test]

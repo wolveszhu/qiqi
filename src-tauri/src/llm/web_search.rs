@@ -91,10 +91,8 @@ async fn tavily_request(
         .await
         .map_err(|e| AppError::Llm(format!("Tavily 请求失败: {e}")))?;
     ensure_ok!(resp);
-    let v: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Llm(format!("Tavily 响应解析失败: {e}")))?;
+    let v: Value =
+        resp.json().await.map_err(|e| AppError::Llm(format!("Tavily 响应解析失败: {e}")))?;
     Ok(parse_tavily(&v))
 }
 
@@ -107,11 +105,8 @@ pub(crate) fn parse_tavily(v: &Value) -> Vec<SearchResult> {
                 .filter_map(|item| {
                     let title = item.get("title")?.as_str()?.to_string();
                     let url = item.get("url")?.as_str()?.to_string();
-                    let snippet = item
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let snippet =
+                        item.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
                     Some(SearchResult { title, url, snippet: truncate(&snippet) })
                 })
                 .collect()
@@ -136,10 +131,8 @@ async fn brave_request(
         .await
         .map_err(|e| AppError::Llm(format!("Brave 请求失败: {e}")))?;
     ensure_ok!(resp);
-    let v: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Llm(format!("Brave 响应解析失败: {e}")))?;
+    let v: Value =
+        resp.json().await.map_err(|e| AppError::Llm(format!("Brave 响应解析失败: {e}")))?;
     Ok(parse_brave(&v))
 }
 
@@ -153,11 +146,8 @@ pub(crate) fn parse_brave(v: &Value) -> Vec<SearchResult> {
                 .filter_map(|item| {
                     let title = item.get("title")?.as_str()?.to_string();
                     let url = item.get("url")?.as_str()?.to_string();
-                    let snippet = item
-                        .get("description")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let snippet =
+                        item.get("description").and_then(|c| c.as_str()).unwrap_or("").to_string();
                     Some(SearchResult { title, url, snippet: truncate(&snippet) })
                 })
                 .collect()
@@ -185,10 +175,8 @@ async fn serpapi_request(
         .await
         .map_err(|e| AppError::Llm(format!("SerpAPI 请求失败: {e}")))?;
     ensure_ok!(resp);
-    let v: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Llm(format!("SerpAPI 响应解析失败: {e}")))?;
+    let v: Value =
+        resp.json().await.map_err(|e| AppError::Llm(format!("SerpAPI 响应解析失败: {e}")))?;
     Ok(parse_serpapi(&v))
 }
 
@@ -201,11 +189,8 @@ pub(crate) fn parse_serpapi(v: &Value) -> Vec<SearchResult> {
                 .filter_map(|item| {
                     let title = item.get("title")?.as_str()?.to_string();
                     let url = item.get("link")?.as_str()?.to_string();
-                    let snippet = item
-                        .get("snippet")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let snippet =
+                        item.get("snippet").and_then(|c| c.as_str()).unwrap_or("").to_string();
                     Some(SearchResult { title, url, snippet: truncate(&snippet) })
                 })
                 .collect()

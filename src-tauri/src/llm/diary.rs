@@ -24,7 +24,7 @@ pub fn build_diary_prompt(name: &str) -> String {
         "你是「{name}」，一只住在用户电脑桌面的猫咪。\
 根据下面的对话记录，以第一人称写一篇当天的日记（像猫猫的碎碎念，2-4 句，可爱、口语化）。\
 只输出 JSON：{{\"content\":\"日记正文\",\"mood\":0}}，mood 取 0=开心/1=平静/2=低落。\
-不要多余文字，不要包含任何数字、统计或量化信息，只用叙述。",
+不要输出思考过程、解释或任何多余文字，不要包含任何数字、统计或量化信息，只用叙述。",
         name = name
     )
 }
@@ -110,7 +110,9 @@ pub async fn generate_diary_text(
             ChatMessage { role: "system".into(), content: build_diary_prompt(pet_name).into() },
             ChatMessage { role: "user".into(), content: transcript.to_string().into() },
         ],
-        max_tokens: Some(300),
+        // 正文只要几十字，但**推理型模型**会把思考过程算进 `max_tokens`——
+        // 300 会被 thinking 吃光、正文为空（client 只收 `delta.content`，不收 `reasoning_content`）。
+        max_tokens: Some(800),
     };
     let outcome = router::chat_text_with_chain(client, chain, request).await?;
     let draft =

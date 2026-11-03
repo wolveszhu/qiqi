@@ -75,7 +75,8 @@ pub fn strip_digits(text: &str) -> String {
 
 /// 解析禁忌判定输出（**三分支**：违规 / 未违规 / 脏输出 → None 宁漏勿误）。
 pub fn parse_taboo(raw: &str) -> Option<TabooHit> {
-    let json_text = strip_code_fence(raw.trim());
+    // 先去围栏，再容忍散文包裹（推理型模型常前后带说明文字）
+    let json_text = extract_json_object(strip_code_fence(raw.trim()));
     if json_text.is_empty() {
         return None;
     }
@@ -137,6 +138,18 @@ fn strip_code_fence(raw: &str) -> &str {
         return rest[..end].trim();
     }
     t
+}
+
+/// 从**可能夹带散文**的输出里抠出 JSON 对象片段（保守：找不到就原样返回）。
+///
+/// 推理型模型常在 JSON 前后附带说明（"好的，我来判断：{...}"），
+/// 此时严格 `serde_json::from_str` 会失败 → 判定静默失效。
+/// 这里退一步做宽松提取；仍解析不出则由上层按"宁漏勿误"返回 None。
+fn extract_json_object(raw: &str) -> &str {
+    match (raw.find('{'), raw.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &raw[start..=end],
+        _ => raw,
+    }
 }
 
 /// 蒸馏任务输入（C7 扩展：增加任务枚举后复用同一执行器）。
@@ -406,7 +419,12 @@ async fn detect_taboo(
                 content: format!("用户：{user_text}\n助手：{assistant_text}").into(),
             },
         ],
-        max_tokens: Some(80), // 情绪短句一句话，限短生成
+        // 判定结果本体只有一句 JSON，但**推理型模型**（R1 / Qwen3 / GLM-Z1）会把思考过程
+        // 算进 `max_tokens`，而 client 只收 `delta.content` 不收 `reasoning_content`——
+        // 80 会被 thinking 吃光、正文为空，于是 `parse_taboo` 永远拿到空串返回 None，
+        // 禁忌检测在推理模型上**静默失效**。故按"思考 + 短输出"给足预算。
+        // （空响应本身另有兜底：`chat_text_with_chain` 已视其为失败并继续 failover。）
+        max_tokens: Some(400),
     };
     router::chat_text_with_chain(client, chain, request).await
 }
@@ -599,6 +617,17 @@ mod tests {
         assert!(parse_taboo("").is_none());
         assert!(parse_taboo("我觉得没有违规喵").is_none(), "非 JSON → None 宁漏勿误");
         assert!(parse_taboo("```json\n不是JSON\n```").is_none());
+    }
+
+    #[test]
+    fn taboo_json_wrapped_in_prose_still_parses() {
+        // 推理型模型常在 JSON 前后带说明文字；此前严格 from_str 会失败 → 静默失效
+        let raw = "好的，我来判断一下：\n\
+                   {\"violated\":1,\"severity\":2,\"emotion_hint\":\"哼，不理你了\"}\n\
+                   希望对你有帮助。";
+        let hit = parse_taboo(raw).expect("散文包裹的 JSON 也应解析出来");
+        assert_eq!(hit.severity, 2);
+        assert_eq!(hit.emotion_hint, "哼，不理你了");
     }
 
     #[test]
