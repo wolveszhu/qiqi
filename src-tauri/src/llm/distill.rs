@@ -218,11 +218,15 @@ pub fn add_fact_with_embedding(
 ///
 /// **embed 失败不阻断沉淀**：事实行已入库（仍能被 `facts` 近因检索命中），
 /// 仅跳过该条的向量写入——向量端点不可用时记忆功能降级但不报错。
+///
+/// **锁纪律（本次修复）**：`db` 以 `&Mutex<Connection>` 传入，所有 DB 段走
+/// 「取锁-用-释放」的毫秒级短段；**await 点（LLM/embed）严禁持锁**——同步 IPC
+/// 命令在 Tauri 主线程上等锁，锁跨网络调用会冻结整个应用（窗口假死）。
 pub async fn run_distill(
     client: &dyn LlmClient,
     chain: &ModelChain,
     embed_target: &LlmTarget,
-    conn: &rusqlite::Connection,
+    db: &std::sync::Mutex<rusqlite::Connection>,
     input: &DistillInput,
     pet_name: &str,
 ) -> Result<DistillOutcome, AppError> {
@@ -232,7 +236,7 @@ pub async fn run_distill(
         match extract_facts(client, chain, &input.user_text, &input.assistant_text).await {
             Ok(outcome) => {
                 record_outcome(
-                    conn,
+                    db,
                     "distill",
                     &outcome,
                     input.user_text.chars().count() + input.assistant_text.chars().count(),
@@ -245,16 +249,20 @@ pub async fn run_distill(
             },
         };
 
-    // 落库 + 向量（embed 失败 → 跳过写向量，事实保留）
+    // 落库 + 向量（embed 失败 → 跳过写向量，事实保留）；embed 在锁外，写库是短锁段
     let mut written = 0usize;
     for (content, category, confidence) in &extracted {
-        let fact_id = facts::insert(conn, *category, content, *confidence)?;
+        let fact_id = {
+            let conn = lock_conn(db)?;
+            facts::insert(&conn, *category, content, *confidence)?
+        };
         written += 1;
         match client.embed(embed_target, vec![content.clone()]).await {
             Ok(vectors) => {
                 if let Some(embedding) = vectors.into_iter().next() {
+                    let conn = lock_conn(db)?;
                     vec_memory::insert(
-                        conn,
+                        &conn,
                         fact_id,
                         &vec_memory::embedding_bytes(&embedding),
                         content,
@@ -267,20 +275,29 @@ pub async fn run_distill(
         }
     }
 
-    // ② 会话摘要（消息数超阈值才触发）
-    let count: i64 = conn
-        .query_row(
+    // ② 会话摘要（消息数超阈值才触发；计数为短锁段）
+    let count: i64 = {
+        let conn = lock_conn(db)?;
+        conn.query_row(
             "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
             rusqlite::params![input.session_id],
             |row| row.get(0),
         )
-        .map_err(AppError::from)?;
+        .map_err(AppError::from)?
+    };
     // 摘要失败同样不中断（同上：不能连累 ③④ 的好感度结算）
     let summarized = if count >= crate::config::SUMMARY_TRIGGER_COUNT {
-        match summarize_session(client, chain, conn, &input.session_id).await {
+        match summarize_session(client, chain, db, &input.session_id).await {
             Ok(outcome) => {
-                record_outcome(conn, "distill", &outcome, outcome.text.chars().count());
-                crate::db::repositories::summaries::upsert(conn, &input.session_id, &outcome.text)?;
+                {
+                    let conn = lock_conn(db)?;
+                    record_outcome_conn(&conn, "distill", &outcome, outcome.text.chars().count());
+                    crate::db::repositories::summaries::upsert(
+                        &conn,
+                        &input.session_id,
+                        &outcome.text,
+                    )?;
+                }
                 true
             },
             Err(e) => {
@@ -299,7 +316,7 @@ pub async fn run_distill(
         {
             Ok(outcome) => {
                 record_outcome(
-                    conn,
+                    db,
                     "distill",
                     &outcome,
                     input.user_text.chars().count() + input.assistant_text.chars().count(),
@@ -313,7 +330,7 @@ pub async fn run_distill(
     let taboo = match detect_taboo(client, chain, &input.user_text, &input.assistant_text).await {
         Ok(outcome) => {
             record_outcome(
-                conn,
+                db,
                 "distill",
                 &outcome,
                 input.user_text.chars().count() + input.assistant_text.chars().count(),
@@ -326,8 +343,30 @@ pub async fn run_distill(
     Ok(DistillOutcome { facts_written: written, summarized, resonance, taboo })
 }
 
-/// 记账辅助（蒸馏子步骤；失败仅 log，不影响沉淀主流程）。
+/// 短暂取锁辅助：蒸馏内所有 DB 段均为毫秒级读写，用完即释（await 点严禁持锁）。
+fn lock_conn(
+    db: &std::sync::Mutex<rusqlite::Connection>,
+) -> Result<std::sync::MutexGuard<'_, rusqlite::Connection>, AppError> {
+    db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))
+}
+
+/// 记账辅助（蒸馏子步骤；失败仅 log，不影响沉淀主流程）。短锁段。
 fn record_outcome(
+    db: &std::sync::Mutex<rusqlite::Connection>,
+    scene: &str,
+    outcome: &super::router::TextOutcome,
+    prompt_chars: usize,
+) {
+    // 记账失败不影响沉淀：取锁失败仅 log（与 record_call 失败同口径）
+    let Ok(conn) = lock_conn(db) else {
+        eprintln!("[quota] {scene} 记账取锁失败（跳过记账）");
+        return;
+    };
+    record_outcome_conn(&conn, scene, outcome, prompt_chars);
+}
+
+/// 记账辅助（已有连接守卫时使用，如摘要段与 upsert 同锁合并）。
+fn record_outcome_conn(
     conn: &rusqlite::Connection,
     scene: &str,
     outcome: &super::router::TextOutcome,
@@ -456,25 +495,29 @@ pub fn parse_resonance(raw: &str) -> Option<u8> {
 }
 
 /// 会话摘要（读最近消息拼给 memory 档）。
+/// 读历史为短锁段；LLM 调用在锁外（锁纪律见 `run_distill`）。
 async fn summarize_session(
     client: &dyn LlmClient,
     chain: &ModelChain,
-    conn: &rusqlite::Connection,
+    db: &std::sync::Mutex<rusqlite::Connection>,
     session_id: &str,
 ) -> Result<super::router::TextOutcome, AppError> {
-    let history = crate::db::repositories::messages::recent(
-        conn,
-        session_id,
-        crate::config::MAX_CONTEXT_MESSAGES as i64,
-    )?;
-    let transcript: String = history
-        .iter()
-        .map(|m| {
-            let role = if m.role == 0 { "用户" } else { "助手" };
-            format!("{role}：{}", m.content)
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let transcript: String = {
+        let conn = lock_conn(db)?;
+        let history = crate::db::repositories::messages::recent(
+            &conn,
+            session_id,
+            crate::config::MAX_CONTEXT_MESSAGES as i64,
+        )?;
+        history
+            .iter()
+            .map(|m| {
+                let role = if m.role == 0 { "用户" } else { "助手" };
+                format!("{role}：{}", m.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     let request = ChatRequest {
         messages: vec![
             ChatMessage {

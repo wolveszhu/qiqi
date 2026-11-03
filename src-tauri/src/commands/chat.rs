@@ -20,7 +20,7 @@ use crate::db::repositories::{
     custom_model_settings, default_model_settings, messages, search_settings, vec_memory,
 };
 use crate::error::AppError;
-use crate::llm::client::{ChatMessage, ChatRequest, LlmClient, LlmTarget, ReqwestLlmClient};
+use crate::llm::client::{ChatMessage, ChatRequest, LlmClient, ReqwestLlmClient};
 use crate::llm::prompt::{RelationView, RetrievedContext, build_system_prompt, format_web_results};
 use crate::llm::router::{self, ModelChain};
 use crate::llm::web_search::{self, SearchResult};
@@ -140,24 +140,25 @@ pub async fn chat_send_stream(
         messages::insert(&conn, &session_id, 0, &stored)?;
     }
 
-    // 蒸馏 spawn（不阻塞 done；失败静默——对话仍正常，计划 §七）
-    // ③ 混合检索（spawn_blocking：embed + KNN + facts 近因）
-    // 检索只用向量端点（内置/自定义都是对话模型，不支持 embedding）
-    let retrieval_client: Arc<dyn LlmClient> = Arc::new(client);
+    // ③ 混合检索：查询向量先算（**不持 DB 锁**）。
+    // 锁纪律（本次修复）：embed 是网络调用，向量端点失联时可达 30s 超时——原实现
+    // 持锁 `block_on(embed)` 会把 DB 锁占满整段网络时间，而面板挂载触发的同步 IPC
+    // 命令（`pet_get_state`/`settings_get_typed` 等）在 Tauri 主线程上等锁，
+    // 整个应用事件循环随之冻结（表现即「等回复时切页 → 窗口未响应/假死」）。
+    // embed 失败不阻断对话：query 向量置 None，记忆段退化为仅 facts（降级检索）。
     let embed_target = router::embed_target();
+    let query_vector = client
+        .embed(&embed_target, vec![text.clone()])
+        .await
+        .ok()
+        .and_then(|vectors| vectors.into_iter().next());
     let session_for_retrieval = session_id.clone();
-    let text_for_retrieval = text.clone();
     let app_for_retrieval = app.clone();
     let retrieved = async_runtime::spawn_blocking(move || -> Result<RetrievedContext, AppError> {
         let state = app_for_retrieval.state::<AppState>();
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
-        retrieve_context(
-            retrieval_client.as_ref(),
-            &embed_target,
-            &conn,
-            &session_for_retrieval,
-            &text_for_retrieval,
-        )
+        // DB 段只做毫秒级 KNN + facts 近因（纯 DB，禁在此调 embed/LLM）
+        retrieve_context(&conn, query_vector.as_deref(), &session_for_retrieval)
     })
     .await
     .map_err(|e| AppError::Llm(format!("检索任务失败: {e}")))??;
@@ -595,39 +596,51 @@ async fn run_chat_task(
         }
         let result = async_runtime::spawn_blocking(
             move || -> Result<crate::llm::distill::DistillOutcome, AppError> {
-                // 阻塞段：锁 DB；LLM 调用（async）经 Handle::block_on 桥接（蒸馏为后台低优任务）
                 let state = app.state::<AppState>();
-                let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
-                let pet_name = crate::db::repositories::pet_states::get(&conn)?.pet_name;
+                // 锁纪律（本次修复）：蒸馏全程含多次 LLM/embed 网络调用（每段可达 30s
+                // 超时），**严禁持锁跨任何网络调用**——同步 IPC 命令在主线程等锁，
+                // 锁被占住即整窗冻结。DB 段全部改为「取锁-用-释放」的毫秒级短段。
+                let pet_name = {
+                    let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
+                    crate::db::repositories::pet_states::get(&conn)?.pet_name
+                };
                 let rt = tokio::runtime::Handle::current();
                 let out = rt.block_on(crate::llm::distill::run_distill(
                     &distill_client,
                     &chain,
                     &embed_target,
-                    &conn,
+                    &state.db,
                     &distill_input,
                     &pet_name,
                 ))?;
 
-                // C5.5 共鸣结算（失败静默，不影响对话；conn/app 在此闭包作用域内）
-                if let Some(strength) = out.resonance
-                    && let Err(e) = crate::affection::settle_signal(
-                        &conn,
-                        &app,
-                        crate::affection::rules::AffectionSignal::Resonance(strength),
-                    )
-                {
-                    eprintln!("[affection] 共鸣结算失败: {e}");
+                // C5.5 共鸣结算（失败静默，不影响对话；短锁段）
+                if let Some(strength) = out.resonance {
+                    let settled = (|| {
+                        let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
+                        crate::affection::settle_signal(
+                            &conn,
+                            &app,
+                            crate::affection::rules::AffectionSignal::Resonance(strength),
+                        )
+                    })();
+                    if let Err(e) = settled {
+                        eprintln!("[affection] 共鸣结算失败: {e}");
+                    }
                 }
                 // C7.1 禁忌结算：severity → -10/-20/-30（affection:changed(angry) 由结算天然 emit）；
                 // 情绪化短句经 proactive:show 展示（数字已剥离，红线：话术无数值）
                 if let Some(hit) = &out.taboo {
                     let delta = crate::llm::distill::taboo_delta(hit.severity) as i8;
-                    if let Err(e) = crate::affection::settle_signal(
-                        &conn,
-                        &app,
-                        crate::affection::rules::AffectionSignal::Taboo(delta),
-                    ) {
+                    let settled = (|| {
+                        let conn = state.db.lock().map_err(|e| AppError::Db(format!("{e}")))?;
+                        crate::affection::settle_signal(
+                            &conn,
+                            &app,
+                            crate::affection::rules::AffectionSignal::Taboo(delta),
+                        )
+                    })();
+                    if let Err(e) = settled {
                         eprintln!("[affection] 禁忌结算失败: {e}");
                     }
                     let session_id =
@@ -667,39 +680,24 @@ async fn run_chat_task(
     });
 }
 
-/// 混合检索：embed(query) → KNN + facts 近因。
-/// **阻塞函数**：由调用方 spawn_blocking 包裹。
+/// 混合检索 DB 段：KNN（查询向量可选）+ facts 近因。
+/// **纯 DB、毫秒级**：由调用方持锁调用；查询向量的网络 embed 已上移至
+/// `chat_send_stream`（锁外）——本函数禁止调用 LLM/embed（锁跨网络调用会冻结整窗）。
 fn retrieve_context(
-    client: &dyn LlmClient,
-    embed_target: &LlmTarget,
     conn: &rusqlite::Connection,
+    query_vector: Option<&[f32]>,
     session_id: &str,
-    query: &str,
 ) -> Result<RetrievedContext, AppError> {
-    // embed 失败不阻断对话：记忆段退化为仅 facts（降级检索）
-    // async_block 返回 Result<F::Output, AppError>，而 embed 的 F::Output 本身
-    // 也是 Result（双层）——匹配内层即可，任何一层失败都走降级
-    let memory_hits = match async_block(client.embed(embed_target, vec![query.to_string()])) {
-        Ok(Ok(vectors)) if vectors.len() == 1 => match vectors.first() {
-            Some(v) => vec_memory::knn(conn, &vec_memory::embedding_bytes(v), 5)?
-                .into_iter()
-                .map(|(_, text)| text)
-                .collect(),
-            None => Vec::new(),
-        },
-        _ => Vec::new(),
+    let memory_hits = match query_vector {
+        Some(v) => vec_memory::knn(conn, &vec_memory::embedding_bytes(v), 5)?
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect(),
+        None => Vec::new(),
     };
     let _ = session_id; // 摘要头在 build_chat_request 内处理
     let facts_list = crate::db::repositories::facts::recent_contents(conn, 8)?;
     Ok(RetrievedContext { memory_hits, facts: facts_list })
-}
-
-/// 测试桥接：blocking 线程内执行 async（检索的 LLM 调用桥）。
-fn async_block<F: std::future::Future>(fut: F) -> Result<F::Output, AppError> {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => Ok(handle.block_on(fut)),
-        Err(e) => Err(AppError::Llm(format!("无异步运行时: {e}"))),
-    }
 }
 
 /// `build_chat_request` 入参（打包避免 `too_many_arguments`；生命周期随请求组装）。
