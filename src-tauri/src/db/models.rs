@@ -192,6 +192,10 @@ pub struct SettingsSnapshotDto {
 }
 
 /// 桌宠状态（pet_get_state / pet_update_state 返回；好感度字段只读透出）。
+///
+/// `active_renderer` 为当前生效的渲染器 id（`factory.ts` 注册表键，如 `code_cat` / `code_dog`），
+/// 供前端读出，据此渲染用户选中的那套形象——此前该字段未出现在 DTO 里，
+/// 导致形象选择从未被读回（重启后仍显示默认猫）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PetStateDto {
@@ -199,6 +203,7 @@ pub struct PetStateDto {
     pub relationship_level: i64,
     pub affection_points: i64,
     pub last_interaction: Option<String>,
+    pub active_renderer: String,
 }
 
 /// 事实条目（memory_list_facts 返回）。

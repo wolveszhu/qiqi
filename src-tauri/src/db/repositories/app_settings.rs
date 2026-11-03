@@ -171,7 +171,10 @@ pub fn save_tier(conn: &Connection, tier: &str, value: &LlmTierValue) -> Result<
     upsert_value(conn, 1, &json)
 }
 
-/// BYOK 前置校验：main 档必须已配置 Key（切 BYOK 时的最低门槛）。
+/// BYOK 前置校验之一（存量库兼容）：legacy main 档是否已配置 Key。
+///
+/// 三档已被自定义平台取代，新库的 Key 来源看 `custom_model_settings::has_enabled_key`；
+/// 本函数仅为迁移前就配过 main 档的用户保留放行通道。
 pub fn main_tier_has_key(conn: &Connection) -> Result<bool, AppError> {
     Ok(!get_tier(conn, TIER_MAIN)?.api_key.is_empty())
 }

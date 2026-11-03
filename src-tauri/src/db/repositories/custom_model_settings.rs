@@ -67,6 +67,14 @@ pub fn list_enabled_llm(conn: &Connection) -> Result<Vec<CustomModelRow>, AppErr
     Ok(list_all(conn)?.into_iter().filter(|r| r.is_enabled() && r.setting_type == 1).collect())
 }
 
+/// 是否存在「已启用**且已填 Key**」的 LLM 平台。
+///
+/// 三档（main/memory/fallback）已被自定义平台取代，BYOK 的"自带 Key"来源即本表，
+/// 故切 BYOK 的前置校验改看这里（停用或未填 Key 的平台撑不起对话链路）。
+pub fn has_enabled_key(conn: &Connection) -> Result<bool, AppError> {
+    Ok(list_enabled_llm(conn)?.iter().any(|r| !r.api_key.is_empty()))
+}
+
 /// 读取单条（不存在返回 None）。
 pub fn get(conn: &Connection, id: i64) -> Result<Option<CustomModelRow>, AppError> {
     let mut stmt = conn
