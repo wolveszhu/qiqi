@@ -91,6 +91,20 @@ fn set_quota_mode_inner(conn: &Connection, mode: i64) -> Result<(), AppError> {
     app_settings::set_quota_mode(conn, mode)
 }
 
+/// 读取联网搜索开关（对话偏好；缺省 false）。
+#[tauri::command]
+pub fn settings_get_web_search(state: State<'_, AppState>) -> Result<bool, AppError> {
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    app_settings::get_web_search_enabled(&conn)
+}
+
+/// 写入联网搜索开关（合并且幂等）。
+#[tauri::command]
+pub fn settings_set_web_search(enabled: bool, state: State<'_, AppState>) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    app_settings::set_web_search_enabled(&conn, enabled)
+}
+
 /// 读取设置快照（Key 脱敏回传）。
 #[tauri::command]
 pub fn settings_get_typed(state: State<'_, AppState>) -> Result<SettingsSnapshotDto, AppError> {

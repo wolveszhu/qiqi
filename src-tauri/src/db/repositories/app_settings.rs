@@ -134,6 +134,26 @@ pub fn set_snap_show_ratio(conn: &Connection, ratio: f64) -> Result<(), AppError
     merge_interaction_value(conn, patch)
 }
 
+// ---------- type=3 对话偏好（联网搜索开关） ----------
+
+/// 联网搜索开关键名（对话偏好；type=3 交互开关桶内追加）。
+pub const KEY_WEB_SEARCH_ENABLED: &str = "webSearchEnabled";
+
+/// 读取联网搜索开关（**缺省/坏值均回落 false**：联网为可选增强，默认关闭）。
+pub fn get_web_search_enabled(conn: &Connection) -> Result<bool, AppError> {
+    Ok(get_interaction_json(conn)?
+        .get(KEY_WEB_SEARCH_ENABLED)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
+
+/// 写入联网搜索开关（合并且幂等）。
+pub fn set_web_search_enabled(conn: &Connection, enabled: bool) -> Result<(), AppError> {
+    let mut patch = serde_json::Map::new();
+    patch.insert(KEY_WEB_SEARCH_ENABLED.to_string(), serde_json::json!(enabled));
+    merge_interaction_value(conn, patch)
+}
+
 // ---------- C3 tiered 读写辅助 ----------
 
 /// 读取三档配置（type=1 的 value）。
@@ -291,5 +311,27 @@ mod tests {
         // 后写的比例不得抹掉开关，反之亦然
         assert!(!get_snap_sleep_enabled(&conn).expect("读取开关"));
         assert_eq!(get_snap_show_ratio(&conn).expect("读取比例"), 0.7);
+    }
+
+    #[test]
+    fn web_search_roundtrip_and_defaults_false() {
+        let (_dir, conn) = fresh_db();
+        assert!(
+            !get_web_search_enabled(&conn).expect("读取"),
+            "无 type=3 行 → 默认 false（联网为可选增强）"
+        );
+        set_web_search_enabled(&conn, true).expect("写 true");
+        assert!(get_web_search_enabled(&conn).expect("读取"), "应读到 true");
+        set_web_search_enabled(&conn, false).expect("写 false");
+        assert!(!get_web_search_enabled(&conn).expect("读取"), "应读到 false");
+        assert_eq!(
+            get_interaction_json(&conn)
+                .expect("读 JSON")
+                .get("snapSleepEnabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            true,
+            "写联网开关不得抹掉已有交互键（snapSleepEnabled）"
+        );
     }
 }

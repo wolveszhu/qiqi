@@ -150,6 +150,8 @@ pub fn run() {
             commands::settings::settings_save_custom_model,
             commands::settings::settings_delete_custom_model,
             commands::settings::settings_move_custom_model,
+            commands::settings::settings_get_web_search,
+            commands::settings::settings_set_web_search,
             commands::quota::quota_summary,
             commands::quota::quota_usage_records,
             commands::search_settings::search_settings_get,
