@@ -110,6 +110,41 @@ impl TokenUsage {
     }
 }
 
+/// 将 HTTP 错误体转为可读摘要：优先解析厂商 JSON 错误码/文案（兼容扁平 `code/message`
+/// 与 OpenAI 风格嵌套 `error.{code,message}`），解析失败回退原始截断文本。
+///
+/// 仅用于 `[tier] HTTP {status}` 错误说明——**不含 Key/Prompt**，便于后台日志按
+/// 模型/端点/错误码定位（如 402 余额不足、400 模型不存在）。
+fn describe_http_error(body: &str) -> String {
+    #[derive(Deserialize)]
+    struct Flat {
+        code: Option<serde_json::Value>,
+        message: Option<String>,
+        #[serde(default)]
+        error: Option<serde_json::Value>,
+    }
+    match serde_json::from_str::<Flat>(body) {
+        Ok(f) => {
+            let (code, msg) = match &f.error {
+                Some(serde_json::Value::Object(o)) => (
+                    o.get("code").map(|v| v.to_string()),
+                    o.get("message").and_then(|v| v.as_str()).map(str::to_string),
+                ),
+                _ => (f.code.as_ref().map(|v| v.to_string()), f.message.clone()),
+            };
+            let code = code.filter(|c| !c.is_empty());
+            let msg = msg.filter(|m| !m.is_empty());
+            match (code, msg) {
+                (Some(c), Some(m)) => format!("code={c} message={m}"),
+                (Some(c), None) => format!("code={c}"),
+                (None, Some(m)) => format!("message={m}"),
+                (None, None) => body.chars().take(160).collect(),
+            }
+        },
+        Err(_) => body.chars().take(160).collect(),
+    }
+}
+
 /// 流式事件：文本增量或流末用量帧（`stream_options.include_usage` 触发）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
@@ -200,10 +235,16 @@ impl LlmClient for ReqwestLlmClient {
 
         let status = resp.status();
         if !status.is_success() {
-            // 错误体只取前 160 字符（防日志膨胀；不包含 Key）
+            // 附 model+endpoint（非敏感），并把 JSON 错误码/文案结构化——便于后台按
+            // 模型/端点/错误码定位（如 402 余额不足、400 模型不存在）。不含 Key/Prompt。
             let body = resp.text().await.unwrap_or_default();
-            let prefix: String = body.chars().take(160).collect();
-            return Err(AppError::Llm(format!("[{}] HTTP {status}: {prefix}", target.tier)));
+            return Err(AppError::Llm(format!(
+                "[{}] HTTP {status} model={} endpoint={} | {}",
+                target.tier,
+                target.model,
+                target.base_url,
+                describe_http_error(&body)
+            )));
         }
 
         // bytes 流 → SSE 增量流（手写分帧：eventsource-stream 备选方案，计划 §七）
@@ -258,9 +299,15 @@ impl LlmClient for ReqwestLlmClient {
 
         let status = resp.status();
         if !status.is_success() {
+            // 附 model+endpoint（非敏感）并结构化错误码/文案，便于按模型/端点/错误码定位。
             let body = resp.text().await.unwrap_or_default();
-            let prefix: String = body.chars().take(160).collect();
-            return Err(AppError::Llm(format!("[{}] HTTP {status}: {prefix}", target.tier)));
+            return Err(AppError::Llm(format!(
+                "[{}] HTTP {status} model={} endpoint={} | {}",
+                target.tier,
+                target.model,
+                target.base_url,
+                describe_http_error(&body)
+            )));
         }
 
         let payload: EmbeddingsResponse = resp.json().await.map_err(AppError::from)?;

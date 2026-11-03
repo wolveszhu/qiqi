@@ -260,10 +260,10 @@ pub async fn run_distill(
                         content,
                     )?;
                 } else {
-                    log_embed_skipped_once();
+                    log_embed_skipped_once(embed_target, "embed 返回空向量列表");
                 }
             },
-            Err(_) => log_embed_skipped_once(),
+            Err(e) => log_embed_skipped_once(embed_target, &e.to_string()),
         }
     }
 
@@ -342,11 +342,17 @@ fn record_outcome(
 }
 
 /// embed 不可用提示（进程内只打一次，避免每轮沉淀刷屏）。
-fn log_embed_skipped_once() {
+///
+/// 带 `target`（model/endpoint，非敏感）与 `detail`（调用失败文案 / 空向量原因），
+/// 便于后台按模型/端点定位向量端点为何不可用（如 402 余额不足、400 模型不存在）。
+fn log_embed_skipped_once(target: &LlmTarget, detail: &str) {
     use std::sync::OnceLock;
     static WARNED: OnceLock<bool> = OnceLock::new();
     if WARNED.get().is_none() {
-        eprintln!("[distill] 向量端点不可用，事实已入库但跳过向量写入（语义检索降级）");
+        eprintln!(
+            "[distill] 向量端点不可用（model={} endpoint={}）：{} —— 事实已入库但跳过向量写入（语义检索降级）",
+            target.model, target.base_url, detail
+        );
         let _ = WARNED.set(true);
     }
 }
