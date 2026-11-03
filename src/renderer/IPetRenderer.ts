@@ -42,11 +42,7 @@ export interface IPetRenderer {
    * 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），
    * 按 `showRatio` 决定露出圆盘的比例，命中区随之切换；false 恢复原状。
    */
-  setEdgeSleep?(
-    sleeping: boolean,
-    side?: SnapEdge | null,
-    showRatio?: number,
-  ): void;
+  setEdgeSleep?(sleeping: boolean, side?: SnapEdge | null, showRatio?: number): void;
   /** 卸载：destroy(true) + 移除监听（usePetRenderer onUnmounted 调用）。 */
   dispose(): void;
 }

@@ -1,16 +1,22 @@
 /**
  * 渲染器注册表（规范 §3 / 接口契约 §5）：active_renderer 字符串 → 实例。
  *
- * Phase 3 扩展（G4 指南）：CustomSpriteRenderer 实现 IPetRenderer 后在此注册一行即可。
+ * 两套内置形象：`code_cat`（喵喵 · 奶油黄）与 `code_dog`（汪汪 · 抹茶绿），
+ * 均继承 `PetRendererBase`，只提供几何与绘制。
+ *
+ * 新增形象只需在此登记一行 + 实现 `PetRendererBase` 子类；设置面板的选项卡清单
+ * 由 `listRenderers()` 派生（Phase 3 的 `CustomSpriteRenderer` 同理）。
  */
 
 import type { IPetRenderer } from "./IPetRenderer";
 import { CodeCatRenderer } from "./CodeCatRenderer";
+import { CodeDogRenderer } from "./CodeDogRenderer";
 
 type RendererFactory = () => IPetRenderer;
 
 const registry = new Map<string, RendererFactory>([
   ["code_cat", () => new CodeCatRenderer()],
+  ["code_dog", () => new CodeDogRenderer()],
   // TODO(Phase3): ["custom_sprite", () => new CustomSpriteRenderer()]
 ]);
 
