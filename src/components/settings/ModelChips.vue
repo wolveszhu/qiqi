@@ -154,7 +154,7 @@ function onKeydown(e: KeyboardEvent): void {
   border: none;
   background: none;
   outline: none;
-  font: 500 13px var(--font-ui);
+  font: 500 13px var(--font-body);
   color: var(--ink);
   padding: 4px 2px;
 }

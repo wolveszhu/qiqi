@@ -97,7 +97,8 @@ onMounted(() => {
       <span
         class="time-chip__text"
         @click="enterEdit"
-      >{{ range.start }} – {{ range.end }}</span>
+        >{{ range.start }} – {{ range.end }}</span
+      >
       <button
         v-if="editable"
         class="time-chip__del"

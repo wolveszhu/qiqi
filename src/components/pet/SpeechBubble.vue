@@ -85,10 +85,10 @@ const style = computed(() => ({
   min-width: 64px;
   padding: 8px 12px;
   border-radius: 14px;
-  background: var(--surface-bubble);
-  color: var(--text-primary);
-  box-shadow: 0 4px 14px var(--shadow-soft);
-  font: 500 13px/1.45 var(--font-ui);
+  background: var(--bg-window);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+  font: 500 13px/1.45 var(--font-body);
   word-break: break-word;
   white-space: pre-wrap;
 }
@@ -107,7 +107,7 @@ const style = computed(() => ({
   bottom: -6px;
   width: 12px;
   height: 12px;
-  background: var(--surface-bubble);
+  background: var(--bg-window);
   transform: rotate(45deg);
   border-radius: 2px;
 }

@@ -95,39 +95,49 @@ function onKeydown(e: KeyboardEvent): void {
 </template>
 
 <style scoped>
+/* 整行做成抬升的输入条：与消息区背景拉开层次（浅底 + 描边 + 阴影） */
 .composer {
   display: flex;
   align-items: stretch;
   gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-window);
+  box-shadow: var(--shadow-card);
 }
 .composer__field {
   flex: 1;
   resize: none;
-  border-radius: 12px;
-  border: 1px solid var(--border-soft);
-  background: var(--surface-panel);
-  color: var(--text-primary);
-  padding: 8px 10px;
-  font: 500 13px/1.4 var(--font-ui);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
+  color: var(--ink);
+  padding: 9px 11px;
+  font: 500 13px/1.4 var(--font-body);
   outline: none;
   transition: border-color var(--dur-fast) var(--ease-out);
 }
+.composer__field::placeholder {
+  color: var(--ink-soft);
+}
 .composer__field:focus {
-  border-color: var(--accent-rose);
+  border-color: var(--matcha);
 }
 .composer__field:disabled {
   opacity: 0.6;
 }
+/* 联网开关：清晰胶囊；关=描边灰、开=蜜桃渐变实底（最醒目） */
 .composer__web {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  background: var(--surface-panel);
+  gap: 5px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--bg-soft);
   color: var(--ink-soft);
-  font: 600 12px var(--font-ui);
+  font: 600 13px var(--font-body);
   cursor: pointer;
   transition:
     border-color var(--dur-fast) var(--ease-out),
@@ -136,29 +146,40 @@ function onKeydown(e: KeyboardEvent): void {
 }
 .composer__web:hover {
   border-color: var(--peach);
-  color: var(--peach-deep, #e07a4f);
+  color: var(--peach);
 }
 .composer__web.is-on {
   border-color: transparent;
-  background: linear-gradient(135deg, var(--peach, #ffc3a0), var(--butter, #ffe3a3));
+  background: linear-gradient(135deg, var(--peach), var(--butter));
   color: var(--ink);
+  box-shadow: var(--shadow-card);
 }
+/* 发送：主色抹茶绿实底 + 阴影，最醒目 */
 .composer__send {
-  align-self: stretch;
-  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
   border: none;
-  border-radius: 12px;
-  background: var(--accent-rose);
+  border-radius: var(--r-sm);
+  background: var(--matcha-deep);
   color: #fff;
-  font: 600 13px var(--font-ui);
+  font: 700 14px var(--font-body);
   cursor: pointer;
-  transition: filter var(--dur-fast) var(--ease-out);
+  box-shadow: var(--shadow-card);
+  transition:
+    filter var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
 }
 .composer__send:hover:not(:disabled) {
-  filter: brightness(1.05);
+  background: var(--matcha);
 }
 .composer__send:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
+  box-shadow: none;
+}
+.ico-globe {
+  flex-shrink: 0;
 }
 </style>

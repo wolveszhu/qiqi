@@ -56,7 +56,9 @@ describe("TimeChip", () => {
   });
 
   it("autoEdit → 挂载即进入编辑态", async () => {
-    const w = mount(TimeChip, { props: { range: RANGE, editable: true, autoEdit: true } });
+    const w = mount(TimeChip, {
+      props: { range: RANGE, editable: true, autoEdit: true },
+    });
     await nextTick();
     expect(w.findAll('input[type="time"]')).toHaveLength(2);
   });

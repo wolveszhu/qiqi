@@ -44,9 +44,10 @@ function fmt(min: number): string {
  * 在已有勿扰时段之外挑第一段空闲 ≥1h 的窗口作为新时段默认值，
  * 避免「添加即重叠」触发保存拦截（验收：新增不再必为 9:00–18:00）。
  */
-function findFreeSlot(
-  ranges: ReadonlyArray<{ start: string; end: string }>,
-): { start: string; end: string } {
+function findFreeSlot(ranges: ReadonlyArray<{ start: string; end: string }>): {
+  start: string;
+  end: string;
+} {
   const segs = ranges
     .map((r) => ({ s: toMin(r.start), e: toMin(r.end) }))
     .filter((x): x is { s: number; e: number } => x.s != null && x.e != null && x.s < x.e)

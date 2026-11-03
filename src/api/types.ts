@@ -59,6 +59,8 @@ export interface PetStateDto {
   relationshipLevel: number;
   affectionPoints: number;
   lastInteraction: string | null;
+  /** 当前生效的渲染器 id（`renderer/factory.ts` 注册表键，如 `code_cat` / `code_dog`）。 */
+  activeRenderer: string;
 }
 
 /** 好感度流水条目（pet_list_affection_logs 返回，D2 看板）。 */

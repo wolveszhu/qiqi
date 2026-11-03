@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * 形象选项卡（设计方案 §5.2 / §4.1）：选中态 2px matcha 边 + 浅绿底 + 「✓ 使用中」角标；
- * disabled（未实现形象，如狗子）灰显不可选；dashed 变体为导入占位（＋）。
- * 点击上抛 select 事件，业务无耦合。
+ * disabled 供尚未实现的形象灰显（当前两套内置形象均已实现，故不传）；
+ * dashed 变体为「导入自定义形象」占位（＋）。点击上抛 select 事件，业务无耦合。
  */
 withDefaults(
   defineProps<{

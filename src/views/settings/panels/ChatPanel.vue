@@ -285,7 +285,7 @@ onUnmounted((): void => {
   padding: 9px 12px;
   background: var(--matcha-deep);
   color: #fff;
-  font: 600 13px var(--font-ui);
+  font: 600 13px var(--font-body);
   cursor: pointer;
   transition: filter var(--dur-fast) var(--ease-out);
 }
@@ -368,20 +368,20 @@ onUnmounted((): void => {
   gap: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: var(--surface-panel);
+  background: var(--bg-soft);
   border: 1px solid var(--line);
 }
 .chat-msg {
   max-width: 78%;
   padding: 8px 12px;
   border-radius: 14px;
-  font: 500 13px/1.55 var(--font-ui);
+  font: 500 13px/1.55 var(--font-body);
   white-space: pre-wrap;
   word-break: break-word;
 }
 .chat-msg.is-pet {
   align-self: flex-start;
-  background: var(--surface-bubble);
+  background: var(--bg-window);
   color: var(--ink);
   border-bottom-left-radius: 6px;
 }
@@ -400,7 +400,7 @@ onUnmounted((): void => {
   list-style: none;
   margin: 8px 0 0;
   padding: 8px 0 0;
-  border-top: 1px solid var(--border-soft);
+  border-top: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   gap: 4px;

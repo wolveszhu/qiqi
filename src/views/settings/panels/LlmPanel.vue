@@ -809,7 +809,7 @@ onMounted(async (): Promise<void> => {
   margin: 0;
 }
 .llm-panel__quota-note--warn {
-  color: var(--peach-deep, #e07a4f);
+  color: var(--peach);
 }
 /* ---- 用量汇总区（等宽数字对齐，便于扫读） ---- */
 .quota-summary {
@@ -869,7 +869,7 @@ onMounted(async (): Promise<void> => {
   padding: 6px 0;
   font-size: 11px;
   color: var(--ink-soft);
-  border-bottom: 1px solid var(--bg, rgba(0, 0, 0, 0.04));
+  border-bottom: 1px solid var(--line);
 }
 .quota-details__row:last-child {
   border-bottom: none;
@@ -916,32 +916,32 @@ onMounted(async (): Promise<void> => {
   color: var(--ink-soft);
 }
 .search-form__select {
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface-panel);
+  background: var(--bg-window);
   color: var(--ink);
   padding: 7px 10px;
-  font: 500 13px var(--font-ui);
+  font: 500 13px var(--font-body);
   outline: none;
 }
 .search-form__select:focus {
-  border-color: var(--accent-rose);
+  border-color: var(--matcha);
 }
 .search-form__select--sm {
   width: 120px;
 }
 .search-form__num {
   width: 96px;
-  border: 1px solid var(--border-soft);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface-panel);
+  background: var(--bg-window);
   color: var(--ink);
   padding: 7px 10px;
-  font: 500 13px var(--font-ui);
+  font: 500 13px var(--font-body);
   outline: none;
 }
 .search-form__num:focus {
-  border-color: var(--accent-rose);
+  border-color: var(--matcha);
 }
 .search-form__row {
   display: flex;

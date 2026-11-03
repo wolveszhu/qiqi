@@ -1,7 +1,9 @@
 <script setup lang="ts">
 /**
  * 桌宠面板（设计方案 §4.1）：名字即改即存（pet_update_state, debounce）+ 形象选择 + 预览。
- * 形象仅 code_cat 可选（code_dog/导入为 Phase 3 占位）；边缘吸附/铃铛开关后端持久化命令缺失，占位。
+ *
+ * 形象清单由 `renderer/factory.ts` 注册表派生（`listRenderers()`）——新增形象只需在
+ * 注册表登记一行，本面板无需改动；未注册 id（含导入占位）点击走 Phase 3 提示。
  */
 import { emit } from "@tauri-apps/api/event";
 import { onMounted, ref, watch } from "vue";
@@ -12,36 +14,53 @@ import AppToggle from "../../../components/ui/AppToggle.vue";
 import HintBox from "../../../components/ui/HintBox.vue";
 import PetOptionCard from "../../../components/settings/PetOptionCard.vue";
 import PreviewStage from "../../../components/settings/PreviewStage.vue";
-import { updateState } from "../../../api/pet";
+import { getState, updateState } from "../../../api/pet";
 import { getTyped, setSnapRatio, setSnapSleep } from "../../../api/settings";
+import { listRenderers } from "../../../renderer/factory";
 import { SNAP_SHOW_RATIO_MAX, SNAP_SHOW_RATIO_MIN } from "../../../utils/edgeSnap";
 import { pushToast } from "../../../composables/useToast";
 import { applyPetState, petStore } from "../../../state/petStore";
 import { applySnapshot, settingsStore } from "../../../state/settingsStore";
 
-const OPTIONS = [
-  { id: "code_cat", name: "猫猫", sub: "奶油黄", emoji: "🐱", disabled: false },
-  { id: "code_dog", name: "狗子", sub: "抹茶绿 · Phase 3", emoji: "🐶", disabled: true },
-];
+/** 内置形象的展示元数据（键必须与 `renderer/factory.ts` 的注册表 id 一致）。 */
+const PET_META: Record<string, { name: string; sub: string; emoji: string }> = {
+  code_cat: { name: "猫猫", sub: "奶油黄", emoji: "🐱" },
+  code_dog: { name: "汪汪", sub: "抹茶绿", emoji: "🐶" },
+};
+
+/**
+ * 选项卡清单**由注册表派生**（Phase 3 加形象只需在 factory 登记一行）。
+ * 未登记元数据的 id 也能显示（回退占位文案），不会因为漏配元数据就消失。
+ */
+const OPTIONS = listRenderers().map((id) => ({
+  id,
+  ...(PET_META[id] ?? { name: id, sub: "内置形象", emoji: "🐾" }),
+}));
 
 const savedName = ref(petStore.petName);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** 选中形象：未注册 id（如导入占位）→ 维持原 Phase 3 提示。 */
 function selectRenderer(id: string): void {
-  if (id === "code_cat") {
-    petStore.activeRenderer = id; // 乐观
-    void saveRenderer(id);
-  } else {
+  if (!OPTIONS.some((o) => o.id === id)) {
     pushToast("自定义形象将在 Phase 3 开放", "error");
+    return;
   }
+  const prev = petStore.activeRenderer;
+  petStore.activeRenderer = id; // 乐观
+  void saveRenderer(id, prev);
 }
 
-async function saveRenderer(id: string): Promise<void> {
+/**
+ * 落库形象 id；失败回滚到**切换前的那张**（而非写死回猫——否则从狗切猫失败会莫名跳到猫）。
+ * 成功时窗口 A 由后端 `pet:renderer:changed` 事件驱动重建（AV6）。
+ */
+async function saveRenderer(id: string, prev: string): Promise<void> {
   try {
     await updateState({ activeRenderer: id });
   } catch (e) {
     pushToast(e instanceof Error ? e.message : "切换形象失败", "error");
-    petStore.activeRenderer = "code_cat";
+    petStore.activeRenderer = prev;
   }
 }
 
@@ -101,8 +120,27 @@ async function changeSnapRatio(v: number): Promise<void> {
   }
 }
 
+/**
+ * 同步当前生效的形象 id（AV5）。
+ *
+ * 窗口 B 从不整体拉取过桌宠状态，此前 `petStore.activeRenderer` 恒为初始值，
+ * 面板打开时永远显示"猫在用中"（即便库里存的是狗）。此处**只改 renderer、不动名字**——
+ * 名字输入框有 300ms 防抖，异步回写 `petName` 会和用户输入打架。
+ */
+async function refreshActiveRenderer(): Promise<void> {
+  try {
+    const dto = await getState();
+    if (dto.activeRenderer) {
+      petStore.activeRenderer = dto.activeRenderer;
+    }
+  } catch (e: unknown) {
+    console.warn("[avatar] 桌宠状态拉取失败", e);
+  }
+}
+
 onMounted((): void => {
   savedName.value = petStore.petName;
+  void refreshActiveRenderer();
   // 快照缺省拉取一次（窗口 B 首次打开本面板时 snapshot 可能尚未加载）
   if (!settingsStore.snapshot) {
     void getTyped()
@@ -138,7 +176,6 @@ onMounted((): void => {
           :name="o.name"
           :sub="o.sub"
           :emoji="o.emoji"
-          :disabled="o.disabled"
           :selected="petStore.activeRenderer === o.id"
           @select="selectRenderer(o.id)"
         />
@@ -289,7 +326,7 @@ onMounted((): void => {
 }
 .ratio-ctl__slider {
   width: 132px;
-  accent-color: var(--mint-strong);
+  accent-color: var(--matcha-deep);
 }
 .ratio-ctl__val {
   min-width: 38px;

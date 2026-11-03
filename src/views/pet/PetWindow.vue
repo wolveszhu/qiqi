@@ -5,6 +5,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import SpeechBubble from "../../components/pet/SpeechBubble.vue";
 import {
   lookAt,
+  onRendererRebuilt,
   playAction,
   setExpression,
   setIdleMode,
@@ -14,6 +15,7 @@ import {
 import { proactiveBubble, useProactive } from "../../composables/useProactive";
 import { useAffection } from "../../composables/useAffection";
 import { useSystemProbe } from "../../composables/useSystemProbe";
+import { petStore } from "../../state/petStore";
 import { settingsStore, applyDndLocal, applySnapshot } from "../../state/settingsStore";
 import { settleAffection, sleepDecay } from "../../api/pet";
 import { onChatToggle } from "../../api/probe";
@@ -44,6 +46,18 @@ function refreshIdleFps(): void {
 
 // ---- 主链路接线（E1a：此前三个 composable 未在窗口 A 实例化，MVP 链路断裂） ----
 usePetRenderer();
+/**
+ * 形象重建完成后重放用户可见状态。
+ *
+ * 新渲染器是"出厂态"：躺倒姿态与降帧标志都会丢，若不重放，
+ * 换个形象会顺手把吸附休眠中的桌宠**叫醒**。
+ */
+onRendererRebuilt((): void => {
+  if (sleepSnap.value && snapEdge) {
+    setEdgeSleep(true, snapEdge, settingsStore.snapShowRatio);
+  }
+  refreshIdleFps();
+});
 useProactive();
 useAffection();
 useSystemProbe({
@@ -276,6 +290,13 @@ onMounted(async (): Promise<void> => {
       }
       // 休眠中改比例即时生效（沿用当前贴边侧）
       if (sleepSnap.value && snapEdge) setEdgeSleep(true, snapEdge, event.payload.ratio);
+    }),
+  );
+  // 窗口 B 切换形象 → 只写 store；重建由 usePetRenderer 的 watch 统一执行
+  // （单一重建路径：启动读取与 B 窗口推送都走同一条，不会出现两处各自重建）
+  unlisteners.push(
+    await listen<string>("pet:renderer:changed", (event) => {
+      if (event.payload) petStore.activeRenderer = event.payload;
     }),
   );
   // 窗口 A 首次挂载拉取设置快照（开关状态 snapSleepEnabled 依赖；窗口 B 才写快照）

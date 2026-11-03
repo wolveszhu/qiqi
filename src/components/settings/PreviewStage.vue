@@ -15,23 +15,44 @@ const props = defineProps<{ rendererId: string }>();
 const stageEl = ref<HTMLElement | null>(null);
 let renderer: IPetRenderer | null = null;
 
+/**
+ * 构建串行链（并发安全）。
+ *
+ * `mount()` 是异步的（`Application.init` 要等 WebGL 就绪）。若第一次构建还没 append 完，
+ * 第二次构建就开始了，两次 `mount()` 都会往同一个容器 append canvas ——
+ * 表现就是预览里**同时出现猫和狗两只**。串行化保证"先彻底销毁，再挂新的"。
+ */
+let buildChain: Promise<void> = Promise.resolve();
+
 function dispose(): void {
   if (renderer) {
     renderer.dispose();
     renderer = null;
   }
+  // 兜底清空：`destroy()` 不保证把 canvas 从 DOM 摘掉
   if (stageEl.value) stageEl.value.innerHTML = "";
 }
 
-async function build(id: string): Promise<void> {
+async function doBuild(id: string): Promise<void> {
   dispose();
-  if (!stageEl.value) return;
+  const el = stageEl.value;
+  if (!el) return;
+  const next = createRenderer(id);
+  renderer = next;
   try {
-    renderer = createRenderer(id);
-    await renderer.mount(stageEl.value);
+    await next.mount(el);
   } catch (e) {
     console.warn("[preview] 渲染器初始化失败（已降级 CSS 占位）", e);
   }
+}
+
+/** 入队一次构建（排队执行，永不并发）。 */
+function build(id: string): void {
+  buildChain = buildChain
+    .then(() => doBuild(id))
+    .catch((e: unknown) => {
+      console.warn("[preview] 渲染器构建异常", e);
+    });
 }
 
 function onClick(): void {
@@ -39,15 +60,20 @@ function onClick(): void {
 }
 
 onMounted((): void => {
-  void build(props.rendererId);
+  build(props.rendererId);
 });
-onBeforeUnmount(dispose);
+
+onBeforeUnmount((): void => {
+  // 若仍有排队中的构建，上面的 `stageEl.value` 会变 null 使其直接返回
+  buildChain = Promise.resolve();
+  dispose();
+});
 
 // 切换形象 → 销毁重建（独立实例，窗口 B 与 A 天然隔离）
 watch(
   () => props.rendererId,
   (id): void => {
-    void build(id);
+    build(id);
   },
 );
 </script>
@@ -68,7 +94,7 @@ watch(
 <style scoped>
 .preview-stage {
   position: relative;
-  /* 正方形舞台 + 居中：配合 CodeCatRenderer 基于容器尺寸居中，形象始终正中间完整展示 */
+  /* 正方形舞台 + 居中：配合渲染器基类基于容器尺寸居中，形象始终正中间完整展示 */
   width: 100%;
   max-width: 264px;
   aspect-ratio: 1 / 1;
