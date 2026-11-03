@@ -1,25 +1,19 @@
 <script setup lang="ts">
 /**
  * 好感度流水条目（设计方案 §5.2 / §4.4）：左侧色位 + emoji，中部原因/时间，右侧 mono delta。
- * 纯展示；衰减/禁忌条目文案情绪化由后端 reason 字段保证（前端如实呈现）。
+ * 纯展示；reason 为后端英文 key，经 `utils/affection` 的 `reasonMeta` 译为中文。
  */
 import { computed } from "vue";
 
+import { reasonMeta } from "../../utils/affection";
 import type { LogItem } from "../../api/types";
 
 const props = defineProps<{ log: LogItem }>();
 
 const isPlus = computed(() => props.log.changeValue >= 0);
 
-const emoji = computed((): string => {
-  const r = props.log.reason;
-  if (r.includes("禁忌")) return "😾";
-  if (r.includes("衰减")) return "💤";
-  if (r.includes("打卡")) return "🌞";
-  if (r.includes("抚摸")) return "🐾";
-  if (r.includes("共鸣") || r.includes("深度")) return "💬";
-  return "✨";
-});
+/** reason（后端英文 key）→ 中文文案 + emoji（映射单一真源在 utils/affection）。 */
+const meta = computed(() => reasonMeta(props.log.reason));
 
 function fmtTime(s: string): string {
   // 兼容 ISO（T 分隔）与 "YYYY-MM-DD HH:MM:SS"
@@ -32,10 +26,10 @@ function fmtTime(s: string): string {
     <span
       class="log-item__icon"
       :class="isPlus ? 'is-plus' : 'is-minus'"
-      >{{ emoji }}</span
+      >{{ meta.emoji }}</span
     >
     <div class="log-item__body">
-      <div class="log-item__reason">{{ log.reason }}</div>
+      <div class="log-item__reason">{{ meta.label }}</div>
       <div class="log-item__time">{{ fmtTime(log.createdAt) }}</div>
     </div>
     <span

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 好感度圆环（设计方案 §5.2 / §4.4）：conic-gradient 进度（--peach），内白圆居中数字。
- * 纯展示，points 由父级注入（0–1000）。
+ * 纯展示，points 由父级注入（0–2000，随 `AFFECTION_MAX` 自适应）。
  */
 import { computed } from "vue";
 
@@ -24,7 +24,7 @@ const angle = computed(() => ringAngle(props.points));
   >
     <div class="aff-ring__inner">
       <span class="aff-ring__num">{{ points }}</span>
-      <span class="aff-ring__of">of 1000</span>
+      <span class="aff-ring__of">/ {{ AFFECTION_MAX }}</span>
     </div>
   </div>
 </template>

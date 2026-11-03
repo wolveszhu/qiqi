@@ -17,16 +17,27 @@ pub const PET_STROKE_POINTS: i64 = 1;
 pub const PET_STROKE_DAILY_CAP: i64 = 20;
 /// 深度对话加分（MVP 量化：单轮回复字数 ≥ 阈值或单 session 轮次 ≥ 5）。
 pub const DEEP_CHAT_POINTS: i64 = 5;
+/// 深度对话每日累计上限（**新增难度杠杆**：此前无上限，可狂聊刷分）。
+pub const DEEP_CHAT_DAILY_CAP: i64 = 30;
+/// 共鸣每日累计上限（**新增难度杠杆**：此前无上限）。
+pub const RESONANCE_DAILY_CAP: i64 = 60;
 /// 共鸣强度 → 分值的映射表（index 即 strength；越界夹取）。
 pub const RESONANCE_POINTS: [i64; 3] = [0, 10, 20];
+
+/// 收益递减权重表：按当日同类动作**已发生次数**（0-based）取权重折算本次得分。
+///
+/// 意图（用户裁决）：同一动作当天重复越多，单次加分越少，杜绝"机械重复刷分"。
+/// 分数以整数入库，故用权重折算后**向下取整**（宁少不多）。
+/// 表末 0.0 表示第 6 次起不再加分（与日上限共同封顶，双保险）。
+pub const DIMINISH_WEIGHT: [f64; 6] = [1.0, 1.0, 0.6, 0.4, 0.2, 0.0];
 
 /// 好感度信号（命令层/蒸馏管道经此枚举驱动规则引擎）。
 ///
 /// - `CheckIn`：每日首次互动（PetWindow mount 触发）
-/// - `PetStroke`：抚摸（窗口 A 双击/长按，C1 联动）
-/// - `DeepChat`：深度对话（C4 done 携带字数调用；**无日上限**，见 `apply` 注释）
-/// - `Resonance(strength)`：共鸣（C4 蒸馏管道判定，strength 1/2；**无日上限**）
-/// - `Taboo(value)`：禁忌扣分（C7 判定，value 为负）
+/// - `PetStroke`：抚摸（窗口 A 双击/长按，C1 联动；日上限 20）
+/// - `DeepChat`：深度对话（C4 done 携带字数调用；**日上限 30 + 收益递减**）
+/// - `Resonance(strength)`：共鸣（C4 蒸馏管道判定，strength 1/2；**日上限 60 + 收益递减**）
+/// - `Taboo(value)`：禁忌扣分（C7 判定，value 为负；不受递减影响，违规必扣）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AffectionSignal {
     CheckIn,
@@ -56,10 +67,14 @@ pub struct AffectionChange {
 ///
 /// - 打卡：当日已有 `daily_check_in` → 0；否则 +10
 /// - 抚摸：当日 pet_stroke 合计 < 20 → +1（满则 0，`capped=true`）
-/// - 深度对话：**无日上限**，每轮回复 ≥ `DEEP_CHAT_MIN_CHARS` 即 +5（F3/F4 观察项结论：
-///   维持现状——伐分需每轮真实 LLM 交互，好感度非竞技经济；如需加上限见已知问题清单 P2-07）
-/// - 共鸣：**无日上限**，strength 1→+10、2→+20、其它（含解析失败）→0（宁少不多）
+/// - 深度对话：当日合计 < 30 → `+5 × 递减权重`（满则 0 且 `capped=true`）
+/// - 共鸣：当日合计 < 60 → `+10/+20 × 递减权重`（满则 0 且 `capped=true`）
 /// - 禁忌：负值透传（不夹取下限，下限在结算/衰减层处理）
+///
+/// **难度设计（用户裁决，反转 F3/F4「无上限」结论）**：深度对话与共鸣此前**无日上限**，
+/// 是"涨分太容易"的主因（狂聊即可刷分）。现由「日上限 + 收益递减」双重封顶：
+/// 递减让重复动作单次收益快速衰减，日上限兜住极端情况。抚摸沿用既有日上限 20
+/// （本就是重复收益的封顶，不另加递减表，避免分数小数化复杂度）。
 pub fn apply(points: i64, signal: &AffectionSignal, todays: &[TodaysLog]) -> AffectionChange {
     let _ = points; // 上限夹取由调用方在落库前统一 clamp，规则引擎只产出 delta
     match signal {
@@ -72,11 +87,7 @@ pub fn apply(points: i64, signal: &AffectionSignal, todays: &[TodaysLog]) -> Aff
             }
         },
         AffectionSignal::PetStroke => {
-            let sum: i64 = todays
-                .iter()
-                .filter(|l| l.reason == REASON_PET_STROKE)
-                .map(|l| l.change_value)
-                .sum();
+            let (sum, _) = reason_tally(todays, REASON_PET_STROKE);
             // 已达日上限（合计 >= 20）→ 不再涨，标记 capped；否则 +1（19→20 不标记）
             if sum >= PET_STROKE_DAILY_CAP {
                 AffectionChange { delta: 0, capped: true }
@@ -84,17 +95,51 @@ pub fn apply(points: i64, signal: &AffectionSignal, todays: &[TodaysLog]) -> Aff
                 AffectionChange { delta: PET_STROKE_POINTS, capped: false }
             }
         },
-        AffectionSignal::DeepChat => AffectionChange { delta: DEEP_CHAT_POINTS, capped: false },
+        AffectionSignal::DeepChat => {
+            let (sum, count) = reason_tally(todays, REASON_DEEP_CHAT);
+            if sum >= DEEP_CHAT_DAILY_CAP {
+                return AffectionChange { delta: 0, capped: true };
+            }
+            // 递减到 0 同样标记为"今日不再加分"，供看板提示（非仅日上限触发）
+            let delta = diminish(DEEP_CHAT_POINTS, count);
+            AffectionChange { delta, capped: delta == 0 }
+        },
         AffectionSignal::Resonance(strength) => {
+            let (sum, count) = reason_tally(todays, REASON_RESONANCE);
+            if sum >= RESONANCE_DAILY_CAP {
+                return AffectionChange { delta: 0, capped: true };
+            }
             let idx = (*strength as usize).min(RESONANCE_POINTS.len() - 1);
             // idx 已 clamp 到有效范围；兜底 0 防御（不应发生）
-            AffectionChange {
-                delta: RESONANCE_POINTS.get(idx).copied().unwrap_or(0),
-                capped: false,
-            }
+            let base = RESONANCE_POINTS.get(idx).copied().unwrap_or(0);
+            let delta = diminish(base, count);
+            AffectionChange { delta, capped: delta == 0 }
         },
         AffectionSignal::Taboo(value) => AffectionChange { delta: *value as i64, capped: false },
     }
+}
+
+/// 当日同类流水的（合计分值、已发生次数）——日上限判定与递减调度共用。
+fn reason_tally(todays: &[TodaysLog], reason: &str) -> (i64, usize) {
+    let mut sum = 0i64;
+    let mut count = 0usize;
+    for l in todays.iter().filter(|l| l.reason == reason) {
+        sum += l.change_value;
+        count += 1;
+    }
+    (sum, count)
+}
+
+/// 收益递减折算：按当日同类**已发生次数**取 `DIMINISH_WEIGHT` 权重，向下取整。
+///
+/// `occurred = 0` 即当日首次（权重最高，满分）；越往后越接近 0，表尾恒为 0。
+/// 分数以整数入库，故 `(base × w).floor()`（宁少不多）；越界索引一律取 0。
+fn diminish(base: i64, occurred: usize) -> i64 {
+    let w = DIMINISH_WEIGHT.get(occurred).copied().unwrap_or(0.0);
+    if w <= 0.0 {
+        return 0;
+    }
+    (base as f64 * w).floor() as i64
 }
 
 /// 信号 → 流水 reason 串（落库用，常量统一定义见 `mod_forward`）。
@@ -156,22 +201,58 @@ mod tests {
     }
 
     #[test]
-    fn deep_chat_and_resonance_have_no_daily_cap() {
-        // F3/F4 观察项结论钉子：深度对话/共鸣**无日上限**（每轮 +5 / 共鸣按强度）。
-        // 若未来要加上限，此测试会失败——强制同步改规则与文档（防无声漂移）。
-        let many_deep: Vec<TodaysLog> =
-            (0..50).map(|_| TodaysLog { reason: "deep_chat".into(), change_value: 5 }).collect();
-        assert_eq!(
-            apply(0, &AffectionSignal::DeepChat, &many_deep).delta,
-            DEEP_CHAT_POINTS,
-            "深度对话无日上限（F3/F4 结论：维持现状，见已知问题清单 P2-07）"
-        );
-        let many_res: Vec<TodaysLog> =
-            (0..50).map(|_| TodaysLog { reason: "resonance".into(), change_value: 20 }).collect();
-        assert_eq!(
-            apply(0, &AffectionSignal::Resonance(2), &many_res).delta,
-            20,
-            "共鸣无日上限（同上结论）"
-        );
+    fn deep_chat_diminishes_and_caps_daily() {
+        // 难度杠杆钉子：深度对话**有日上限 30 + 收益递减**（反转 F3/F4 无上限结论）。
+        // 递减轨迹（+5 为基数）：5 / 5 / 3 / 2 / 1 / 0
+        assert_eq!(apply(0, &AffectionSignal::DeepChat, &[]).delta, 5, "首轮满分");
+        let one = logs(&[(REASON_DEEP_CHAT, 5)]);
+        assert_eq!(apply(5, &AffectionSignal::DeepChat, &one).delta, 5, "第 2 轮仍满分");
+        let two = logs(&[(REASON_DEEP_CHAT, 5), (REASON_DEEP_CHAT, 5)]);
+        assert_eq!(apply(10, &AffectionSignal::DeepChat, &two).delta, 3, "第 3 轮降到 3");
+        let four = logs(&[
+            (REASON_DEEP_CHAT, 5),
+            (REASON_DEEP_CHAT, 5),
+            (REASON_DEEP_CHAT, 3),
+            (REASON_DEEP_CHAT, 2),
+        ]);
+        assert_eq!(apply(15, &AffectionSignal::DeepChat, &four).delta, 1, "第 5 轮降到 1");
+        // 第 6 轮起递减到 0（并被标记为今日不再加分）
+        let five = logs(&[
+            (REASON_DEEP_CHAT, 5),
+            (REASON_DEEP_CHAT, 5),
+            (REASON_DEEP_CHAT, 3),
+            (REASON_DEEP_CHAT, 2),
+            (REASON_DEEP_CHAT, 1),
+        ]);
+        let c = apply(16, &AffectionSignal::DeepChat, &five);
+        assert_eq!(c.delta, 0, "第 6 轮递减到 0");
+        assert!(c.capped, "递减到 0 同样标记 capped（供看板提示今日不再加分）");
+        // 日上限兜底（合计 >= 30 → 0 且 capped）
+        let at_cap = logs(&[(REASON_DEEP_CHAT, 30)]);
+        let c = apply(30, &AffectionSignal::DeepChat, &at_cap);
+        assert_eq!(c.delta, 0);
+        assert!(c.capped, "达日上限标记 capped");
+    }
+
+    #[test]
+    fn resonance_diminishes_and_caps_daily() {
+        // 共鸣同深度对话：日上限 60 + 收益递减（按强度取基数后再折算）
+        assert_eq!(apply(0, &AffectionSignal::Resonance(2), &[]).delta, 20, "首次 strength2 满分");
+        let one = logs(&[(REASON_RESONANCE, 20)]);
+        assert_eq!(apply(20, &AffectionSignal::Resonance(1), &one).delta, 10, "第 2 次 strength1 满分");
+        let two = logs(&[(REASON_RESONANCE, 20), (REASON_RESONANCE, 10)]);
+        assert_eq!(apply(30, &AffectionSignal::Resonance(2), &two).delta, 12, "第 3 次降到 12");
+        // 日上限兜底
+        let at_cap = logs(&[(REASON_RESONANCE, 60)]);
+        let c = apply(60, &AffectionSignal::Resonance(2), &at_cap);
+        assert_eq!(c.delta, 0);
+        assert!(c.capped, "达日上限标记 capped");
+    }
+
+    #[test]
+    fn taboo_is_not_diminished() {
+        // 红线：禁忌扣分必须**不受递减影响**——违规必扣，不能因当天已扣过而减免
+        let past = logs(&[(REASON_TABOO, -10), (REASON_TABOO, -10)]);
+        assert_eq!(apply(100, &AffectionSignal::Taboo(-20), &past).delta, -20);
     }
 }

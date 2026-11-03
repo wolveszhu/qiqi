@@ -23,9 +23,9 @@ function angleOf(wrapper: ReturnType<typeof mount>): number {
 }
 
 describe("AffectionRing", () => {
-  it("0 分 → 0deg；1000 分 → 360deg", () => {
+  it("0 分 → 0deg；2000 分 → 360deg", () => {
     expect(angleOf(mount(AffectionRing, { props: { points: 0 } }))).toBe(0);
-    expect(angleOf(mount(AffectionRing, { props: { points: 1000 } }))).toBe(360);
+    expect(angleOf(mount(AffectionRing, { props: { points: 2000 } }))).toBe(360);
   });
 
   it("角度随分数线性变化（200/201/500/750 边界）", () => {
@@ -47,9 +47,9 @@ describe("AffectionRing", () => {
     // 槽位文本恰为分值本身
     expect(w.get(".aff-ring__num").text()).toBe("640");
     // 无障碍标签带分值/总量
-    expect(w.get(".aff-ring").attributes("aria-label")).toBe("好感度 640 / 1000");
+    expect(w.get(".aff-ring").attributes("aria-label")).toBe("好感度 640 / 2000");
     // 圆环容器直接子节点里不得再出现裸数值文本（防外溢到通用节点）
     const ringText = w.get(".aff-ring__inner").text();
-    expect(ringText.replace(/\s+/g, "")).toBe("640of1000");
+    expect(ringText.replace(/\s+/g, "")).toBe("640/2000");
   });
 });
