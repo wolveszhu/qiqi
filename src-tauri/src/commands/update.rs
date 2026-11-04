@@ -2,8 +2,10 @@
 //!
 //! 设计边界（计划选型）：不引入 `tauri-plugin-updater`——只"提醒 + 跳转下载"，
 //! 由用户手动运行安装包，规避代码签名证书、updater 密钥对与发布服务器配置。
-//! 版本清单托管于仓库根，经 raw.githubusercontent 稳定读取（免 API 限流/免 token）；
-//! `downloadUrl` 由发布者手工维护、语义明确。
+//! 版本清单托管于仓库根，多源回退读取；`downloadUrl` 由发布者手工维护、语义明确。
+//!
+//! 可见性前提：清单源均为**匿名**读取——仓库必须为 Public（私有仓库的 raw/CDN/API
+//! 一律 404，GitHub 故意不区分"私有"与"不存在"）；私密分发需另行换托管（Gitee 等）。
 
 use std::time::Duration;
 
@@ -12,11 +14,15 @@ use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
 
-/// `latest.json` 托管地址（raw 读取，免 API 限流/免 token）。
-/// 发布新版本时：① 在仓库根更新本文件并提交；② 在 Releases 上传安装包并把 `downloadUrl` 指向它。
-/// 格式：`https://raw.githubusercontent.com/<owner>/<repo>/<branch>/latest.json`
-pub const LATEST_JSON_URL: &str =
-    "https://raw.githubusercontent.com/wolveszhu/qiqi/main/latest.json";
+/// `latest.json` 托管地址（按序回退；发布新版本时同步维护仓库根文件与 Releases）。
+///
+/// ① raw：即时性最好（jsDelivr 对分支引用有最长 12h 缓存，发版日可能滞后）；
+/// ②③ jsDelivr CDN：国内网络对 raw.githubusercontent 阻断/污染时的兜底，可达性好。
+const LATEST_JSON_URLS: &[&str] = &[
+    "https://raw.githubusercontent.com/wolveszhu/qiqi/main/latest.json",
+    "https://cdn.jsdelivr.net/gh/wolveszhu/qiqi@main/latest.json",
+    "https://fastly.jsdelivr.net/gh/wolveszhu/qiqi@main/latest.json",
+];
 
 /// `latest.json` 契约（`downloadUrl` 由发布者手工维护；未知字段忽略）。
 #[derive(Debug, Deserialize)]
@@ -52,27 +58,45 @@ fn current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// 拉取并解析 `latest.json`（5s 超时 + 合理 UA；失败向上传播供调用方决策）。
+/// 拉取单个源并解析（内部错误用 `String` 承载，便于多源失败信息合并展示）。
+async fn fetch_one(client: &reqwest::Client, url: &str) -> Result<LatestManifest, String> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        // 404 单独提示：最常见原因是仓库为私有（匿名访问一律 404）或清单未推送
+        return Err(
+            "HTTP 404——清单不存在：若仓库为私有则匿名无法读取（需公开仓库或更换托管），或 latest.json 未推送到 main".to_string(),
+        );
+    }
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| format!("读取失败: {e}"))?;
+    serde_json::from_str::<LatestManifest>(&text).map_err(|e| format!("解析失败: {e}"))
+}
+
+/// 拉取并解析 `latest.json`：按 `LATEST_JSON_URLS` 顺序尝试，首个成功即返回；
+/// 全部失败时合并各源错误向上传播（手动检查时前端可完整展示，便于定位网络/可见性问题）。
 async fn fetch_latest() -> Result<LatestManifest, AppError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .user_agent(concat!("qiqi/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| AppError::Llm(format!("构建更新检查客户端失败: {e}")))?;
-    let resp = client
-        .get(LATEST_JSON_URL)
-        .send()
-        .await
-        .map_err(|e| AppError::Llm(format!("拉取版本清单失败: {e}")))?;
-    if !resp.status().is_success() {
-        return Err(AppError::Llm(format!("版本清单 HTTP {}", resp.status())));
+    let mut failures: Vec<String> = Vec::new();
+    for url in LATEST_JSON_URLS {
+        match fetch_one(&client, url).await {
+            Ok(m) => return Ok(m),
+            Err(e) => failures.push(format!("{url} → {e}")),
+        }
     }
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| AppError::Llm(format!("读取版本清单失败: {e}")))?;
-    serde_json::from_str::<LatestManifest>(&text)
-        .map_err(|e| AppError::Llm(format!("解析版本清单失败: {e}")))
+    Err(AppError::Llm(format!(
+        "所有更新源均不可达（{}）",
+        failures.join("；")
+    )))
 }
 
 /// 比较当前版本与远端清单，产出 `UpdateInfo`。
