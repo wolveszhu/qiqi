@@ -15,9 +15,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import ChatInput from "../../../components/pet/ChatInput.vue";
 import { deleteSession, getMessages, listSessions } from "../../../api/chat";
-import { getWebSearch, setWebSearch } from "../../../api/settings";
 import { useChatStream } from "../../../composables/useChatStream";
 import { pushToast } from "../../../composables/useToast";
+import {
+  loadGlobalDefault,
+  useWebSearchPreference,
+} from "../../../composables/useWebSearchPreference";
 import {
   chatStore,
   removeSession,
@@ -30,7 +33,12 @@ import {
 const stream = useChatStream();
 const unlisteners: UnlistenFn[] = [];
 const messageListEl = ref<HTMLDivElement | null>(null);
-/** 联网搜索开关（默认关；经 ChatInput 受控切换，随发送透传给后端）。 */
+const { globalEnabled } = useWebSearchPreference();
+/**
+ * 对话框联网开关（**会话级内存态**，随发送透传后端）：
+ * 初始/新对话/全局变化时取全局默认（`search_settings.enabled`）；
+ * 在对话框内切换只作用于当前对话，不回写、不落库（全局开关是唯一持久化真源）。
+ */
 const webSearch = ref(false);
 
 /** 刷新会话列表（后端按最后活跃倒序）。 */
@@ -83,16 +91,25 @@ watch(
   () => scrollToBottom(),
 );
 
-// 联网开关持久化：切走/重启后保持开启状态（含首次加载失败回落默认关闭）
-watch(webSearch, (value: boolean): void => {
-  void setWebSearch(value).catch((e: unknown) =>
-    console.warn("[chat] 联网搜索开关保存失败", e),
-  );
+// 全局开关变化（LlmPanel 读取/保存后）→ 对话框跟随：全局开 → 对话框保持开
+watch(globalEnabled, (v: boolean): void => {
+  webSearch.value = v;
 });
 
+// 对话开关是会话级状态：进入新对话语境（新建/切换/删除当前会话，currentId 变化）
+// 一律回到全局默认——对话框内的临时切换不跨对话延续，也不污染全局设置
+watch(
+  () => chatStore.currentId,
+  (): void => {
+    webSearch.value = globalEnabled.value;
+  },
+);
+
 onMounted(async (): Promise<void> => {
-  // 恢复上次保存的联网开关（跨重启持久化；读取失败不影响对话，回落默认关闭）
-  webSearch.value = await getWebSearch().catch(() => false);
+  // 对话框初始值 = 全局默认（唯一持久化真源在 LlmPanel 的 search_settings.enabled；
+  // 读取失败回落 false，不影响对话）。全局变化/新对话由上方两个 watch 跟随。
+  await loadGlobalDefault();
+  webSearch.value = globalEnabled.value;
   await refreshSessions();
   // 继续最近会话；无历史会话则保持空白（首条消息发送时才生成 sessionId）
   const recent = chatStore.sessions[0];

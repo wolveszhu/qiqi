@@ -32,6 +32,7 @@ import {
 } from "../../../api/settings";
 import { getQuotaSummary, listQuotaRecords } from "../../../api/quota";
 import { pushToast } from "../../../composables/useToast";
+import { setGlobalDefault } from "../../../composables/useWebSearchPreference";
 import { applySnapshot, settingsStore } from "../../../state/settingsStore";
 import type {
   CustomModelDto,
@@ -170,6 +171,8 @@ async function refreshSearch(): Promise<void> {
     searchForm.maxResults = s.maxResults;
     searchForm.lang = s.lang;
     searchForm.apiKey = "";
+    // 同步全局默认到共享状态（保存成功后经此刷新）→ 对话框开关跟随
+    setGlobalDefault(s.enabled);
   } catch (e) {
     console.warn("[llm] 联网搜索配置读取失败", e);
   }

@@ -53,16 +53,6 @@ export async function listProviders(): Promise<ProviderPreset[]> {
   return callCommand<ProviderPreset[]>("settings_list_providers");
 }
 
-/** 读取联网搜索开关（对话偏好；缺省 false）。 */
-export async function getWebSearch(): Promise<boolean> {
-  return callCommand<boolean>("settings_get_web_search");
-}
-
-/** 写入联网搜索开关（合并且幂等，跨重启持久化）。 */
-export async function setWebSearch(enabled: boolean): Promise<void> {
-  await callCommand("settings_set_web_search", { enabled });
-}
-
 /** 自定义模型列表（按排序；Key 脱敏回传）。 */
 export async function listCustomModels(): Promise<CustomModelDto[]> {
   return callCommand<CustomModelDto[]>("settings_list_custom_models");
