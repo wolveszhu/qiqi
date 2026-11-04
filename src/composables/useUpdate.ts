@@ -11,6 +11,7 @@
 import { ref, computed, type Ref, type ComputedRef } from "vue";
 import { listen } from "@tauri-apps/api/event";
 
+import { normalizeError } from "../api/client";
 import { checkUpdate, type UpdateInfo } from "../api/update";
 
 /** 远端更新信息（null = 尚未检查/检查失败未覆盖）。 */
@@ -47,7 +48,9 @@ async function checkNow(): Promise<void> {
     updateInfo.value = await checkUpdate();
     dismissed.value = false;
   } catch (e: unknown) {
-    lastError.value = e instanceof Error ? e.message : String(e);
+    // IPC 错误是 {kind, message} 普通对象而非 Error 实例——必须经 normalizeError
+    // 规整取 message，否则 String(e) 会显示成 "[object Object]"（真实原因被吞掉）
+    lastError.value = normalizeError(e).message;
   } finally {
     checking.value = false;
   }
