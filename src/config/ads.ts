@@ -5,7 +5,7 @@
  * 用户上次「今日不再显示」继续抑制。图片素材规格见 `src/assets/ad/`。
  */
 
-import sidebarPlaceholder from "../assets/ad/sidebar-300x250.svg";
+import sidebarPlaceholder from "../assets/ad/sidebar-300x250.png";
 
 /** 广告位定义（文案/图片/链接均为本地常量）。 */
 export interface AdItem {
@@ -27,9 +27,9 @@ export interface AdItem {
 export const TOP_BANNER_AD: AdItem = {
   id: "top-banner-2026-11",
   slot: "top-banner",
-  text: "七七的新形象正在准备中，来看看项目进展吧～",
+  text: "专属通道！阿里云新客首购8.5折，叠加15%补贴，手慢无！",
   tone: "matcha",
-  link: "https://github.com/wolveszhu/qiqi",
+  link: "https://www.aliyun.com/minisite/goods?userCode=50kjssue",
 };
 
 /** 侧边栏图片卡：素材 300×250（IAB medium rectangle），显示时等比缩放为 144×120。 */
@@ -37,7 +37,7 @@ export const SIDEBAR_CARD_AD: AdItem = {
   id: "sidebar-2026-11",
   slot: "sidebar-card",
   image: sidebarPlaceholder,
-  link: "https://github.com/wolveszhu/qiqi",
+  link: "https://www.aliyun.com/benefit/client/cross?userCode=50kjssue",
 };
 
 /** 全部广告位（组件按 slot 取用；新增广告位在此追加）。 */

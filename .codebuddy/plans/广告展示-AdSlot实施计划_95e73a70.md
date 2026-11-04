@@ -134,7 +134,7 @@ src-tauri/src/db/repositories/app_settings.rs  # [MODIFY] adDismissals 读写 + 
 src-tauri/src/commands/settings.rs             # [MODIFY] settings_get_ad_dismissals / settings_mark_ad_dismissed
 src-tauri/src/lib.rs                           # [MODIFY] invoke_handler 注册
 src/config/ads.ts                              # [NEW] 广告位常量（2 条：顶部横幅 + 侧边栏卡）
-src/assets/ad/sidebar-300x250.svg              # [NEW] 300×250 占位素材（替换真图时同路径同规格 PNG）
+src/assets/ad/sidebar-300x250.png              # [NEW] 300×250 占位素材（替换真图时同路径同规格 PNG）
 src/composables/useAds.ts                      # [NEW] 单例 composable：加载关闭映射 + 本地今日比较 + dismiss
 src/api/settings.ts                            # [MODIFY] getAdDismissals / markAdDismissed 封装（走 callCommand）
 src/components/settings/AdBanner.vue           # [NEW] 顶部文字横幅（标识+文案+链接+关闭）

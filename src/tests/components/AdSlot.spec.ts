@@ -17,7 +17,7 @@ const banner: AdItem = {
 const card: AdItem = {
   id: "card-test",
   slot: "sidebar-card",
-  image: "sidebar-300x250.svg",
+  image: "sidebar-300x250.png",
   link: "https://example.com",
 };
 

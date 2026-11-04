@@ -28,7 +28,7 @@
 ### 广告位 ② 侧边栏图片卡（AdCard）
 - 位置：SideNav 通过新增**底部 footer slot** 注入（组件保持纯 UI，零业务依赖），`margin-top:auto` 贴底，与导航项间距 12px。
 - **素材规格：`300×250 px`** —— IAB 标准 medium rectangle，最常用的矩形广告尺寸之一。
-- 占位素材：`src/assets/ad/sidebar-300x250.svg`（显式 `width="300" height="250"`，标注「300×250 广告位占位」）。
+- 占位素材：`src/assets/ad/sidebar-300x250.png`（显式 `width="300" height="250"`，标注「300×250 广告位占位」）。
 - 显示尺寸：宽 144px 等比缩放 → **144×120 px**；圆角 `--r-sm`、描边 `--line`、hover 上浮 + `--shadow-card`。
 - 左上角「广告」角标（半透明 ink 底白字 10px）；右上角「✕」关闭（悬停显影）；整卡可点击跳转。
 
@@ -87,7 +87,7 @@ src-tauri/src/db/repositories/app_settings.rs  # [MODIFY] adDismissals 读写 + 
 src-tauri/src/commands/settings.rs             # [MODIFY] 两个命令
 src-tauri/src/lib.rs                           # [MODIFY] invoke_handler 注册
 src/config/ads.ts                              # [NEW] 广告位常量（2 条）
-src/assets/ad/sidebar-300x250.svg              # [NEW] 300×250 占位素材
+src/assets/ad/sidebar-300x250.png              # [NEW] 300×250 占位素材
 src/composables/useAds.ts                      # [NEW] 单例 composable
 src/api/settings.ts                            # [MODIFY] 两个 IPC 封装
 src/components/settings/AdBanner.vue           # [NEW] 顶部文字横幅
@@ -101,7 +101,7 @@ src/tests/components/AdSlot.spec.ts            # [NEW] 组件测试
 
 1. 落地本文档（用户显式要求）。
 2. Rust 持久化：`app_settings` 增 `KEY_AD_DISMISSALS`、`get_ad_dismissals`、`mark_ad_dismissed` + 单测（roundtrip / 缺省空 / 同桶合并互扰）；`commands/settings.rs` 增两命令；`lib.rs` 注册。
-3. 前端本地内置：`src/config/ads.ts` + `src/assets/ad/sidebar-300x250.svg` 占位素材。
+3. 前端本地内置：`src/config/ads.ts` + `src/assets/ad/sidebar-300x250.png` 占位素材。
 4. `useAds` 单例 composable：加载关闭映射 + 本地今日比较 + `dismiss`；`api/settings.ts` 两封装（统一走 `callCommand`）。
 5. 组件：`AdBanner.vue`（文字型）/ `AdCard.vue`（图片型）+ `AdSlot.spec.ts`。
 6. 集成：`SettingsWindow` 挂 `AdBanner`；`SideNav` 加 footer slot 承载 `AdCard`。
