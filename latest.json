@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "notes": "当前为最新版本。\n\n发布新版本时请：① 将本文件的 version 改为新版本号（纯语义化，不含 v 前缀）；② 将 downloadUrl 指向该版本的安装包；③ 保持与 tauri.conf.json 的 version 同步（二者当前均为 0.1.0）。",
   "downloadUrl": "https://github.com/wolveszhu/qiqi/releases/latest"
 }
