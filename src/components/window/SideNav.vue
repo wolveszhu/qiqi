@@ -5,13 +5,17 @@
 
 withDefaults(
   defineProps<{
-    active?: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory";
+    active?: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about";
+    hasUpdate?: boolean;
   }>(),
-  { active: "avatar" },
+  { active: "avatar", hasUpdate: false },
 );
 
 const emit = defineEmits<{
-  (e: "change", key: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory"): void;
+  (
+    e: "change",
+    key: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about",
+  ): void;
 }>();
 
 const items = [
@@ -21,6 +25,7 @@ const items = [
   { key: "dnd", label: "勿扰与频率" },
   { key: "affection", label: "好感度" },
   { key: "memory", label: "记忆" },
+  { key: "about", label: "关于" },
 ] as const;
 </script>
 
@@ -33,7 +38,12 @@ const items = [
       :class="{ 'is-active': item.key === active }"
       @click="emit('change', item.key)"
     >
-      {{ item.label }}
+      <span class="sidenav__label">{{ item.label }}</span>
+      <span
+        v-if="item.key === 'about' && hasUpdate"
+        class="sidenav__badge"
+        aria-label="有可用更新"
+      ></span>
     </button>
   </nav>
 </template>
@@ -58,6 +68,22 @@ const items = [
   font-size: 14px;
   color: var(--ink-soft);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidenav__label {
+  flex: 1;
+}
+
+.sidenav__badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--peach);
+  flex-shrink: 0;
 }
 
 .sidenav__item.is-active {

@@ -11,18 +11,22 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { focusMainWindow, hide } from "../../api/window";
 import SideNav from "../../components/window/SideNav.vue";
 import TitleBar from "../../components/window/TitleBar.vue";
+import UpdateNotice from "../../components/settings/UpdateNotice.vue";
 import AffectionPanel from "./panels/AffectionPanel.vue";
 import AvatarPanel from "./panels/AvatarPanel.vue";
 import ChatPanel from "./panels/ChatPanel.vue";
 import DndPanel from "./panels/DndPanel.vue";
 import LlmPanel from "./panels/LlmPanel.vue";
 import MemoryPanel from "./panels/MemoryPanel.vue";
+import AboutPanel from "./panels/AboutPanel.vue";
 import AppToast from "../../components/ui/AppToast.vue";
+import { initUpdateWatcher, useUpdate } from "../../composables/useUpdate";
 
-type PanelKey = "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory";
+type PanelKey = "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about";
 
 const active = ref<PanelKey>("avatar");
 const unlisteners: UnlistenFn[] = [];
+const { hasUpdate } = useUpdate();
 
 /**
  * ✕ → `window_hide("settings")`（关闭=hide，进程存活；B1.4 临时通道已由
@@ -37,6 +41,8 @@ async function closeWindow(): Promise<void> {
 }
 
 onMounted(async (): Promise<void> => {
+  // 启动更新监听（后台周期检查发现新版本 → 横幅/Tab 标记）
+  initUpdateWatcher();
   // 窗口 A 双击形象 / Ctrl+Shift+P → 切到对话 Tab 并聚焦（A 只负责 show，其余在此完成）
   unlisteners.push(
     await listen("window:chat:open", () => {
@@ -54,9 +60,11 @@ onUnmounted((): void => {
 <template>
   <div class="settings-window">
     <TitleBar @close="closeWindow" />
+    <UpdateNotice />
     <div class="settings-window__body">
       <SideNav
         :active="active"
+        :has-update="hasUpdate"
         @change="(k: PanelKey) => (active = k)"
       />
       <main class="settings-window__content scroll-area">
@@ -67,7 +75,8 @@ onUnmounted((): void => {
           <LlmPanel v-else-if="active === 'llm'" />
           <DndPanel v-else-if="active === 'dnd'" />
           <AffectionPanel v-else-if="active === 'affection'" />
-          <MemoryPanel v-else />
+          <MemoryPanel v-else-if="active === 'memory'" />
+          <AboutPanel v-else />
         </KeepAlive>
       </main>
     </div>
