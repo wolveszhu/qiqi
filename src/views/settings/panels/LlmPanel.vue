@@ -19,6 +19,7 @@ import StatusBadge from "../../../components/ui/StatusBadge.vue";
 import ModelChips from "../../../components/settings/ModelChips.vue";
 import ProviderChip from "../../../components/settings/ProviderChip.vue";
 import QuotaBar from "../../../components/settings/QuotaBar.vue";
+import { normalizeError } from "../../../api/client";
 import {
   deleteCustomModel,
   getSearchSettings,
@@ -88,7 +89,7 @@ async function refreshCustoms(): Promise<void> {
   try {
     customs.value = await listCustomModels();
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "自定义模型列表加载失败", "error");
+    pushToast(normalizeError(e).message, "error");
   }
 }
 
@@ -133,7 +134,7 @@ async function submitCustom(): Promise<void> {
     customEditorOpen.value = false;
     pushToast("已保存");
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+    pushToast(normalizeError(e).message, "error");
   } finally {
     customSaving.value = false;
   }
@@ -146,7 +147,7 @@ async function removeCustom(id: number): Promise<void> {
     await refreshCustoms();
     pushToast("已删除");
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "删除失败", "error");
+    pushToast(normalizeError(e).message, "error");
   }
 }
 
@@ -156,7 +157,7 @@ async function moveCustom(id: number, up: boolean): Promise<void> {
     await moveCustomModel(id, up);
     await refreshCustoms();
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "调整顺序失败", "error");
+    pushToast(normalizeError(e).message, "error");
   }
 }
 
@@ -193,7 +194,7 @@ async function saveSearch(): Promise<void> {
     await refreshSearch();
     pushToast("已保存");
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+    pushToast(normalizeError(e).message, "error");
   } finally {
     searchSaving.value = false;
   }
@@ -214,7 +215,7 @@ async function toggleCustomEnabled(
     });
     await refreshCustoms();
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "切换启用态失败", "error");
+    pushToast(normalizeError(e).message, "error");
   }
 }
 
@@ -226,7 +227,7 @@ async function toggleQuota(useBuiltin: boolean): Promise<void> {
     pushToast(useBuiltin ? "已切换到内置额度" : "已切换到自带 Key");
     await refreshQuota();
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "切换失败", "error");
+    pushToast(normalizeError(e).message, "error");
   }
 }
 
@@ -277,14 +278,16 @@ async function refreshQuota(): Promise<void> {
 }
 
 onMounted(async (): Promise<void> => {
-  try {
-    providers.value = await listProviders();
-  } catch (e) {
-    console.warn("[llm] 服务商列表拉取失败", e);
-  }
-  await refreshCustoms();
-  await refreshQuota();
-  await refreshSearch();
+  // 四路独立加载并行拉取（预设/平台/额度/联网配置），缩短面板就绪时间；
+  // 各成员内部均已兜错（toast/console.warn，不会 reject），Promise.all 无需再包 catch
+  await Promise.all([
+    listProviders()
+      .then((list) => (providers.value = list))
+      .catch((e: unknown) => console.warn("[llm] 服务商列表拉取失败", e)),
+    refreshCustoms(),
+    refreshQuota(),
+    refreshSearch(),
+  ]);
 });
 </script>
 
