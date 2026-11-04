@@ -1,5 +1,7 @@
 //! app_settings 表访问（type=1 三档 LLM 配置，type=2 勿扰配置，type=3 桌宠交互配置）。
 
+use std::collections::HashMap;
+
 use rusqlite::{Connection, params};
 
 use crate::config::{TIER_FALLBACK, TIER_MAIN, TIER_MEMORY};
@@ -131,6 +133,31 @@ pub fn set_snap_show_ratio(conn: &Connection, ratio: f64) -> Result<(), AppError
     let ratio = ratio.clamp(SNAP_SHOW_RATIO_MIN, SNAP_SHOW_RATIO_MAX);
     let mut patch = serde_json::Map::new();
     patch.insert(KEY_SNAP_SHOW_RATIO.to_string(), serde_json::json!(ratio));
+    merge_interaction_value(conn, patch)
+}
+
+// ---------- type=3 广告关闭状态（今日不再显示） ----------
+
+/// 广告关闭状态键名（type=3 桶内 `{素材ID: 本地日期}` 映射）。
+pub const KEY_AD_DISMISSALS: &str = "adDismissals";
+
+/// 读取广告关闭映射（缺省/坏值 → 空映射；非字符串值忽略，不误判为已关闭）。
+pub fn get_ad_dismissals(conn: &Connection) -> Result<HashMap<String, String>, AppError> {
+    let json = get_interaction_json(conn)?;
+    let Some(obj) = json.get(KEY_AD_DISMISSALS).and_then(|v| v.as_object()) else {
+        return Ok(HashMap::new());
+    };
+    Ok(obj.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect())
+}
+
+/// 记录某广告素材「今日不再显示」（Rust 本地时区写 `YYYY-MM-DD`，前端同口径比较）。
+///
+/// 昨日及更早条目自然失效，无需清理；写入为合并语义，保留同桶其它交互键。
+pub fn mark_ad_dismissed(conn: &Connection, ad_id: &str) -> Result<(), AppError> {
+    let mut dismissals = get_ad_dismissals(conn)?;
+    dismissals.insert(ad_id.to_string(), chrono::Local::now().format("%Y-%m-%d").to_string());
+    let mut patch = serde_json::Map::new();
+    patch.insert(KEY_AD_DISMISSALS.to_string(), serde_json::to_value(&dismissals)?);
     merge_interaction_value(conn, patch)
 }
 
@@ -291,5 +318,28 @@ mod tests {
         // 后写的比例不得抹掉开关，反之亦然
         assert!(!get_snap_sleep_enabled(&conn).expect("读取开关"));
         assert_eq!(get_snap_show_ratio(&conn).expect("读取比例"), 0.7);
+    }
+
+    #[test]
+    fn ad_dismissals_default_empty_and_tolerates_garbage() {
+        let (_dir, conn) = fresh_db();
+        assert!(get_ad_dismissals(&conn).expect("读取").is_empty(), "缺省空映射");
+        upsert_value(&conn, SETTING_TYPE_PET_INTERACTION, r#"{"adDismissals":"not-an-object"}"#)
+            .expect("写坏值");
+        assert!(get_ad_dismissals(&conn).expect("读取").is_empty(), "坏值回落空映射");
+    }
+
+    #[test]
+    fn mark_ad_dismissed_writes_local_date_and_keeps_siblings() {
+        let (_dir, conn) = fresh_db();
+        set_snap_sleep_enabled(&conn, false).expect("写开关");
+        mark_ad_dismissed(&conn, "banner-a").expect("关闭横幅");
+        mark_ad_dismissed(&conn, "sidebar-b").expect("关闭侧栏卡");
+
+        let map = get_ad_dismissals(&conn).expect("读取");
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert_eq!(map.get("banner-a"), Some(&today), "写入 Rust 本地当日日期");
+        assert_eq!(map.get("sidebar-b"), Some(&today), "两条独立关闭");
+        assert!(!get_snap_sleep_enabled(&conn).expect("读取开关"), "合并写入不抹掉同桶兄弟键");
     }
 }
