@@ -4,6 +4,8 @@
 //! - **明文 Key 绝不出现在返回 DTO、日志、错误信息中**——只回 `has_key` + 末 4 位指纹；
 //! - 明文 Key 的合法路径仅：前端输入框内存 → IPC 参数 → Rust 落库（库已全库加密）。
 
+use std::collections::HashMap;
+
 use tauri::State;
 
 use rusqlite::Connection;
@@ -89,6 +91,28 @@ fn set_quota_mode_inner(conn: &Connection, mode: i64) -> Result<(), AppError> {
         ));
     }
     app_settings::set_quota_mode(conn, mode)
+}
+
+/// 读取广告关闭映射（缺省空对象；前端按本地今日比较决定是否展示）。
+#[tauri::command]
+pub fn settings_get_ad_dismissals(
+    state: State<'_, AppState>,
+) -> Result<HashMap<String, String>, AppError> {
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    app_settings::get_ad_dismissals(&conn)
+}
+
+/// 记录广告「今日不再显示」（adId 为素材唯一 ID；空值拒绝，避免写入无意义键）。
+#[tauri::command]
+pub fn settings_mark_ad_dismissed(
+    ad_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    if ad_id.trim().is_empty() {
+        return Err(AppError::Config("广告素材 ID 不能为空".into()));
+    }
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    app_settings::mark_ad_dismissed(&conn, &ad_id)
 }
 
 /// 读取设置快照（Key 脱敏回传）。
