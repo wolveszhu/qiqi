@@ -2968,6 +2968,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rusqlite",
  "rusqlite_migration",
+ "semver",
  "serde",
  "serde_json",
  "sqlite-vec",

@@ -108,6 +108,12 @@ pub fn run() {
                 crate::llm::diary::spawn_scheduler(app_handle);
             }
 
+            // [更新] 后台周期检查（启动 10s 后首查 + 每 6h 静默再查；发现新版本 emit 事件，失败静默）
+            {
+                let app_handle = app.handle().clone();
+                crate::commands::update::spawn_update_checker(app_handle);
+            }
+
             // [额度] 用量明细保留最近 3 个月，超出按月清理（启动时执行一次；失败仅 log）
             {
                 let state = app.state::<crate::state::AppState>();
@@ -176,6 +182,7 @@ pub fn run() {
             commands::probe::probe_get_cursor,
             commands::probe::probe_get_snapshot,
             commands::probe::proactive_generate,
+            commands::update::check_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
