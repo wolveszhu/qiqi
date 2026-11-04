@@ -41,6 +41,7 @@ export default {
         "probe",
         "deps",
         "docs",
+        "ads",
       ],
     ],
     "subject-case": [2, "always", ["lower-case", "sentence-case"]],
