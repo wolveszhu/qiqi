@@ -53,6 +53,16 @@ export async function listProviders(): Promise<ProviderPreset[]> {
   return callCommand<ProviderPreset[]>("settings_list_providers");
 }
 
+/** 读取广告关闭映射（{素材ID: 本地日期}；缺省空对象）。 */
+export function getAdDismissals(): Promise<Record<string, string>> {
+  return callCommand<Record<string, string>>("settings_get_ad_dismissals");
+}
+
+/** 记录广告「今日不再显示」（Rust 以本地时区写当日日期）。 */
+export async function markAdDismissed(adId: string): Promise<void> {
+  await callCommand("settings_mark_ad_dismissed", { adId });
+}
+
 /** 自定义模型列表（按排序；Key 脱敏回传）。 */
 export async function listCustomModels(): Promise<CustomModelDto[]> {
   return callCommand<CustomModelDto[]>("settings_list_custom_models");

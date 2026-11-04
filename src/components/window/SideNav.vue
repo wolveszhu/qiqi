@@ -45,6 +45,10 @@ const items = [
         aria-label="有可用更新"
       ></span>
     </button>
+    <!-- 底部广告位由父级注入（slot 保持本组件零业务依赖） -->
+    <div class="sidenav__footer">
+      <slot name="footer"></slot>
+    </div>
   </nav>
 </template>
 
@@ -57,6 +61,12 @@ const items = [
   padding: 16px 12px;
   background: var(--bg-soft);
   border-right: 1px solid var(--line);
+}
+
+/* margin-top:auto 把广告卡贴到侧栏底部；无 slot 内容时为空容器、不占视觉空间 */
+.sidenav__footer {
+  margin-top: auto;
+  padding-top: 12px;
 }
 
 .sidenav__item {
