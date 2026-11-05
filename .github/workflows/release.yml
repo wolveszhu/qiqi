@@ -1,0 +1,65 @@
+name: Release
+
+# 触发：推送 v* tag（如 v0.1.0）自动打包并发布到 GitHub Release；
+# 也支持在 Actions 页面手动触发（workflow_dispatch）便于调试。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# tauri-action 需要用默认 GITHUB_TOKEN 创建/更新 Release。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows runner 预装 WiX / NSIS / WebView2，可直接产出 msi 与 nsis 安装包。
+        platform: [windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        # 与本地 pnpm 12.x 保持一致，避免 lockfile 校验失败。
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and publish Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # 自动发布 Release 所需的令牌（仓库自带，无需手动配置 secret）。
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Qiqi ${{ github.ref_name }}"
+          releaseBody: |
+            桌面桌宠「七七」自动构建安装包（MSI + NSIS）。
+
+            - `qiqi_*`_x64_en-US.msi`：系统级安装/卸载
+            - `qiqi_*`_x64_en-US.nsis.exe`：绿色安装向导
+
+            系统要求：Windows 10 / 11，且已安装 WebView2 运行时（Windows 11 自带；
+            Windows 10 首次运行会引导安装）。未签名安装包在 SmartScreen 下可能提示，
+            选择「仍要运行」即可。
+          releaseDraft: true
+          prerelease: false
