@@ -48,6 +48,22 @@ describe("AdBanner 顶部文字横幅", () => {
     expect(w.emitted("open")).toHaveLength(1);
     expect(w.emitted("dismiss")).toHaveLength(1);
   });
+
+  it("整块横幅（标签/文案/空白）点击均 emit open", async () => {
+    const w = mount(AdBanner, { props: { ad: banner } });
+    await w.find(".ad-banner__tag").trigger("click");
+    await w.find(".ad-banner__text").trigger("click");
+    await w.find(".ad-banner").trigger("click");
+    expect(w.emitted("open")).toHaveLength(3);
+    expect(w.emitted("dismiss")).toBeUndefined();
+  });
+
+  it("点关闭只 emit dismiss，不会顺带触发跳转", async () => {
+    const w = mount(AdBanner, { props: { ad: banner } });
+    await w.find(".ad-banner__close").trigger("click");
+    expect(w.emitted("dismiss")).toHaveLength(1);
+    expect(w.emitted("open")).toBeUndefined();
+  });
 });
 
 describe("AdCard 侧边栏图片卡", () => {

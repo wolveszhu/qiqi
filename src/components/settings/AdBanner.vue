@@ -2,6 +2,8 @@
 /**
  * 顶部文字广告横幅（纯 UI：文字 + 背景色 + 跳转链接，无图片）。
  *
+ * 整块横幅均可点击跳转；「了解详情」按钮保留为键盘可达的等效入口，两个按钮
+ * 都 `.stop` 阻断冒泡——避免重复 emit open，并确保点「✕」关闭时不会误跳转。
  * 业务动作由父级处理：`open`（跳转系统浏览器）/ `dismiss`（今日不再显示），
  * 组件自身零业务依赖、不发 IPC，便于隔离测试。
  */
@@ -20,13 +22,14 @@ const emit = defineEmits<{
   <div
     class="ad-banner"
     :class="`ad-banner--${ad.tone ?? 'matcha'}`"
+    @click="emit('open')"
   >
     <span class="ad-banner__tag">广告</span>
     <span class="ad-banner__text">{{ ad.text }}</span>
     <button
       class="ad-banner__link"
       type="button"
-      @click="emit('open')"
+      @click.stop="emit('open')"
     >
       了解详情 →
     </button>
@@ -34,7 +37,7 @@ const emit = defineEmits<{
       class="ad-banner__close"
       type="button"
       aria-label="关闭广告"
-      @click="emit('dismiss')"
+      @click.stop="emit('dismiss')"
     >
       ✕
     </button>
@@ -52,6 +55,7 @@ const emit = defineEmits<{
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   animation: banner-in var(--dur-fast) var(--ease-out);
+  cursor: pointer;
 }
 .ad-banner--matcha {
   background: var(--matcha-soft);
@@ -86,7 +90,7 @@ const emit = defineEmits<{
   color: var(--matcha-deep);
   cursor: pointer;
 }
-.ad-banner__link:hover {
+.ad-banner:hover .ad-banner__link {
   text-decoration: underline;
 }
 .ad-banner__close {
