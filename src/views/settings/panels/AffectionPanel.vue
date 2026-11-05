@@ -25,8 +25,8 @@ import type { LogItem as LogItemDto } from "../../../api/types";
 const displayPoints = ref(petStore.affectionPoints);
 let rafId = 0;
 
-/** 成长路线卡片折叠态（默认展开）。 */
-const journeyCollapsed = ref(false);
+/** 成长路线卡片折叠态（默认折叠）。 */
+const journeyCollapsed = ref(true);
 
 /** 数值补间：ease-out cubic，约 600ms。 */
 function tweenTo(target: number): void {
