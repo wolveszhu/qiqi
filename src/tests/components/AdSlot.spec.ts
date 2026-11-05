@@ -51,7 +51,7 @@ describe("AdBanner 顶部文字横幅", () => {
 });
 
 describe("AdCard 侧边栏图片卡", () => {
-  it("300×250 素材等比缩放显示 144×120，带广告角标", () => {
+  it("6:5 素材按 144×120 显示，带广告角标", () => {
     const w = mount(AdCard, { props: { ad: card } });
     const img = w.find(".ad-card__img");
     expect(img.attributes("width")).toBe("144");

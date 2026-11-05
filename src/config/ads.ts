@@ -17,7 +17,7 @@ export interface AdItem {
   text?: string;
   /** 横幅背景色 token（top-banner）。 */
   tone?: "matcha" | "peach";
-  /** 图片 URL（sidebar-card；素材规格 300×250）。 */
+  /** 图片 URL（sidebar-card；6:5 位图 PNG/JPG/JPEG，不限制像素尺寸）。 */
   image?: string;
   /** 点击跳转链接（经系统浏览器打开）。 */
   link: string;
@@ -32,7 +32,7 @@ export const TOP_BANNER_AD: AdItem = {
   link: "https://www.aliyun.com/minisite/goods?userCode=50kjssue",
 };
 
-/** 侧边栏图片卡：素材 300×250（IAB medium rectangle），显示时等比缩放为 144×120。 */
+/** 侧边栏图片卡：6:5 位图（PNG/JPG/JPEG，尺寸不限），显示时按 144×120 裁切展示。 */
 export const SIDEBAR_CARD_AD: AdItem = {
   id: "sidebar-2026-11",
   slot: "sidebar-card",
