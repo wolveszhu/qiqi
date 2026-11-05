@@ -73,6 +73,13 @@
   border-radius: 999px;
 }
 
+/* 导航栏 Logo 放大，提升辨识度（默认仅 24px） */
+.VPNavBarTitle .logo {
+  height: 42px;
+  width: auto;
+  margin-right: 8px;
+}
+
 /* ---------- 侧边栏与文档区 ---------- */
 .VPSidebar {
   background: var(--qiqi-bg-soft) !important;
@@ -213,5 +220,8 @@
 @media (max-width: 768px) {
   .vp-doc h1 {
     font-size: 30px;
+  }
+  .VPNavBarTitle .logo {
+    height: 34px;
   }
 }
