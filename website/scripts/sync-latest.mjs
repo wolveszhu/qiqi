@@ -1,6 +1,7 @@
 /**
- * 单向同步根仓库 latest.json 到 website/public/latest.json。
+ * 单向同步根仓库 latest.json 到 website/docs/public/latest.json。
  * 仅拷贝、只读、不回写、不改写语义。下载页通过 fetch('/latest.json') 展示版本号。
+ * 注意：VitePress 的 publicDir 相对 srcDir 解析，srcDir 为 docs 时资源目录是 docs/public。
  */
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -9,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..");
 const src = resolve(repoRoot, "latest.json");
-const destDir = resolve(__dirname, "..", "public");
+const destDir = resolve(__dirname, "..", "docs", "public");
 const dest = resolve(destDir, "latest.json");
 
 if (!existsSync(src)) {
