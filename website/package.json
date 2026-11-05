@@ -1,0 +1,17 @@
+{
+  "name": "qiqi-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "qiqi 桌面数字生命官方网站（VitePress，独立工程，零侵入应用代码）",
+  "scripts": {
+    "sync:latest": "node scripts/sync-latest.mjs",
+    "dev": "pnpm sync:latest && vitepress dev .",
+    "build": "pnpm sync:latest && vitepress build .",
+    "preview": "vitepress preview ."
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3",
+    "vue": "^3.5.13"
+  }
+}

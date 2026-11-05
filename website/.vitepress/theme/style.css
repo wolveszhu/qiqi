@@ -1,0 +1,217 @@
+/* ============================================================
+   qiqi 官网主题 —— Jelly-Toy 果冻奶油风（设计令牌常量副本）
+   仅覆盖 VitePress CSS 变量与少量组件样式，不共享应用源码。
+   ============================================================ */
+:root {
+  /* 背景：暖奶油纸感 */
+  --vp-c-bg: #efe7d8;
+  --vp-c-bg-alt: #fbf5ea;
+  --vp-c-bg-elv: #fffef9;
+  --vp-c-bg-soft: #fbf5ea;
+
+  /* 品牌主色：抹茶绿 */
+  --vp-c-brand-1: #7ca65b;
+  --vp-c-brand-2: #5d8541;
+  --vp-c-brand-3: #5d8541;
+  --vp-c-brand-soft: #eaf1df;
+
+  /* 文字：暖炭棕 */
+  --vp-c-text-1: #403a2e;
+  --vp-c-text-2: #948a75;
+  --vp-c-text-3: #948a75;
+  --vp-c-divider: #ebe1ce;
+  --vp-c-gutter: #ebe1ce;
+
+  /* 字体 */
+  --vp-font-family-base: "Noto Sans SC", -apple-system, "Microsoft YaHei", sans-serif;
+  --vp-font-family-title: "ZCOOL QingKe HuangYou", "Noto Sans SC", sans-serif;
+
+  /* 果冻风本地令牌（供自定义组件使用） */
+  --qiqi-bg-page: #efe7d8;
+  --qiqi-bg-window: #fffef9;
+  --qiqi-bg-soft: #fbf5ea;
+  --qiqi-ink: #403a2e;
+  --qiqi-ink-soft: #948a75;
+  --qiqi-line: #ebe1ce;
+  --qiqi-matcha: #7ca65b;
+  --qiqi-matcha-deep: #5d8541;
+  --qiqi-matcha-soft: #eaf1df;
+  --qiqi-peach: #ff9e5e;
+  --qiqi-butter: #ffd98a;
+  --qiqi-blush: #f5aeb9;
+  --qiqi-r-sm: 10px;
+  --qiqi-r-md: 16px;
+  --qiqi-r-lg: 22px;
+  --qiqi-shadow-card:
+    0 2px 6px rgba(93, 84, 60, 0.06), 0 10px 26px rgba(93, 84, 60, 0.07);
+  --qiqi-shadow-window:
+    0 4px 12px rgba(64, 58, 46, 0.1), 0 34px 80px rgba(64, 58, 46, 0.22);
+}
+
+/* ---------- 导航栏：玻璃拟态 ---------- */
+.vp-navbar {
+  background: rgba(255, 254, 249, 0.82) !important;
+  backdrop-filter: blur(10px);
+  border-bottom: 1.5px solid var(--qiqi-line) !important;
+}
+.vp-navbar .title,
+.vp-navbar .vp-navbar-title {
+  font-family: var(--vp-font-family-title);
+  font-weight: 400;
+}
+.vp-navbar .content-body a {
+  color: var(--qiqi-ink) !important;
+}
+.vp-navbar .content-body a:hover {
+  color: var(--qiqi-matcha-deep) !important;
+}
+
+/* 语言切换 / 搜索等按钮统一圆角 */
+.vp-navbar .vp-navbar-actions .VPNavBarMenuLink,
+.vp-navbar .vp-navbar-actions .VPNavBarTranslation,
+.vp-navbar .vp-navbar-actions .DocSearch {
+  border-radius: 999px;
+}
+
+/* ---------- 侧边栏与文档区 ---------- */
+.VPSidebar {
+  background: var(--qiqi-bg-soft) !important;
+  border-right: 1.5px solid var(--qiqi-line) !important;
+}
+.vp-doc a,
+.vp-doc a > code {
+  color: var(--qiqi-matcha-deep);
+  text-decoration: none;
+  border-bottom: 1.5px solid transparent;
+  transition: border-color 0.2s ease;
+}
+.vp-doc a:hover {
+  border-bottom-color: var(--qiqi-matcha);
+}
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3 {
+  font-family: var(--vp-font-family-title);
+  font-weight: 400;
+  color: var(--qiqi-ink);
+}
+.vp-doc h1 {
+  font-size: 40px;
+  line-height: 1.15;
+}
+.vp-doc h2 {
+  border-top: none;
+  border-bottom: 2px dashed var(--qiqi-line);
+  padding-bottom: 0.4em;
+}
+
+/* 代码块柔和化 */
+.vp-doc div[class*="language-"] {
+  border-radius: var(--qiqi-r-md);
+  box-shadow: var(--qiqi-shadow-card);
+}
+
+/* ---------- 通用果冻卡片 / 按钮工具类 ---------- */
+.jelly-card {
+  background: var(--qiqi-bg-window);
+  border: 1.5px solid var(--qiqi-line);
+  border-radius: var(--qiqi-r-lg);
+  box-shadow: var(--qiqi-shadow-card);
+}
+.jelly-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 26px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  border: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+}
+.jelly-btn--primary {
+  background: linear-gradient(
+    135deg,
+    var(--qiqi-matcha) 0%,
+    var(--qiqi-matcha-deep) 100%
+  );
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(93, 133, 65, 0.32);
+}
+.jelly-btn--primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(93, 133, 65, 0.4);
+}
+.jelly-btn--ghost {
+  background: var(--qiqi-matcha-soft);
+  color: var(--qiqi-matcha-deep);
+}
+.jelly-btn--ghost:hover {
+  transform: translateY(-2px);
+  background: #dfe9cd;
+}
+.ico {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* 纸张噪点纹理 */
+.jelly-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: radial-gradient(rgba(120, 105, 70, 0.1) 1px, transparent 1px);
+  background-size: 5px 5px;
+  mix-blend-mode: multiply;
+}
+
+/* 果冻弹性动效 */
+@keyframes jelly-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+@keyframes jelly-pop {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.jelly-float {
+  animation: jelly-float 4s ease-in-out infinite;
+}
+.jelly-pop {
+  animation: jelly-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* 页脚 */
+.VPFooter {
+  border-top: 1.5px solid var(--qiqi-line);
+  background: var(--qiqi-bg-soft);
+  color: var(--qiqi-ink-soft);
+}
+
+/* 移动端：导航内边距 */
+@media (max-width: 768px) {
+  .vp-doc h1 {
+    font-size: 30px;
+  }
+}

@@ -43,6 +43,7 @@ export default {
         "docs",
         "ads",
         "pet-design",
+        "website",
       ],
     ],
     "subject-case": [2, "always", ["lower-case", "sentence-case"]],

@@ -13,6 +13,7 @@ export default tseslint.config(
       "public/**",
       "docs/**",
       "src-tauri/**", // Rust side is linted by clippy/rustfmt
+      "website/**", // 独立子工程，由 website/ 自身工具链负责 lint，不纳入应用 lint 范围
     ],
   },
 

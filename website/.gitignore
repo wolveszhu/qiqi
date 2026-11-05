@@ -1,0 +1,17 @@
+# 依赖与构建产物（独立工程，全部自洽于 website/）
+node_modules/
+.vitepress/dist/
+.vitepress/cache/
+site-test/
+
+# 日志
+*.log
+*.err
+build*.log
+
+# 构建期自动生成的版本副本（由 scripts/sync-latest.mjs 生成）
+public/latest.json
+
+# 非官网使用的锁文件（官网以 pnpm 为准）
+package-lock.json
+pnpm-lock.yaml

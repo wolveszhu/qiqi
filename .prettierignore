@@ -8,3 +8,6 @@ target
 pnpm-lock.yaml
 *.md
 *.log
+site-test
+**/.vitepress/cache
+**/site-test
