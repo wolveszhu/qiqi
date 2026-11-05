@@ -1,6 +1,6 @@
 # 广告展示（AdSlot）实施计划
 
-> 状态：已确认，实施中（2026-11-04）。
+> 状态：已确认，实施中（2026-11-04）；素材规格于 2026-11-05 修订为 6:5 位图。
 > 适用范围：窗口 B（设置层）广告模块。样式遵循 `src/styles/tokens.css`（Jelly-Toy）唯一真源。
 
 ## 1. 需求与已确认边界
@@ -9,6 +9,7 @@
 | :--- | :--- |
 | 广告位 ① | 设置窗顶部横幅（TitleBar 下方、所有 Tab 可见）——**不用图片**：文字 + 背景色 + 跳转链接 |
 | 广告位 ② | 侧边栏底部图片小卡（SideNav 导航下方，显示宽 144px） |
+| 素材规格 | 位图 **PNG / JPG / JPEG**，宽高比 **6:5**，**不限制像素尺寸**；不使用 SVG（生成/维护麻烦） |
 | 数据来源 | **本地内置**：文案/链接为前端常量（`src/config/ads.ts`），图片打包进 `src/assets/ad/`，随版本更新、无网络依赖 |
 | 关闭行为 | **今日不再显示**：持久化到当天日期，次日自动恢复；两个广告位独立关闭 |
 | 跳转 | 点击经 `@tauri-apps/plugin-opener` 的 `openUrl` 打开系统浏览器（权限已授权） |
@@ -27,16 +28,16 @@
 
 ### 广告位 ② 侧边栏图片卡（AdCard）
 - 位置：SideNav 通过新增**底部 footer slot** 注入（组件保持纯 UI，零业务依赖），`margin-top:auto` 贴底，与导航项间距 12px。
-- **素材规格：`300×250 px`** —— IAB 标准 medium rectangle，最常用的矩形广告尺寸之一。
-- 占位素材：`src/assets/ad/sidebar-300x250.png`（显式 `width="300" height="250"`，标注「300×250 广告位占位」）。
-- 显示尺寸：宽 144px 等比缩放 → **144×120 px**；圆角 `--r-sm`、描边 `--line`、hover 上浮 + `--shadow-card`。
+- **素材规格：宽高比 `6:5`** —— 位图格式 PNG / JPG / JPEG，**不限制像素尺寸**（300×250、720×600、861×710 等只要 6:5 均可）；不再使用 SVG 占位图。
+- 当前素材：`src/assets/ad/sidebar-300x250.png`（阿里云推广图，861×710 ≈ 6:5）。**文件名沿用历史命名，仅作标识，不代表要求 300×250 像素**。
+- 显示尺寸：宽 144px → **144×120 px**（正好 6:5）；`object-fit: cover` 居中裁切，任意合规素材都不会拉伸变形；圆角 `--r-sm`、描边 `--line`、hover 上浮 + `--shadow-card`。
 - 左上角「广告」角标（半透明 ink 底白字 10px）；右上角「✕」关闭（悬停显影）；整卡可点击跳转。
 
-### 替换真图指引
-1. 准备 **300×250** 的 PNG/JPG（或同名 SVG），命名 `sidebar-300x250.png`。
-2. 放到 `src/assets/ad/`，修改 `src/config/ads.ts` 中该条的 `image` 引用路径。
+### 替换素材指引
+1. 准备宽高比 **6:5** 的位图（PNG / JPG / JPEG），像素尺寸不限（建议短边 ≥ 500px 保证清晰）；**不要再用 SVG**。
+2. 直接覆盖 `src/assets/ad/sidebar-300x250.png` 即可（文件名沿用历史命名）；若改了文件名，需同步修改 `src/config/ads.ts` 的 `image` 引用与 `AdSlot.spec.ts` 中的断言。
 3. 若换的是新一轮广告活动，**必须同时更换素材 `id`**——关闭状态按素材 ID 记录，换 ID 才会重新展示（沿用旧 ID 会被上次「今日不再显示」抑制）。
-4. 替换真图后删除或保留占位 SVG 均可，只要引用路径正确。
+4. 旧 SVG 占位素材已从版本库移除，不再引入。
 
 ## 3. 数据契约
 
@@ -48,7 +49,7 @@ export interface AdItem {
   slot: "top-banner" | "sidebar-card";
   text?: string;                       // 文字横幅文案（top-banner）
   tone?: "matcha" | "peach";           // 横幅背景色 token
-  image?: string;                      // 图片 URL（sidebar-card；规格 300×250）
+  image?: string;                      // 图片 URL（sidebar-card；6:5 位图 PNG/JPG/JPEG）
   link: string;                        // 点击跳转链接
 }
 ```
@@ -87,7 +88,7 @@ src-tauri/src/db/repositories/app_settings.rs  # [MODIFY] adDismissals 读写 + 
 src-tauri/src/commands/settings.rs             # [MODIFY] 两个命令
 src-tauri/src/lib.rs                           # [MODIFY] invoke_handler 注册
 src/config/ads.ts                              # [NEW] 广告位常量（2 条）
-src/assets/ad/sidebar-300x250.png              # [NEW] 300×250 占位素材
+src/assets/ad/sidebar-300x250.png              # [NEW] 6:5 位图素材（PNG/JPG/JPEG）
 src/composables/useAds.ts                      # [NEW] 单例 composable
 src/api/settings.ts                            # [MODIFY] 两个 IPC 封装
 src/components/settings/AdBanner.vue           # [NEW] 顶部文字横幅
@@ -101,7 +102,7 @@ src/tests/components/AdSlot.spec.ts            # [NEW] 组件测试
 
 1. 落地本文档（用户显式要求）。
 2. Rust 持久化：`app_settings` 增 `KEY_AD_DISMISSALS`、`get_ad_dismissals`、`mark_ad_dismissed` + 单测（roundtrip / 缺省空 / 同桶合并互扰）；`commands/settings.rs` 增两命令；`lib.rs` 注册。
-3. 前端本地内置：`src/config/ads.ts` + `src/assets/ad/sidebar-300x250.png` 占位素材。
+3. 前端本地内置：`src/config/ads.ts` + `src/assets/ad/sidebar-300x250.png` 位图素材（6:5）。
 4. `useAds` 单例 composable：加载关闭映射 + 本地今日比较 + `dismiss`；`api/settings.ts` 两封装（统一走 `callCommand`）。
 5. 组件：`AdBanner.vue`（文字型）/ `AdCard.vue`（图片型）+ `AdSlot.spec.ts`。
 6. 集成：`SettingsWindow` 挂 `AdBanner`；`SideNav` 加 footer slot 承载 `AdCard`。
@@ -111,4 +112,4 @@ src/tests/components/AdSlot.spec.ts            # [NEW] 组件测试
 
 - 后端：`cargo test --lib ad`（含跨天失效与同桶合并互扰）、`cargo clippy`。
 - 前端：`pnpm typecheck`、`pnpm test`（AdSlot 组件测试）、`pnpm lint`、`pnpm format:check`。
-- 手工：`pnpm tauri dev` → 设置窗顶部出现文字横幅、侧边栏底部出现 300×250 缩放卡；点「✕」后本日内不再出现，关闭重开仍不出现；手动把系统日期改到次日（或改 DB 中日期）后恢复；点击广告主体打开系统浏览器。
+- 手工：`pnpm tauri dev` → 设置窗顶部出现文字横幅、侧边栏底部出现 6:5（144×120）缩放卡；点「✕」后本日内不再出现，关闭重开仍不出现；手动把系统日期改到次日（或改 DB 中日期）后恢复；点击广告主体打开系统浏览器。
