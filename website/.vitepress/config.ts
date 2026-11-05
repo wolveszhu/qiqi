@@ -6,7 +6,7 @@ const repo = "https://github.com/wolveszhu/qiqi";
 
 export default defineConfig({
   srcDir: "docs",
-  title: "qiqi · 桌面数字生命",
+  title: "七七 · 桌面数字生命",
   description: "住在你桌面上的数字生命：有性格、有记忆、有主动性，会主动找你说话。",
   lastUpdated: true,
   cleanUrls: true,
@@ -22,7 +22,7 @@ export default defineConfig({
         rel: "stylesheet",
       },
     ],
-    ["meta", { property: "og:title", content: "qiqi · 桌面数字生命" }],
+    ["meta", { property: "og:title", content: "七七 · 桌面数字生命" }],
     [
       "meta",
       {
@@ -98,7 +98,7 @@ export default defineConfig({
     },
   },
   themeConfig: {
-    logo: "/favicon.ico",
+    logo: "/logo.png",
     socialLinks: [{ icon: "github", link: repo }],
     search: { provider: "local" },
     externalLinkIcon: true,

@@ -36,6 +36,8 @@ onMounted(async () => {
     <a
       class="jelly-btn jelly-btn--primary"
       :href="downloadUrl"
+      target="_blank"
+      rel="noopener noreferrer"
     >
       <svg
         class="ico"
