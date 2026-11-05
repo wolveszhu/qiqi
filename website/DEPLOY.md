@@ -143,34 +143,31 @@ jobs:
 
 适合放到自己的服务器、对象存储（S3/OSS/COS）、Netlify、Vercel 等。把 `dist/` 内容上传到站点根目录即可。
 
-### 4.1 Nginx 示例
-由于开启了 `cleanUrls: true`，链接形如 `/features`（无 `.html`）。Nginx 需加一条回退规则把无后缀路径映射到对应 `.html`：
+### 4.1 Nginx（含 HTTPS）— 推荐
 
-```nginx
-server {
-    listen 80;
-    server_name qiqi.bootai.work;
+完整配置文件已生成：`website/nginx/qiqi.bootai.work.conf`（含 80→443 跳转、TLS、HSTS、cleanUrls、缓存与安全头）。
 
-    root /var/www/qiqi;        # 上传 dist/ 内容的目录
-    index index.html;
+**步骤：**
 
-    # cleanUrls：/features -> /features.html
-    location / {
-        try_files $uri $uri.html $uri/ =404;
-    }
+1. 上传 `dist/` 全部内容到站点目录（配置中示例为 `/var/www/qiqi`）。
+2. 启用站点：
+   ```bash
+   sudo cp website/nginx/qiqi.bootai.work.conf /etc/nginx/sites-available/
+   sudo ln -s /etc/nginx/sites-available/qiqi.bootai.work.conf /etc/nginx/sites-enabled/
+   ```
+3. 申请 Let's Encrypt 证书（certbot，先有 80 端口即可）：
+   ```bash
+   sudo apt install certbot          # 其它系统见 certbot 文档
+   sudo certbot certonly --webroot -w /var/www/qiqi -d qiqi.bootai.work
+   ```
+4. 校验并重载：
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+5. 自动续期验证：`sudo certbot renew --dry-run`（certbot 默认已装 systemd timer，到期自动续）。
 
-    # 静态资源长缓存
-    location ~* \.(js|css|png|jpg|webp|svg|woff2?)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # 强制 HTTPS（配合证书后开启）
-    # listen 443 ssl; ...
-}
-```
-
-> GitHub Pages / Netlify / Vercel 已内置「pretty URL」映射，无需额外配置；仅**纯 Nginx 且未配 rewrite** 时才需上面的 `try_files`。
+> 说明：`cleanUrls: true` 会让链接形如 `/features`（无 `.html`）；配置文件中的 `try_files $uri $uri.html $uri/ =404` 已处理该映射，无需额外规则。
+> GitHub Pages / Netlify / Vercel 已内置「pretty URL」映射，无需 Nginx 这类 rewrite。
 
 ### 4.2 对象存储 / CDN
 将 `dist/` 全部文件上传到 Bucket 根路径，开启「静态网站托管」并绑定自定义域名 `qiqi.bootai.work`，默认索引文件设为 `index.html` 即可。
