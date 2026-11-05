@@ -13,7 +13,6 @@ export default defineConfig({
   appearance: false, // 果冻奶油风为浅色专属设计，关闭深浅切换
   vite: { build: { emptyOutDir: false } },
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
     ["link", { rel: "icon", type: "image/png", href: "/logo.png" }],
     ["link", { rel: "preconnect", href: "https://fonts.googleapis.com" }],
     ["link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }],
