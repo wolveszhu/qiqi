@@ -43,7 +43,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** 选中形象：未注册 id（如导入占位）→ 维持原 Phase 3 提示。 */
 function selectRenderer(id: string): void {
   if (!OPTIONS.some((o) => o.id === id)) {
-    pushToast("自定义形象将在 Phase 3 开放", "error");
+    pushToast("自定义形象将在 未来版本 开放", "error");
     return;
   }
   const prev = petStore.activeRenderer;
@@ -161,7 +161,7 @@ onMounted((): void => {
         <div class="preview-card__name">{{ petStore.petName }}</div>
         <div class="preview-card__badges">
           <span class="preview-card__badge">果冻物理</span>
-          <span class="preview-card__badge">视线跟随</span>
+          <!-- <span class="preview-card__badge">视线跟随</span> -->
           <span class="preview-card__badge">点击穿透</span>
         </div>
       </div>
@@ -181,7 +181,7 @@ onMounted((): void => {
         />
         <PetOptionCard
           name="导入自定义形象"
-          sub="Phase 3 · CustomSpriteRenderer"
+          sub="暂不可用 · 期待版本更新哦"
           emoji="＋"
           dashed
           @select="selectRenderer('import')"
