@@ -154,8 +154,8 @@ onUnmounted(() => {
       </AppCard>
 
       <AppCard
-        title="成长路线"
         v-model:collapsed="journeyCollapsed"
+        title="成长路线"
         collapsible
       >
         <template #collapsed>
