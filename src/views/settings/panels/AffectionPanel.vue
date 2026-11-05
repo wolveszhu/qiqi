@@ -25,6 +25,9 @@ import type { LogItem as LogItemDto } from "../../../api/types";
 const displayPoints = ref(petStore.affectionPoints);
 let rafId = 0;
 
+/** 成长路线卡片折叠态（默认展开）。 */
+const journeyCollapsed = ref(false);
+
 /** 数值补间：ease-out cubic，约 600ms。 */
 function tweenTo(target: number): void {
   cancelAnimationFrame(rafId);
@@ -133,10 +136,10 @@ onUnmounted(() => {
           <div class="aff-next">
             距离下一级还差 <b>{{ nextInfo.diff }}</b> 分 · {{ nextInfo.sub }}
           </div>
-          <div class="aff-badges">
+          <!-- <div class="aff-badges">
             <span class="aff-badge">弹性衰减已启用</span>
             <span class="aff-badge">禁止播报数值</span>
-          </div>
+          </div> -->
         </div>
 
         <Transition name="pop">
@@ -150,7 +153,19 @@ onUnmounted(() => {
         </Transition>
       </AppCard>
 
-      <AppCard title="成长路线">
+      <AppCard
+        title="成长路线"
+        v-model:collapsed="journeyCollapsed"
+        collapsible
+      >
+        <template #collapsed>
+          <LevelPill :level="petStore.relationshipLevel" />
+          <span class="journey-mini__text">
+            Lv.{{ petStore.relationshipLevel }}
+            {{ levelLabel(petStore.relationshipLevel) }} · 当前
+            {{ Math.round(displayPoints) }} 分（进行中）
+          </span>
+        </template>
         <LevelJourney
           :points="Math.round(displayPoints)"
           :level="petStore.relationshipLevel"
@@ -294,6 +309,15 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* 成长路线折叠态摘要 */
+.journey-mini__text {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.journey-mini__text b {
+  color: var(--peach);
 }
 
 @media (max-width: 1080px) {
