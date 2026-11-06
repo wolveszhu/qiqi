@@ -1,4 +1,4 @@
-//! 有序迁移链 M1–M9（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
+//! 有序迁移链 M1–M10（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
 //!
 //! 链全表与改表操作路径见同目录 `README.md` §3–§4。
 //! 铁律：任何结构变更都**追加新迁移**，禁止改历史 SQL；每条迁移独立事务、失败回滚；
@@ -17,10 +17,11 @@ use crate::config::EMBEDDING_DIM;
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1（操作路径见 `README.md` §4.1）；
 /// `connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 9;
+pub const TARGET_VERSION: usize = 10;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered → M4 dnd/频率 →
-/// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 → M9 搜索配置）。
+/// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 →
+/// M9 搜索配置 → M10 额度平台维度与存量回填）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -63,6 +64,9 @@ pub fn chain() -> Migrations<'static> {
         // M9：联网搜索服务配置（search_settings，单一行 id=1，BYOK）。
         // provider/api_key/enabled/max_results/lang；Key 仅库内流转，接口不回明文。
         M::up(include_str!("migrations/M9__search_settings.sql")),
+        // M10：额度用量加 platform 维度 + 平台月表 + 存量回填 + 月度额度改 100,000。
+        // 仅加量（ADD COLUMN / CREATE TABLE）与幂等回填，不改 M8 历史 SQL。
+        M::up(include_str!("migrations/M10__quota_platform.sql")),
     ])
 }
 
