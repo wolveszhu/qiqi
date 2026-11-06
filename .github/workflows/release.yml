@@ -44,6 +44,21 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 显式先构建一次前端，让静态守卫能扫描即将嵌入二进制的 dist/。
+      # tauri-action 内部还会按 beforeBuildCommand 再跑一次 pnpm build（幂等）。
+      - name: Build frontend for artifact scan
+        run: pnpm build
+
+      # 发布数据防线 1/2：构建输入不得含数据文件 / 测试种子 / 明文凭据。
+      # 见 src-tauri/src/db/README.md §7.3；失败即中止，不产出 Release。
+      - name: Verify release data (static guard)
+        run: pnpm verify:release-data
+
+      # 发布数据防线 2/2：干净空库跑完 M1–M9，断言仅含系统基础数据。
+      - name: Verify clean-install data baseline
+        working-directory: src-tauri
+        run: cargo test --test release_data_guard
+
       - name: Build and publish Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
