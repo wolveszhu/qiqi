@@ -1,5 +1,6 @@
-//! 有序迁移链：M1 核心表+种子 → M2 vec0 虚拟表（规范 §4 / rule.md §5）。
+//! 有序迁移链 M1–M9（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
 //!
+//! 链全表与改表操作路径见同目录 `README.md` §3–§4。
 //! 铁律：任何结构变更都**追加新迁移**，禁止改历史 SQL；每条迁移独立事务、失败回滚；
 //! 版本读取以 rusqlite_migration 内部 `PRAGMA user_version` 为准，禁止手工覆写（附录 A §A.6）。
 //!
@@ -14,10 +15,12 @@ use rusqlite_migration::{M, Migrations};
 use crate::config::EMBEDDING_DIM;
 
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
-/// 新迁移追加时同步 +1；`connection::apply_migrations` 据此判定版本三分支。
+/// 新迁移追加时同步 +1（操作路径见 `README.md` §4.1）；
+/// `connection::apply_migrations` 据此判定版本三分支。
 pub const TARGET_VERSION: usize = 9;
 
-/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered 数据迁移 → M4 dnd/频率 → M5 自定义模型表 → M6 内置模型表 → M7 清空三档）。
+/// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered → M4 dnd/频率 →
+/// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 → M9 搜索配置）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；

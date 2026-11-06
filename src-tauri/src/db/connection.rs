@@ -88,10 +88,6 @@ fn quarantine_db(db_path: &Path) -> Result<std::path::PathBuf, AppError> {
     Ok(corrupt)
 }
 
-// 历史实现注释（已被 ensure_decryptable + quarantine_db 取代，保留原因说明）：
-// 初版在连接未关闭时直接 rename，Windows 报 os error 32（文件被占用），
-// 故改为"判定与隔离分离、隔离前 drop 连接"——见 open_encrypted 与用例 8。
-
 /// 版本三分支（附录 A §A.6）：版本读取以 rusqlite_migration 为准，禁止手工覆写。
 ///
 /// 备份语义（B4.7 实测修正）：仅**前向迁移已有数据的库**（current > 0）才备份——
