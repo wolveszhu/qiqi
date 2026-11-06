@@ -33,6 +33,11 @@
 .PARAMETER OutDir
   安装包收集目录（默认 <仓库根>/release，已被 .gitignore 忽略）。
 
+.PARAMETER GitHubMirror
+  下载 Windows 打包工具链时使用的 GitHub 镜像前缀。国内直连 GitHub release
+  常超时（CLI 报 `failed to bundle project: timeout: global`）。也可直接设置
+  环境变量 TAURI_BUNDLER_TOOLS_GITHUB_MIRROR。所有下载均校验官方 SHA1。
+
 .EXAMPLE
   .\scripts\build-release.cmd
   双击运行：本地完整打包并输出 msi + nsis.exe。
@@ -51,7 +56,8 @@ param(
   [switch]$SkipGuards,
   [switch]$SkipInstall,
   [switch]$DryRun,
-  [string]$OutDir
+  [string]$OutDir,
+  [string]$GitHubMirror
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,13 +100,16 @@ function Invoke-Checked {
     return
   }
   Push-Location $WorkDir
+  $code = 1
   try {
-    # pnpm/cargo 会把进度信息写到 stderr；PS 5.1 在 Stop 模式下会把它变成
-    # 终止性 NativeCommandError。执行期临时降级，成败统一交给 $LASTEXITCODE 判定。
+    # pnpm/cargo 把进度信息写到 stderr。PS 5.1 在 `2>&1` 下会把每一行包装成
+    # NativeCommandError（红色报错块），即使 $ErrorActionPreference=Continue 也一样，
+    # 容易被误读为构建失败。用 ForEach-Object 把输出统一转成字符串再打印：
+    # stderr 内容原样保留、不再产生 ErrorRecord，且 $LASTEXITCODE 仍准确。
     $prevPref = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-      & $Command @Arguments 2>&1
+      & $Command @Arguments 2>&1 | ForEach-Object { "$_" }
       $code = $LASTEXITCODE
     }
     finally {
@@ -114,6 +123,98 @@ function Invoke-Checked {
     throw "$Label 失败（退出码 $code）。请查看上方输出，已中止发布。"
   }
   Write-Ok $Label
+}
+
+# ---------- Windows 打包工具链预检（规避 CLI 联网下载超时） ----------
+# Tauri CLI 打包 NSIS 前会校验 %LOCALAPPDATA%\tauri\NSIS 缓存；缺
+# Plugins\x86-unicode\additional\nsis_tauri_utils.dll 时会从 GitHub release 重下，
+# 国内直连常超时并报 `failed to bundle project: timeout: global`。
+# WiX 缓存通常独立完整，故典型现象是「MSI 成功、NSIS 卡住」。
+# 这里提前补齐并按 CLI 内置的官方 SHA1 校验，使打包阶段无需联网。
+$NSIS_PLUGIN_SHA1 = "75197FEE3C6A814FE035788D1C34EAD39349B860"
+$NSIS_PLUGIN_PATH = "tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll"
+
+function Ensure-NsisTools {
+  $toolsDir = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
+  $dest = Join-Path $toolsDir "Plugins\x86-unicode\additional\nsis_tauri_utils.dll"
+
+  if (Test-Path -LiteralPath $dest) {
+    $hash = (Get-FileHash -LiteralPath $dest -Algorithm SHA1).Hash
+    if ($hash -eq $NSIS_PLUGIN_SHA1) {
+      Write-Ok "NSIS 工具链完整（插件 SHA1 校验通过）"
+      return
+    }
+    Write-Host "    NSIS 插件哈希不符，需重新下载。" -ForegroundColor Yellow
+  }
+  else {
+    Write-Host "    NSIS 插件缺失，需补齐（否则 CLI 联网重下易超时）。" -ForegroundColor Yellow
+  }
+
+  if ($DryRun) {
+    Write-Host "    [DryRun] 跳过下载；真实运行会校验 $dest 的 SHA1" -ForegroundColor DarkGray
+    return
+  }
+
+  # 候选源顺序：用户指定镜像 → CLI 已有镜像环境变量 → GitHub 直连 → 常用公共镜像。
+  $sources = @()
+  if (-not [string]::IsNullOrWhiteSpace($GitHubMirror)) {
+    $sources += $GitHubMirror.TrimEnd("/")
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:TAURI_BUNDLER_TOOLS_GITHUB_MIRROR)) {
+    $sources += $env:TAURI_BUNDLER_TOOLS_GITHUB_MIRROR.TrimEnd("/")
+  }
+  $sources += "https://github.com"
+  $sources += "https://ghfast.top/https://github.com"
+  $sources += "https://gh-proxy.com/https://github.com"
+  $sources = @($sources | Select-Object -Unique)
+
+  $tmp = Join-Path $env:TEMP ("nsis_tauri_utils_" + [guid]::NewGuid().ToString("N") + ".dll")
+  $downloaded = $false
+  $usedMirror = $null
+  try {
+    foreach ($src in $sources) {
+      $url = "$src/$NSIS_PLUGIN_PATH"
+      try {
+        Write-Host "    尝试下载 $url"
+        Invoke-WebRequest -Uri $url -OutFile $tmp -TimeoutSec 20 -UseBasicParsing -ErrorAction Stop
+        $hash = (Get-FileHash -LiteralPath $tmp -Algorithm SHA1).Hash
+        if ($hash -ne $NSIS_PLUGIN_SHA1) {
+          throw "SHA1 不匹配（$hash），拒绝使用"
+        }
+        $downloaded = $true
+        if ($src -ne "https://github.com") { $usedMirror = $src }
+        break
+      }
+      catch {
+        Write-Host "    失败：$($_.Exception.Message)" -ForegroundColor DarkGray
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+  finally {
+    if ($downloaded) {
+      New-Item -ItemType Directory -Path (Split-Path -Path $dest -Parent) -Force | Out-Null
+      Copy-Item -LiteralPath $tmp -Destination $dest -Force
+      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  if (-not $downloaded) {
+    $hint = @(
+      "NSIS 工具链插件下载失败，无法离线打包。",
+      "原因：CLI 校验到 %LOCALAPPDATA%\tauri\NSIS 缺 nsis_tauri_utils.dll，重下时 GitHub 超时。",
+      "处理：联网后重试，或指定可访问的 GitHub 镜像：",
+      '  .\scripts\build-release.cmd -GitHubMirror "https://ghfast.top/https://github.com"'
+    ) -join [Environment]::NewLine
+    throw $hint
+  }
+  Write-Ok "已补齐 NSIS 插件（SHA1 校验通过）"
+
+  # CLI 若还需下载其他工具（WiX / NSIS 主体），一并走镜像，避免再次超时。
+  if ($usedMirror -and [string]::IsNullOrWhiteSpace($env:TAURI_BUNDLER_TOOLS_GITHUB_MIRROR)) {
+    $env:TAURI_BUNDLER_TOOLS_GITHUB_MIRROR = $usedMirror
+    Write-Host "    已设置 TAURI_BUNDLER_TOOLS_GITHUB_MIRROR=$usedMirror" -ForegroundColor DarkGray
+  }
 }
 
 # ---------- 1. 前置检查 ----------
@@ -246,7 +347,17 @@ if ($Publish) {
 
 # ---------- 5b. 本地构建安装包 ----------
 Write-Step "4/6 编译并打包 Tauri（首次约 10–20 分钟）"
-Invoke-Checked -Label "tauri build" -WorkDir $RepoRoot -Command "pnpm" -Arguments @("tauri", "build", "-b", "msi,nsis")
+Ensure-NsisTools
+try {
+  Invoke-Checked -Label "tauri build" -WorkDir $RepoRoot -Command "pnpm" -Arguments @("tauri", "build", "-b", "msi,nsis")
+}
+catch {
+  # CLI 的 `timeout: global` 只说超时、不说原因，这里补上可行动的诊断。
+  Write-Host "    若日志含 'failed to bundle project: timeout: global'：" -ForegroundColor Yellow
+  Write-Host "    Tauri 仍在联网下载 WiX/NSIS 工具链（GitHub release 直连超时），" -ForegroundColor Yellow
+  Write-Host '    可指定镜像重跑： .\scripts\build-release.cmd -GitHubMirror "https://ghfast.top/https://github.com"' -ForegroundColor Yellow
+  throw
+}
 
 # ---------- 6. 收集产物 ----------
 Write-Step "5/6 收集安装包"
