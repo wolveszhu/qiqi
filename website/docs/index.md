@@ -12,24 +12,32 @@ layout: page
   secondary-link="/features"
 />
 
-## 它会做什么
+<section class="home-section">
+  <p class="section-kicker">✦ 功能一览</p>
+  <h2 class="section-title">它会做什么</h2>
+  <p class="section-sub">七七不只是一个桌宠，更是一个会陪你、记得你、主动找你的数字生命。</p>
 
-<FeatureGrid :features="[
-  { emoji: '🪟', title: '双窗口桌宠', desc: '透明置顶的桌宠层 + 自绘设置面板，安静地住在你屏幕角落。' },
-  { emoji: '🍮', title: '果冻物理交互', desc: '点击会 Q 弹回弹，呼吸般起伏，拖拽有拉伸形变，手感治愈。' },
-  { emoji: '💗', title: '好感度进化', desc: '从陌生到羁绊四级关系，互动越多越亲近，从不播报冰冷数值。' },
-  { emoji: '🧠', title: 'AI 对话与记忆', desc: 'OpenAI 兼容流式对话，自动抽取事实与摘要，记得你说过的话。' },
-  { emoji: '⏰', title: '主动互动', desc: '按时间窗口与情境感知主动找你，工作与游戏时懂得安静。' },
-  { emoji: '🐶', title: '形象切换', desc: '内置猫与狗狗形象可切换，未来支持自定义形象扩展。' }
-]" />
+  <FeatureGrid :features="[
+    { emoji: '🪟', title: '双窗口桌宠', desc: '透明置顶的桌宠层 + 自绘设置面板，安静地住在你屏幕角落。' },
+    { emoji: '🍮', title: '果冻物理交互', desc: '点击会 Q 弹回弹，呼吸般起伏，拖拽有拉伸形变，手感治愈。' },
+    { emoji: '💗', title: '好感度进化', desc: '从陌生到羁绊四级关系，互动越多越亲近，从不播报冰冷数值。' },
+    { emoji: '🧠', title: 'AI 对话与记忆', desc: 'OpenAI 兼容流式对话，自动抽取事实与摘要，记得你说过的话。' },
+    { emoji: '⏰', title: '主动互动', desc: '按时间窗口与情境感知主动找你，工作与游戏时懂得安静。' },
+    { emoji: '🐶', title: '形象切换', desc: '内置猫与狗狗形象可切换，未来支持自定义形象扩展。' }
+  ]" />
+</section>
 
-## 为什么选择七七
+<section class="home-section home-section--alt">
+  <p class="section-kicker section-kicker--peach">♡ 为什么是我们</p>
+  <h2 class="section-title">为什么选择七七</h2>
+  <p class="section-sub">把隐私、轻量与好上手放在第一位，让陪伴没有负担。</p>
 
-<FeatureGrid :features="[
-  { emoji: '🔒', title: '本地加密', desc: '所有记忆与设置经 SQLCipher 本地加密，密钥与数据不出本机。' },
-  { emoji: '⚡', title: '轻盈省电', desc: 'Rust 系统外壳 + WebView 渲染，待机低占用，几乎不打扰你。' },
-  { emoji: '🛠️', title: '零门槛配置', desc: '自带 API 配置向导，粘贴 Key 即可对话，新手三分钟上手。' }
-]" :columns="3" />
+  <FeatureGrid :features="[
+    { emoji: '🔒', title: '本地加密', desc: '所有记忆与设置经 SQLCipher 本地加密，密钥与数据不出本机。' },
+    { emoji: '⚡', title: '轻盈省电', desc: 'Rust 系统外壳 + WebView 渲染，待机低占用，几乎不打扰你。' },
+    { emoji: '🛠️', title: '零门槛配置', desc: '自带 API 配置向导，粘贴 Key 即可对话，新手三分钟上手。' }
+  ]" :columns="3" />
+</section>
 
 <div class="cta-wrap">
   <a class="jelly-btn jelly-btn--primary" href="/download">免费下载 for Windows</a>

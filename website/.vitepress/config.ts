@@ -40,7 +40,7 @@ const appJsonLd = JSON.stringify({
 
 export default defineConfig({
   srcDir: "docs",
-  title: "七七 · 桌面数字生命与 AI 桌宠",
+  title: "七七 · 桌面数字生命",
   description:
     "七七是一款住在你桌面上的数字生命与 AI 桌宠：有性格、有记忆、有主动性，会主动找你说话，支持好感度进化、本地加密与双窗口桌宠。",
   lastUpdated: true,
@@ -186,7 +186,7 @@ export default defineConfig({
   themeConfig: {
     logo: "/logo.png",
     socialLinks: [{ icon: "github", link: repo }],
-    search: { provider: "local" },
+    search: false,
     externalLinkIcon: true,
   },
 });
