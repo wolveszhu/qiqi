@@ -23,7 +23,7 @@ SELECT  '智谱',1,  'https://open.bigmodel.cn/api/paas/v4', '["glm-4-flash"]', 
 WHERE NOT EXISTS (SELECT 1 FROM default_model_settings WHERE name = '智谱');
 
 INSERT INTO default_model_settings (name, type, base_url, models, api_key, is_can_use)
-SELECT  '硅基流动',  1,'https://api.siliconflow.cn/v1', '["Qwen/Qwen2.5-7B-Instruct", "THUDM/GLM-4-9B-0414", "THUDM/GLM-Z1-9B-041", "Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", "Qwen/Qwen3.5-4B"]', 'sk-opmeqwxdxruazubxxfjmwxjgbbdgqojvxznhtrgpsopbjbxx', 1
+SELECT  '硅基流动',  1,'https://api.siliconflow.cn/v1', '["Qwen/Qwen2.5-7B-Instruct", "THUDM/GLM-4-9B-0414", "THUDM/GLM-Z1-9B-0414", "Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", "Qwen/Qwen3.5-4B"]', 'sk-opmeqwxdxruazubxxfjmwxjgbbdgqojvxznhtrgpsopbjbxx', 1
 WHERE NOT EXISTS (SELECT 1 FROM default_model_settings WHERE name = '硅基流动');
 
 -- 额度默认口径对齐（用户原在 M1 DDL 将 default 1→2 的意图）：
