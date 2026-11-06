@@ -23,19 +23,20 @@ pub struct CallChars {
 
 /// 记一笔 LLM 调用（`hit` 为 None 时跳过——链路全失败无从归属，不扣点也不记明细）。
 ///
+/// - `hit`：`(tier, model, platform)`；platform 为模型所属平台名（内置额度记账按平台拆分）。
 /// - `usage`：接口用量帧；None 时按 `chars` 端侧估算兜底；
 /// - `ok=false`：失败条目记 0 点（审计用），由仓储层保证；
 /// - 记账失败仅上抛，由调用方决定是否吞掉（后台任务不应因记账失败而中断主流程）。
 pub fn record_call(
     conn: &Connection,
     scene: &str,
-    hit: Option<(&str, &str)>,
+    hit: Option<(&str, &str, &str)>,
     usage: Option<TokenUsage>,
     chars: CallChars,
     ok: bool,
     error: Option<&str>,
 ) -> Result<(), AppError> {
-    let Some((tier, model)) = hit else {
+    let Some((tier, model, platform)) = hit else {
         return Ok(());
     };
     let (prompt_tokens, completion_tokens, token_source) = match usage {
@@ -54,6 +55,7 @@ pub fn record_call(
             scene,
             tier,
             model,
+            platform,
             prompt_tokens,
             completion_tokens,
             token_source,
@@ -93,7 +95,7 @@ mod tests {
         record_call(
             &conn,
             "chat",
-            Some(("builtin", "glm-4-flash")),
+            Some(("builtin", "glm-4-flash", "智谱")),
             Some(TokenUsage { prompt_tokens: 100, completion_tokens: 50 }),
             CallChars::default(),
             true,
@@ -104,7 +106,7 @@ mod tests {
         record_call(
             &conn,
             "chat",
-            Some(("custom", "gpt-x")),
+            Some(("custom", "gpt-x", "自定义平台")),
             Some(TokenUsage { prompt_tokens: 999, completion_tokens: 999 }),
             CallChars::default(),
             true,
@@ -119,10 +121,16 @@ mod tests {
         let rows = quota_usage::recent(&conn, &period, 10).expect("读明细");
         assert_eq!(rows.len(), 1, "仅内置段一条明细");
         assert_eq!(rows[0].model, "glm-4-flash");
+        assert_eq!(rows[0].platform, "智谱", "平台名应随命中目标落明细");
         assert_eq!(rows[0].token_source, "api");
         let monthly = quota_usage::monthly(&conn, &period).expect("读汇总");
         assert_eq!(monthly.used, 200, "100×1.0 + 50×2.0");
         assert_eq!(monthly.requests, 1);
+        let by_platform = quota_usage::platform_breakdown(&conn, &period).expect("读平台汇总");
+        assert_eq!(by_platform.len(), 1);
+        assert_eq!(by_platform[0].platform, "智谱");
+        assert_eq!(by_platform[0].used, 200);
+        assert_eq!(by_platform[0].requests, 1);
     }
 
     #[test]
@@ -131,7 +139,7 @@ mod tests {
         record_call(
             &conn,
             "proactive",
-            Some(("builtin", "b1")),
+            Some(("builtin", "b1", "硅基流动")),
             None,
             CallChars { prompt: 16, completion: 0 },
             true,

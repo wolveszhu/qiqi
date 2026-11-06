@@ -8,7 +8,7 @@
 use rusqlite::Connection;
 use tauri::State;
 
-use crate::db::models::{QuotaSummaryDto, QuotaUsageRecordDto};
+use crate::db::models::{QuotaPlatformUsageDto, QuotaSummaryDto, QuotaUsageRecordDto};
 use crate::db::repositories::quota_usage;
 use crate::error::AppError;
 use crate::state::AppState;
@@ -38,12 +38,17 @@ pub fn quota_summary_inner(
     let m = quota_usage::monthly(conn, period_key)?;
     let remaining_ratio =
         if m.granted > 0 { (m.granted - m.used).max(0) as f64 / m.granted as f64 } else { 0.0 };
+    let platforms = quota_usage::platform_breakdown(conn, period_key)?
+        .into_iter()
+        .map(|r| QuotaPlatformUsageDto { platform: r.platform, used: r.used, requests: r.requests })
+        .collect();
     Ok(QuotaSummaryDto {
         period_key: m.period_key,
         granted: m.granted,
         used: m.used,
         remaining_ratio,
         requests: m.requests,
+        platforms,
     })
 }
 
@@ -70,6 +75,7 @@ pub fn quota_usage_records_inner(
             period_key: r.period_key,
             scene: r.scene,
             tier: r.tier,
+            platform: r.platform,
             model: r.model,
             prompt_tokens: r.prompt_tokens,
             completion_tokens: r.completion_tokens,
@@ -95,6 +101,7 @@ mod tests {
                 date: "2026-10-25",
                 scene: "chat",
                 tier: "builtin",
+                platform: "智谱",
                 model: "glm-4-flash",
                 prompt_tokens: 100,
                 completion_tokens: 50,
@@ -108,6 +115,9 @@ mod tests {
         assert_eq!(dto.period_key, "2026-10");
         assert_eq!(dto.used, 200);
         assert_eq!(dto.requests, 1);
+        assert_eq!(dto.platforms.len(), 1, "汇总应带平台分项");
+        assert_eq!(dto.platforms[0].platform, "智谱");
+        assert_eq!(dto.platforms[0].used, 200);
         let expected = (crate::config::QUOTA_MONTHLY_CREDITS - 200) as f64
             / crate::config::QUOTA_MONTHLY_CREDITS as f64;
         assert!((dto.remaining_ratio - expected).abs() < 1e-9);
@@ -122,6 +132,7 @@ mod tests {
                 date: "2026-10-25",
                 scene: "distill",
                 tier: "builtin",
+                platform: "硅基流动",
                 model: "b1",
                 prompt_tokens: 10,
                 completion_tokens: 5,
@@ -137,5 +148,6 @@ mod tests {
         assert_eq!(rows[0].credits, 0, "失败不扣点");
         assert_eq!(rows[0].error.as_deref(), Some("超时"));
         assert_eq!(rows[0].scene, "distill");
+        assert_eq!(rows[0].platform, "硅基流动", "明细应带平台名");
     }
 }

@@ -218,7 +218,8 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
     {
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         // 内置额度记账（失败仅 log，不影响日记落库）
-        let hit = outcome.hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str()));
+        let hit =
+            outcome.hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str(), h.platform.as_str()));
         let chars = super::quota::CallChars {
             prompt: transcript.chars().count(),
             completion: outcome.text.chars().count(),

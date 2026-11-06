@@ -13,7 +13,7 @@ use rusqlite::{Connection, params};
 use crate::config::{
     QUOTA_MONTHLY_CREDITS, TOKEN_ESTIMATE_CHARS_PER_TOKEN, WEIGHT_IN_DEFAULT, WEIGHT_OUT_DEFAULT,
 };
-use crate::db::models::{QuotaUsageDetailRow, QuotaUsageMonthlyRow};
+use crate::db::models::{QuotaPlatformMonthlyRow, QuotaUsageDetailRow, QuotaUsageMonthlyRow};
 use crate::error::AppError;
 
 /// 月度周期键：本地时区自然月，格式 `YYYY-MM`。
@@ -42,6 +42,9 @@ pub struct QuotaUsageInput<'a> {
     pub scene: &'a str,
     /// 命中链段：builtin（记账）/ custom（不落库）。
     pub tier: &'a str,
+    /// 模型所属平台名（内置 = `default_model_settings.name`，如 智谱 / 硅基流动）。
+    /// 三档 / embedding 无平台归属时传 `""`，仓储统一归一化为 `unknown`。
+    pub platform: &'a str,
     pub model: &'a str,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
@@ -57,6 +60,11 @@ pub fn should_charge(tier: &str) -> bool {
     tier == "builtin"
 }
 
+/// 平台名归一化（空值统一为 `unknown`，避免平台表中出现空字符串分组）。
+pub(crate) fn normalize_platform(platform: &str) -> &str {
+    if platform.trim().is_empty() { "unknown" } else { platform }
+}
+
 /// 写入一条明细；命中内置段时同步增量更新月度汇总。
 ///
 /// 幂等性：每次调用即一条明细（failover 多次尝试各一条），不做去重。
@@ -67,6 +75,7 @@ pub fn record(conn: &Connection, input: &QuotaUsageInput<'_>) -> Result<(), AppE
         return Ok(());
     }
     let period_key = period_key_of(input.date);
+    let platform = normalize_platform(input.platform);
     let total_tokens = input.prompt_tokens + input.completion_tokens;
     // 失败不扣点；成功按计权换算
     let credits =
@@ -74,12 +83,13 @@ pub fn record(conn: &Connection, input: &QuotaUsageInput<'_>) -> Result<(), AppE
 
     conn.execute(
         "INSERT INTO quota_usage \
-         (period_key, scene, tier, model, prompt_tokens, completion_tokens, total_tokens, credits, token_source, ok, error) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         (period_key, scene, tier, platform, model, prompt_tokens, completion_tokens, total_tokens, credits, token_source, ok, error) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             period_key,
             input.scene,
             input.tier,
+            platform,
             input.model,
             input.prompt_tokens,
             input.completion_tokens,
@@ -92,7 +102,7 @@ pub fn record(conn: &Connection, input: &QuotaUsageInput<'_>) -> Result<(), AppE
     )
     .map_err(AppError::from)?;
 
-    // 汇总缓存：与明细同事务增量 upsert（调用方持有事务时随事务提交）
+    // 全局汇总缓存：与明细同事务增量 upsert（调用方持有事务时随事务提交）
     conn.execute(
         "INSERT INTO quota_usage_monthly (period_key, granted, used, requests) \
          VALUES (?1, ?2, ?3, 1) \
@@ -101,6 +111,19 @@ pub fn record(conn: &Connection, input: &QuotaUsageInput<'_>) -> Result<(), AppE
              requests = requests + 1, \
              updated_at = CURRENT_TIMESTAMP",
         params![period_key, QUOTA_MONTHLY_CREDITS, credits],
+    )
+    .map_err(AppError::from)?;
+
+    // 按平台汇总：同一事务内再 upsert 一行，保证与全局汇总口径一致
+    // （失败条目 credits=0 仍计入 requests）。granted 为全局额度，不按平台拆分。
+    conn.execute(
+        "INSERT INTO quota_usage_platform_monthly (period_key, platform, used, requests) \
+         VALUES (?1, ?2, ?3, 1) \
+         ON CONFLICT(period_key, platform) DO UPDATE SET \
+             used = used + excluded.used, \
+             requests = requests + 1, \
+             updated_at = CURRENT_TIMESTAMP",
+        params![period_key, platform, credits],
     )
     .map_err(AppError::from)?;
     Ok(())
@@ -131,6 +154,32 @@ pub fn monthly(conn: &Connection, period_key: &str) -> Result<QuotaUsageMonthlyR
     }
 }
 
+/// 读当月按平台拆分的用量（used 降序，同量按平台名稳定排序）。
+///
+/// 仅返回有记账记录的平台；空月返回空 Vec（全局额度仍由 `monthly` 提供）。
+pub fn platform_breakdown(
+    conn: &Connection,
+    period_key: &str,
+) -> Result<Vec<QuotaPlatformMonthlyRow>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT period_key, platform, used, requests FROM quota_usage_platform_monthly \
+             WHERE period_key = ?1 ORDER BY used DESC, platform ASC",
+        )
+        .map_err(AppError::from)?;
+    let rows = stmt
+        .query_map(params![period_key], |row| {
+            Ok(QuotaPlatformMonthlyRow {
+                period_key: row.get(0)?,
+                platform: row.get(1)?,
+                used: row.get(2)?,
+                requests: row.get(3)?,
+            })
+        })
+        .map_err(AppError::from)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
 /// 读月度明细（倒序；limit 用于限制条数）。
 ///
 /// 存储口径与全应用一致：`created_at` 为 UTC（`CURRENT_TIMESTAMP`），此处经
@@ -144,7 +193,8 @@ pub fn recent(
     let mut stmt = conn
         .prepare(
             "SELECT id, datetime(created_at, 'localtime') AS created_at, period_key, scene, tier, \
-                    model, prompt_tokens, completion_tokens, total_tokens, credits, token_source, ok, error \
+                    platform, model, prompt_tokens, completion_tokens, total_tokens, credits, \
+                    token_source, ok, error \
              FROM quota_usage WHERE period_key = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2",
         )
         .map_err(AppError::from)?;
@@ -156,14 +206,15 @@ pub fn recent(
                 period_key: row.get(2)?,
                 scene: row.get(3)?,
                 tier: row.get(4)?,
-                model: row.get(5)?,
-                prompt_tokens: row.get(6)?,
-                completion_tokens: row.get(7)?,
-                total_tokens: row.get(8)?,
-                credits: row.get(9)?,
-                token_source: row.get(10)?,
-                ok: row.get::<_, i64>(11)? != 0,
-                error: row.get(12)?,
+                platform: row.get(5)?,
+                model: row.get(6)?,
+                prompt_tokens: row.get(7)?,
+                completion_tokens: row.get(8)?,
+                total_tokens: row.get(9)?,
+                credits: row.get(10)?,
+                token_source: row.get(11)?,
+                ok: row.get::<_, i64>(12)? != 0,
+                error: row.get(13)?,
             })
         })
         .map_err(AppError::from)?;
@@ -176,6 +227,11 @@ pub fn prune_before(conn: &Connection, period_key: &str) -> Result<(), AppError>
         .map_err(AppError::from)?;
     conn.execute("DELETE FROM quota_usage_monthly WHERE period_key < ?1", params![period_key])
         .map_err(AppError::from)?;
+    conn.execute(
+        "DELETE FROM quota_usage_platform_monthly WHERE period_key < ?1",
+        params![period_key],
+    )
+    .map_err(AppError::from)?;
     Ok(())
 }
 
@@ -207,6 +263,7 @@ mod tests {
             date,
             scene,
             tier,
+            platform: "智谱",
             model: "glm-4-flash",
             prompt_tokens: prompt,
             completion_tokens: completion,
@@ -257,6 +314,47 @@ mod tests {
         let m = monthly(&conn, "2026-10").expect("读汇总");
         assert_eq!(m.used, credits_of(100, 50) + credits_of(10, 0));
         assert_eq!(m.requests, 2);
+    }
+
+    #[test]
+    fn platform_breakdown_splits_usage_by_platform() {
+        let (_dir, conn) = fresh_db();
+        record(&conn, &input("2026-10-25", "chat", "builtin", 100, 50, true, None))
+            .expect("智谱记账");
+        let mut other = input("2026-10-25", "chat", "builtin", 10, 0, true, None);
+        other.platform = "硅基流动";
+        record(&conn, &other).expect("硅基记账");
+        // 第二笔智谱累计
+        record(&conn, &input("2026-10-26", "chat", "builtin", 10, 0, true, None))
+            .expect("智谱第二笔");
+
+        let rows = platform_breakdown(&conn, "2026-10").expect("读平台汇总");
+        assert_eq!(rows.len(), 2, "两个平台各一行");
+        assert_eq!(rows[0].platform, "智谱", "按 used 降序");
+        assert_eq!(rows[0].used, credits_of(100, 50) + credits_of(10, 0));
+        assert_eq!(rows[0].requests, 2);
+        assert_eq!(rows[1].platform, "硅基流动");
+        assert_eq!(rows[1].used, credits_of(10, 0));
+        assert_eq!(rows[1].requests, 1);
+
+        // 全局汇总仍为两家之和
+        let m = monthly(&conn, "2026-10").expect("读全局汇总");
+        assert_eq!(m.used, rows.iter().map(|r| r.used).sum::<i64>());
+        assert_eq!(m.requests, 3);
+        // 明细带出平台名
+        let detail = recent(&conn, "2026-10", 10).expect("读明细");
+        assert!(detail.iter().any(|r| r.platform == "硅基流动"));
+    }
+
+    #[test]
+    fn empty_platform_normalizes_to_unknown() {
+        let (_dir, conn) = fresh_db();
+        let mut inp = input("2026-10-25", "chat", "builtin", 1, 0, true, None);
+        inp.platform = "  ";
+        record(&conn, &inp).expect("空平台记账");
+        let rows = platform_breakdown(&conn, "2026-10").expect("读平台汇总");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].platform, "unknown", "空平台归一，避免空串分组");
     }
 
     #[test]
@@ -322,6 +420,10 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM quota_usage_monthly", [], |r| r.get(0))
             .expect("查汇总");
         assert_eq!(count, 1, "旧月汇总同步清理");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM quota_usage_platform_monthly", [], |r| r.get(0))
+            .expect("查平台汇总");
+        assert_eq!(count, 1, "旧月平台汇总同步清理");
     }
 
     #[test]

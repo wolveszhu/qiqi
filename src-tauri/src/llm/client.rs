@@ -86,6 +86,9 @@ pub struct ChatRequest {
 pub struct LlmTarget {
     /// 档位名（日志只打这个，不打 Key/baseUrl 全文？baseUrl 非敏感可打）。
     pub tier: &'static str,
+    /// 模型所属平台名（内置 = `default_model_settings.name`，如 智谱 / 硅基流动）。
+    /// 供额度记账按平台拆分；三档与 embedding 目标无平台归属时为空串。
+    pub platform: String,
     pub base_url: String,
     pub api_key: String,
     pub model: String,
@@ -573,6 +576,7 @@ mod tests {
             base_url: "https://x/v1".into(),
             api_key: "k".into(),
             model: "m".into(),
+            platform: String::new(),
         };
         let body = ReqwestLlmClient::chat_body(
             &target,
@@ -589,6 +593,7 @@ mod tests {
             base_url: "https://mock/v1".into(),
             api_key: "k".into(),
             model: "m".into(),
+            platform: String::new(),
         };
         let stream = futures_executor_block_on(
             mock.chat_stream(&target, ChatRequest { messages: vec![], max_tokens: None }),
@@ -617,6 +622,7 @@ mod tests {
             base_url: "https://mock/v1".into(),
             api_key: "k".into(),
             model: "m".into(),
+            platform: String::new(),
         };
         let stream = futures_executor_block_on(
             mock.chat_stream(&target, ChatRequest { messages: vec![], max_tokens: None }),

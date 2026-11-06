@@ -432,8 +432,8 @@ async fn run_chat_task(
         // 回落链日志：只打档位与状态摘要，不打 Key/Prompt 全文
         eprintln!("[chat] {entry}");
     }
-    // 记账辅助：hit 转借用对（None = 链路全失败，不落库）
-    let hit_pair = hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str()));
+    // 记账辅助：hit 转借用三元组（None = 链路全失败，不落库）
+    let hit_ref = hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str(), h.platform.as_str()));
     // 记账失败不影响对话主流程（仅 log）
     let charge = |conn: &rusqlite::Connection,
                   usage: Option<crate::llm::client::TokenUsage>,
@@ -443,7 +443,7 @@ async fn run_chat_task(
         let chars =
             crate::llm::quota::CallChars { prompt: prompt_chars, completion: completion_chars };
         if let Err(e) =
-            crate::llm::quota::record_call(conn, "chat", hit_pair, usage, chars, ok, error)
+            crate::llm::quota::record_call(conn, "chat", hit_ref, usage, chars, ok, error)
         {
             eprintln!("[quota] 记账失败: {e}");
         }

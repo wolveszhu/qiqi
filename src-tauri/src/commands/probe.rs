@@ -154,7 +154,7 @@ pub async fn proactive_generate(
                 crate::llm::quota::record_call(
                     &conn,
                     "proactive",
-                    Some((h.tier.as_str(), h.model.as_str())),
+                    Some((h.tier.as_str(), h.model.as_str(), h.platform.as_str())),
                     usage,
                     chars,
                     stream_interrupted.is_none(),

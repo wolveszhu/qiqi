@@ -99,6 +99,17 @@ pub struct QuotaSummaryDto {
     pub remaining_ratio: f64,
     /// 本月记账请求次数。
     pub requests: i64,
+    /// 按平台拆分的当月用量（used 降序；空月为空数组）。
+    pub platforms: Vec<QuotaPlatformUsageDto>,
+}
+
+/// 单个平台的当月用量（quota_summary.platforms 元素）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaPlatformUsageDto {
+    pub platform: String,
+    pub used: i64,
+    pub requests: i64,
 }
 
 /// 内置额度单次请求明细（quota_usage_records 返回，审计/对账用）。
@@ -112,6 +123,8 @@ pub struct QuotaUsageRecordDto {
     pub scene: String,
     /// 命中链段：builtin（记账）/ custom（不落库）。
     pub tier: String,
+    /// 模型所属平台名（内置 = 智谱 / 硅基流动；无归属为 unknown）。
+    pub platform: String,
     pub model: String,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,

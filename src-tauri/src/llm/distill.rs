@@ -372,7 +372,8 @@ fn record_outcome_conn(
     outcome: &super::router::TextOutcome,
     prompt_chars: usize,
 ) {
-    let hit = outcome.hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str()));
+    let hit =
+        outcome.hit.as_ref().map(|h| (h.tier.as_str(), h.model.as_str(), h.platform.as_str()));
     let chars =
         super::quota::CallChars { prompt: prompt_chars, completion: outcome.text.chars().count() };
     if let Err(e) = super::quota::record_call(conn, scene, hit, outcome.usage, chars, true, None) {

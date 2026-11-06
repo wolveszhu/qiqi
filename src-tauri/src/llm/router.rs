@@ -49,6 +49,7 @@ pub struct ChainInput<'a> {
 pub fn target_of(tier: &'static str, value: &crate::db::models::LlmTierValue) -> LlmTarget {
     LlmTarget {
         tier,
+        platform: String::new(), // 三档为用户自配，无平台名且自定义段不记账
         base_url: value.base_url.clone(),
         api_key: value.api_key.clone(),
         model: value.model.clone(),
@@ -63,6 +64,7 @@ pub fn target_of(tier: &'static str, value: &crate::db::models::LlmTierValue) ->
 pub fn embed_target() -> LlmTarget {
     LlmTarget {
         tier: TIER_BUILTIN,
+        platform: String::new(), // embedding 端点不走额度记账
         base_url: crate::config::EMBEDDED_QUOTA_BASE_URL.into(),
         api_key: String::new(),
         model: crate::config::EMBEDDING_MODEL.into(),
@@ -78,6 +80,7 @@ pub fn build_chain(input: &ChainInput<'_>) -> ModelChain {
         for model in row.models() {
             targets.push(LlmTarget {
                 tier: TIER_CUSTOM,
+                platform: row.name.clone(),
                 base_url: row.base_url.clone(),
                 api_key: row.api_key.clone(),
                 model,
@@ -92,6 +95,7 @@ pub fn build_chain(input: &ChainInput<'_>) -> ModelChain {
             for model in row.models() {
                 flat.push(LlmTarget {
                     tier: TIER_BUILTIN,
+                    platform: row.name.clone(), // 内置额度记账按平台拆分的来源
                     base_url: row.base_url.clone(),
                     api_key: row.api_key.clone(),
                     model,
@@ -154,11 +158,13 @@ pub fn mark_builtin_success(builtin_index: usize) {
 ///
 /// 返回：(增量流 或 本地话术文本, 回落链日志)。
 /// 成功目标落在内置段时，回写粘性下标（`mark_builtin_success`）。
-/// 成功命中的链段目标（供额度记账：tier 判定记账范围，model 供明细展示）。
+/// 成功命中的链段目标（供额度记账：tier 判定记账范围，model / platform 供明细与平台拆分）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChainHit {
     pub tier: String,
     pub model: String,
+    /// 模型所属平台名（内置 = 智谱 / 硅基流动；三档与 embedding 为空串）。
+    pub platform: String,
 }
 
 pub async fn chat_with_chain(
@@ -184,7 +190,11 @@ pub async fn chat_with_chain(
                 return (
                     Ok(stream),
                     chain_log,
-                    Some(ChainHit { tier: target.tier.to_string(), model: target.model.clone() }),
+                    Some(ChainHit {
+                        tier: target.tier.to_string(),
+                        model: target.model.clone(),
+                        platform: target.platform.clone(),
+                    }),
                 );
             },
             Err(e) => chain_log.push(e.to_string()),
@@ -251,6 +261,7 @@ pub async fn chat_text_with_chain(
                     hit: Some(ChainHit {
                         tier: target.tier.to_string(),
                         model: target.model.clone(),
+                        platform: target.platform.clone(),
                     }),
                     usage,
                 });
@@ -480,8 +491,10 @@ mod tests {
         assert!(log.is_empty(), "首个目标成功无回落日志");
         assert_eq!(
             hit,
-            Some(ChainHit { tier: "builtin".into(), model: "b1".into() }),
-            "命中目标应随流返回（供额度记账）"
+            Some(ChainHit {
+                tier: "builtin".into(), model: "b1".into(), platform: "硅基".into()
+            }),
+            "命中目标应随流返回 tier/model/platform（供额度记账按平台拆分）"
         );
 
         // 粘性状态已回写：下一轮应沿用 b1（下标 0）

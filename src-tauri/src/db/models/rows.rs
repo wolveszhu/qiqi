@@ -57,6 +57,14 @@ pub struct QuotaUsageMonthlyRow {
     pub requests: i64,
 }
 
+/// quota_usage_platform_monthly 行（内置额度按平台月度汇总）。
+pub struct QuotaPlatformMonthlyRow {
+    pub period_key: String,
+    pub platform: String,
+    pub used: i64,
+    pub requests: i64,
+}
+
 /// quota_usage 行（内置额度用量明细）。
 pub struct QuotaUsageDetailRow {
     pub id: i64,
@@ -64,6 +72,8 @@ pub struct QuotaUsageDetailRow {
     pub period_key: String,
     pub scene: String,
     pub tier: String,
+    /// 模型所属平台名（内置 = 智谱 / 硅基流动；无归属为 unknown）。
+    pub platform: String,
     pub model: String,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
