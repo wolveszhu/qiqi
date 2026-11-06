@@ -233,7 +233,24 @@ function onPointerUp(e: PointerEvent): void {
   void onDragEnd();
 }
 
+/**
+ * 窗口 A 禁用 WebView2 原生右键菜单（"将图像另存为" / "复制图像" / "检查"）。
+ *
+ * Tauri v2 无关闭该菜单的配置项：Windows 侧由 WebView2 宿主层默认开启
+ * （wry 的 `default_context_menus = true`），而 DOM `contextmenu` 事件的
+ * `preventDefault()` 可阻止其弹出（微软 WebView2 文档的自定义菜单做法）。
+ * 只在本窗口（PetWindow 挂载的 webview）注册，窗口 B 输入框的复制/粘贴
+ * 右键菜单不受影响；也不改 devtools 开关，开发调试仍可用。
+ */
+function onContextMenu(e: MouseEvent): void {
+  e.preventDefault();
+}
+
 function onPointerDown(e: PointerEvent): void {
+  // 只响应主键：右键/中键不参与抚摸计分与系统拖拽。
+  // 右键菜单已被 onContextMenu 屏蔽，若继续放行会误 +1 好感度、甚至启动拖拽。
+  // 左键单击 / 双击 / 拖拽路径完全不变。
+  if (e.button !== 0) return;
   pressX = e.clientX;
   pressY = e.clientY;
   dragStarted = false;
@@ -258,6 +275,11 @@ function onDoubleClick(): void {
 }
 
 onMounted(async (): Promise<void> => {
+  // 兜底：capture 阶段拦截整窗右键，覆盖 .pet-root 之外的节点与运行时插入的
+  // PIXI canvas（模板只挂在根元素，冒泡链一旦被改动就会漏）。
+  // 仅 preventDefault、不 stopPropagation：不阻断其他事件，未来要在此窗口做
+  // 自定义右键菜单时仍可在子元素自行处理。
+  document.addEventListener("contextmenu", onContextMenu, true);
   unlisteners.push(
     await listen<string>("pet:action", (event) => onAction(event.payload)),
   );
@@ -323,6 +345,7 @@ onMounted(async (): Promise<void> => {
 });
 
 onUnmounted((): void => {
+  document.removeEventListener("contextmenu", onContextMenu, true);
   unlisteners.forEach((fn) => fn());
 });
 </script>
@@ -332,6 +355,7 @@ onUnmounted((): void => {
     class="pet-root"
     @pointerdown="onPointerDown"
     @dblclick="onDoubleClick"
+    @contextmenu="onContextMenu"
   >
     <div id="pet-canvas"></div>
     <SpeechBubble
