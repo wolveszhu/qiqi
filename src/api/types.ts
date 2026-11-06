@@ -200,6 +200,18 @@ export interface QuotaSummary {
   remainingRatio: number;
   /** 本月记账请求次数。 */
   requests: number;
+  /** 按平台拆分的当月用量（used 降序；空月为空数组）。 */
+  platforms: QuotaPlatformUsage[];
+}
+
+/** 单个平台的当月内置额度用量（仅内置段记账）。 */
+export interface QuotaPlatformUsage {
+  /** 平台名（default_model_settings.name，如 智谱 / 硅基流动；无归属为 unknown）。 */
+  platform: string;
+  /** 该平台当月已用 credits。 */
+  used: number;
+  /** 该平台当月记账请求次数。 */
+  requests: number;
 }
 
 /** 内置额度单次请求明细（quota_usage_records 返回，审计/对账用）。 */
@@ -211,6 +223,8 @@ export interface QuotaUsageRecord {
   scene: string;
   /** 命中链段：builtin 内置额度 / custom 自定义 / main / memory / fallback。 */
   tier: string;
+  /** 模型所属平台名（内置 = 智谱 / 硅基流动；无归属为 unknown）。 */
+  platform: string;
   model: string;
   promptTokens: number;
   completionTokens: number;

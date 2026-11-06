@@ -514,6 +514,26 @@ onMounted(async (): Promise<void> => {
             {{ quotaDetailsOpen ? "收起明细" : "查看明细" }}
           </AppButton>
         </div>
+        <!-- 按平台拆分的当月用量（仅内置额度段记账） -->
+        <div
+          v-if="quotaSummary?.platforms?.length"
+          class="quota-platforms"
+          aria-label="按平台用量"
+        >
+          <span class="quota-platforms__title">各平台用量</span>
+          <ul class="quota-platforms__list">
+            <li
+              v-for="p in quotaSummary.platforms"
+              :key="p.platform"
+              class="quota-platforms__row"
+            >
+              <span class="quota-platforms__name">{{ p.platform }}</span>
+              <span class="quota-platforms__used"
+                >{{ fmtCredits(p.used) }} 点 · {{ p.requests }} 次</span
+              >
+            </li>
+          </ul>
+        </div>
         <p
           v-if="quotaSummary && quotaSummary.remainingRatio <= 0"
           class="llm-panel__quota-note llm-panel__quota-note--warn"
@@ -552,6 +572,7 @@ onMounted(async (): Promise<void> => {
               <span class="quota-details__scene">{{
                 sceneLabels[r.scene] ?? r.scene
               }}</span>
+              <span class="quota-details__platform">{{ r.platform }}</span>
               <span class="quota-details__model">{{ r.model }}</span>
               <span class="quota-details__tokens"
                 >{{ r.promptTokens }}/{{ r.completionTokens }}</span
@@ -844,6 +865,43 @@ onMounted(async (): Promise<void> => {
 .quota-summary__details-btn {
   margin-left: auto;
 }
+/* ---- 按平台用量（仅内置额度段） ---- */
+.quota-platforms {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-soft);
+}
+.quota-platforms__title {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-soft);
+  padding-top: 2px;
+}
+.quota-platforms__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.quota-platforms__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+}
+.quota-platforms__name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.quota-platforms__used {
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
 /* ---- 明细抽屉（时间倒序；滚动区隐藏滚动条，与窗口 B 既有风格一致） ---- */
 .quota-details {
   max-height: 240px;
@@ -890,6 +948,13 @@ onMounted(async (): Promise<void> => {
 .quota-details__scene {
   min-width: 56px;
   color: var(--ink);
+}
+.quota-details__platform {
+  min-width: 64px;
+  color: var(--matcha-deep);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .quota-details__model {
   flex: 1;

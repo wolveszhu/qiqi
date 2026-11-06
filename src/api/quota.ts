@@ -8,7 +8,7 @@
 import { callCommand } from "./client";
 import type { QuotaSummary, QuotaUsageRecord } from "./types";
 
-/** 当月汇总（已用/总量/剩余比例/请求次数；空月返回默认发放额度）。 */
+/** 当月汇总（已用/总量/剩余比例/请求次数/各平台用量；空月返回默认发放额度）。 */
 export async function getQuotaSummary(): Promise<QuotaSummary> {
   return callCommand<QuotaSummary>("quota_summary");
 }
