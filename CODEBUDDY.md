@@ -14,7 +14,7 @@ All commands use `pnpm` (see `package.json`). A Rust toolchain and WebView2 are 
 
 - **`pnpm dev`** — Start only the Vite dev server on `http://localhost:1420` (fixed port, `vite.config.ts`). Use to iterate on Vue/PIXI UI without launching the desktop window.
 
-- **`pnpm tauri dev`** — Build/run the full desktop app: launches the Rust binary (WebView2 window) and the Vite dev server together, with hot-reload. The primary command during feature development.
+- **`pnpm tauri dev`** — Build/run the full desktop app: launches the Rust binary (WebView2 window) and the Vite dev server together, with hot-reload. The primary command during feature development. **Quitting:** prefer the tray menu's **退出** (calls `app.exit(0)`, the app's only clean-exit path), then `Ctrl+C` to stop the dev server. Pressing `Ctrl+C` directly force-kills the whole process tree; WebView2 may then print `Failed to unregister class Chrome_WidgetWin_0. Error = 1411` while tearing down. That line is a known harmless WebView2/Chromium shutdown log (process exits cleanly, no data loss, no leaked app processes) — see `docs/待处理问题清单.md` §4 L5. Do **not** add a console Ctrl-handler or suppress logging to "fix" it.
 
 - **`pnpm build`** — Frontend-only production build: runs `vue-tsc --noEmit` (TypeScript type-check, strict mode) then `vite build` to `dist/`. Fails on any type error.
 
