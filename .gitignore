@@ -16,6 +16,7 @@ dist-ssr/
 .vite/
 build/
 out/
+release/                 # scripts/build-release.ps1 收集的安装包（msi / nsis.exe）
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 
