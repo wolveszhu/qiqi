@@ -40,7 +40,7 @@ const appJsonLd = JSON.stringify({
 
 export default defineConfig({
   srcDir: "docs",
-  title: "七七 · 桌面数字生命",
+  title: "七七 · 桌面数字生命与 AI 桌宠",
   description:
     "七七是一款住在你桌面上的数字生命与 AI 桌宠：有性格、有记忆、有主动性，会主动找你说话，支持好感度进化、本地加密与双窗口桌宠。",
   lastUpdated: true,
@@ -130,14 +130,9 @@ export default defineConfig({
           { text: "下载", link: "/download" },
           { text: "更新日志", link: "/changelog" },
           { text: "常见问题", link: "/faq" },
-        ],
-        sidebar: [
-          { text: "功能介绍", link: "/features" },
-          { text: "下载", link: "/download" },
-          { text: "更新日志", link: "/changelog" },
-          { text: "常见问题", link: "/faq" },
           { text: "隐私与关于", link: "/privacy" },
         ],
+        sidebar: false,
         footer: {
           message: "基于 Tauri 2 构建 · 用户数据全程本地 SQLCipher 加密",
           copyright: "Copyright © 2026 qiqi",
@@ -162,14 +157,9 @@ export default defineConfig({
           { text: "Download", link: "/en/download" },
           { text: "Changelog", link: "/en/changelog" },
           { text: "FAQ", link: "/en/faq" },
-        ],
-        sidebar: [
-          { text: "Features", link: "/en/features" },
-          { text: "Download", link: "/en/download" },
-          { text: "Changelog", link: "/en/changelog" },
-          { text: "FAQ", link: "/en/faq" },
           { text: "Privacy", link: "/en/privacy" },
         ],
+        sidebar: false,
         footer: {
           message: "Built with Tauri 2 · Your data is encrypted locally with SQLCipher",
           copyright: "Copyright © 2026 qiqi",
