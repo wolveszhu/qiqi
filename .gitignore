@@ -92,3 +92,8 @@ $RECYCLE.BIN/
 *.local
 *.tmp
 *.temp
+
+# ── VitePress 构建产物（website/） ────────────────────────────
+website/.vitepress/cache/
+website/.vitepress/dist/
+website/.vitepress/temp/
