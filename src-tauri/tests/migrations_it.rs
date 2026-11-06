@@ -435,3 +435,111 @@ fn case8_undecryptable_db_is_quarantined() {
         .any(|e| e.file_name().to_string_lossy().starts_with("pet.db.corrupt-"));
     assert!(quarantined, "应存在隔离文件（保留证据）");
 }
+
+// ---------- 用例 11：M10 存量库升级（加 platform 列 + 按 model 回填 + 平台月表聚合） ----------
+
+#[test]
+fn case11_m10_backfills_platform_on_legacy_quota_data() {
+    register_vec_extension().expect("vec 注册");
+    let dir = tempfile::tempdir().expect("临时目录");
+    let db_path = dir.path().join("pet.db");
+
+    // 1) 构造 M9 存量库：quota_usage 无 platform 列，granted 仍为旧默认 200000
+    {
+        let mut conn = Connection::open(&db_path).expect("打开");
+        conn.execute_batch(&format!("PRAGMA key = \"x'{TEST_KEY}'\";")).expect("密钥");
+        qiqi_lib::db::migrations::chain().to_version(&mut conn, 9).expect("迁移到 M9");
+        conn.execute_batch(
+            "INSERT INTO quota_usage \
+             (period_key, scene, tier, model, prompt_tokens, completion_tokens, total_tokens, credits, token_source, ok) \
+             VALUES \
+             ('2026-10', 'chat', 'builtin', 'glm-4-flash', 10, 0, 10, 100, 'api', 1), \
+             ('2026-10', 'chat', 'builtin', 'Qwen/Qwen2.5-7B-Instruct', 10, 0, 10, 50, 'api', 1), \
+             ('2026-10', 'chat', 'builtin', 'no-such-model', 10, 0, 10, 20, 'api', 1), \
+             ('2026-10', 'chat', 'custom', 'glm-4-flash', 10, 0, 10, 999, 'api', 1); \
+             INSERT INTO quota_usage_monthly (period_key, granted, used, requests) \
+             VALUES ('2026-10', 200000, 170, 3);",
+        )
+        .expect("写入 M9 存量用量数据");
+        let cols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('quota_usage') WHERE name = 'platform'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("查列");
+        assert_eq!(cols, 0, "M9 的 quota_usage 应尚无 platform 列");
+    }
+
+    // 2) 升级到 M10
+    let db = init_with_key(&db_path, TEST_KEY).expect("升级初始化");
+    {
+        let conn = db.conn.lock().expect("锁");
+
+        // 明细按 model 反查内置表回填平台名；查不到填 unknown
+        let rows: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT model, platform FROM quota_usage WHERE period_key = '2026-10' \
+                 ORDER BY id ASC",
+            )
+            .expect("准备")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .expect("查询")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("收集");
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0], ("glm-4-flash".into(), "智谱".into()), "智谱模型应回填平台名");
+        assert_eq!(
+            rows[1],
+            ("Qwen/Qwen2.5-7B-Instruct".into(), "硅基流动".into()),
+            "硅基流动模型应回填平台名"
+        );
+        assert_eq!(rows[2], ("no-such-model".into(), "unknown".into()), "查不到填 unknown");
+        assert_eq!(rows[3], ("glm-4-flash".into(), "智谱".into()), "custom 明细同样回填");
+
+        // 平台月表：仅聚合 tier='builtin'，custom 不纳入
+        let platforms: Vec<(String, i64, i64)> = conn
+            .prepare(
+                "SELECT platform, used, requests FROM quota_usage_platform_monthly \
+                 WHERE period_key = '2026-10'",
+            )
+            .expect("准备")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("查询")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("收集");
+        assert_eq!(platforms.len(), 3, "应为 unknown / 智谱 / 硅基流动 三行");
+        let by_name = |n: &str| platforms.iter().find(|p| p.0 == n).expect("平台行");
+        assert_eq!((by_name("智谱").1, by_name("智谱").2), (100, 1));
+        assert_eq!((by_name("硅基流动").1, by_name("硅基流动").2), (50, 1));
+        assert_eq!((by_name("unknown").1, by_name("unknown").2), (20, 1));
+
+        // 全局汇总：旧默认 granted 对齐 100000，used/requests 不被改写
+        let (granted, used, requests): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT granted, used, requests FROM quota_usage_monthly WHERE period_key = '2026-10'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("读汇总");
+        assert_eq!(granted, 100000, "旧默认额度应对齐新常量");
+        assert_eq!(used, 170, "存量已用不因迁移变化");
+        assert_eq!(requests, 3, "存量请求数不因迁移变化");
+    }
+
+    // 3) 幂等：再次全链初始化，回填与聚合结果不变（不重复累加）
+    drop(db);
+    let db2 = init_with_key(&db_path, TEST_KEY).expect("幂等复跑");
+    let conn2 = db2.conn.lock().expect("锁");
+    let (zp_used, zp_requests, platform_rows): (i64, i64, i64) = conn2
+        .query_row(
+            "SELECT \
+               (SELECT used FROM quota_usage_platform_monthly WHERE period_key='2026-10' AND platform='智谱'), \
+               (SELECT requests FROM quota_usage_platform_monthly WHERE period_key='2026-10' AND platform='智谱'), \
+               (SELECT COUNT(*) FROM quota_usage_platform_monthly WHERE period_key='2026-10')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("读幂等结果");
+    assert_eq!((zp_used, zp_requests, platform_rows), (100, 1, 3), "M10 应幂等");
+}

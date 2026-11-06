@@ -13,7 +13,7 @@
 
 use rusqlite::Connection;
 
-use qiqi_lib::db::connection::{init_with_key, register_vec_extension, Db};
+use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
 use qiqi_lib::db::migrations::TARGET_VERSION;
 
 /// 固定测试密钥（64 hex 字符，同生产 32 字节 hex 形态）。
@@ -39,6 +39,7 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
     ("custom_model_settings", "SELECT COUNT(*) FROM custom_model_settings", 0),
     ("quota_usage", "SELECT COUNT(*) FROM quota_usage", 0),
     ("quota_usage_monthly", "SELECT COUNT(*) FROM quota_usage_monthly", 0),
+    ("quota_usage_platform_monthly", "SELECT COUNT(*) FROM quota_usage_platform_monthly", 0),
 ];
 
 /// 发布构建中禁止出现的测试 / 临时数据标记（与 README §7.2 一致）。

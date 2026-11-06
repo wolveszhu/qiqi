@@ -32,6 +32,7 @@ fn temp_db() -> (tempfile::TempDir, rusqlite::Connection) {
 fn mock_target() -> qiqi_lib::llm::client::LlmTarget {
     qiqi_lib::llm::client::LlmTarget {
         tier: "memory",
+        platform: String::new(),
         base_url: "https://mock/v1".into(),
         api_key: "k".into(),
         model: "m".into(),

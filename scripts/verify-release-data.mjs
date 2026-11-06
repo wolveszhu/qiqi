@@ -113,13 +113,18 @@ if (!existsSync(abs("dist"))) {
 // ---------- 3. 迁移 SQL：测试标记 + 写表白名单 ----------
 
 const FORBIDDEN_MARKERS = ["sk-old", "old/v1", "TEST_", "test-fixture", "mock-data"];
+// 种子表：允许 INSERT 幂等种子（见 db/README.md §7.2 的 6 行系统基础数据）。
 const INSERT_ALLOW = new Set([
   "pet_states",
   "app_settings",
   "default_model_settings",
   "search_settings",
 ]);
-const UPDATE_ALLOW = new Set(["app_settings"]);
+// 存量回填表：只允许 INSERT...SELECT 从已有业务数据聚合，禁止 VALUES 硬编码。
+// M10 的平台月表回填属此类——对全新空库不产生任何行，不是种子数据。
+const BACKFILL_INSERT_ALLOW = new Set(["quota_usage_platform_monthly"]);
+// 数据迁移白名单：app_settings 结构升级（M3/M4/M7）+ quota 维度/额度对齐（M10）。
+const UPDATE_ALLOW = new Set(["app_settings", "quota_usage", "quota_usage_monthly"]);
 const migrationsDir = abs("src-tauri", "src", "db", "migrations");
 const sqlFiles = readdirSync(migrationsDir).filter((name) => name.endsWith(".sql"));
 
@@ -137,14 +142,27 @@ for (const name of sqlFiles) {
     }
   }
   for (const match of code.matchAll(/\bINSERT\s+INTO\s+([A-Za-z_][\w]*)/gi)) {
-    if (!INSERT_ALLOW.has(match[1])) {
-      fail(
-        `迁移 ${name} 向运行时表 \`${match[1]}\` INSERT 种子；` +
-          `只允许写 ${[...INSERT_ALLOW].join(" / ")}（见 db/README.md §7.2）`,
-      );
+    const table = match[1];
+    if (INSERT_ALLOW.has(table)) continue;
+    if (BACKFILL_INSERT_ALLOW.has(table)) {
+      // 取该 INSERT 起至下一个分号的语句体，要求 SELECT 派生且无 VALUES 常量。
+      const tail = code.slice(match.index).split(";")[0];
+      if (!/\bSELECT\b/i.test(tail) || /\bVALUES\s*\(/i.test(tail)) {
+        fail(
+          `迁移 ${name} 向回填表 \`${table}\` 写入非派生数据；` +
+            `回填只允许 INSERT...SELECT（见 db/README.md §7.2）`,
+        );
+      }
+      continue;
     }
+    fail(
+      `迁移 ${name} 向运行时表 \`${table}\` INSERT 种子；` +
+        `只允许写 ${[...INSERT_ALLOW].join(" / ")}（见 db/README.md §7.2）`,
+    );
   }
-  for (const match of code.matchAll(/\bUPDATE\s+([A-Za-z_][\w]*)/gi)) {
+  // 只匹配语句开头的 UPDATE，跳过 `ON CONFLICT DO UPDATE SET` 这类子句
+  // （它并非独立数据迁移语句，且会误把 SET 当成表名）。
+  for (const match of code.matchAll(/(?:^|;|\n)\s*UPDATE\s+([A-Za-z_][\w]*)/gi)) {
     if (!UPDATE_ALLOW.has(match[1])) {
       fail(`迁移 ${name} UPDATE 了非白名单表 \`${match[1]}\``);
     }
