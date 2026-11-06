@@ -22,6 +22,8 @@
 | `models/mod.rs` | 三者 `pub use` 重导出，固定对外路径 `crate::db::models::X` | 增删模型文件时 |
 | `repositories/*.rs` | 按表分文件，只写参数化 SQL，不做业务决策、不 emit 事件 | 新增/改表时 |
 | `repositories/mod.rs` | 仓储模块声明 + 两张模型表共用的 JSON 解析/序列化出口 | 新增仓储时 |
+| `../../tests/release_data_guard.rs` | 发布数据运行时守卫：干净库断言仅含系统基础数据 | 基线变化时 |
+| `../../../scripts/verify-release-data.mjs` | 发布数据构建期守卫：扫描构建输入中的数据文件 | 发布链路变化时 |
 
 ## 2. 表清单（13 张）
 
@@ -84,9 +86,10 @@
    SQL 全部走 `params![]`，错误一律 `AppError::Db`。
 6. 需要行映射时在 `models/rows.rs` 加 `XxxRow`；需要跨 IPC 时在 `models/dto.rs`
    加 DTO 并**同步 `src/api/types.ts`**（camelCase 逐字段对齐）。
-7. 更新本文件 §2 表清单与 §3 迁移链。
+7. 更新本文件 §2 表清单与 §3 迁移链；若新表带种子数据，**同步更新 §7 发布数据基线**
+   与 `tests/release_data_guard.rs` 的期望值，否则发布会被引擎阻断。
 8. 跑校验：`pnpm lint:rust`（fmt + clippy）、`cd src-tauri && cargo test`、
-   前端 `pnpm typecheck` / `pnpm test`。
+   前端 `pnpm typecheck` / `pnpm test`、`pnpm verify:release-data`。
 
 ### 4.2 修改已有表
 
@@ -123,3 +126,80 @@
   历史迁移，按红线不可修改；如需轮换，应新增迁移 `UPDATE` 并同步评估种子口径。
 - `M3` / `M4` / `M7` 是历史数据迁移，链上必经执行，不可删除。
 - `models/values.rs` 的 `Legacy*` 结构仍被读取端引用，用于兜底极旧库，不可删。
+- `M6` 的两个内置模型平台明文 Key 在发布守卫中登记为**允许的系统基础数据**（见 §7.5）。
+
+## 7. 发布数据基线与防回归
+
+### 7.1 数据是怎么进安装包的
+
+安装包**不含任何 `.db` 文件**：`tauri.conf.json` 未配置 `bundle.resources`，
+`build.rs` 无拷贝逻辑，`lib.rs` 在 `app_data_dir()/pet.db` 首次启动现场建库。
+种子以 `include_str!` 编译进二进制，由迁移链 M1–M9 写入。
+
+因此治理对象是**迁移 SQL 与构建输入**，不是磁盘上的库文件；"自动排除测试数据"
+落实为「构建期扫描 + 运行时基线断言 + CI 阻断」，而不是打包时清理 `.db`。
+
+> 开发机反复安装时看到的旧聊天 / 记忆 / 好感度，是
+> `%APPDATA%\com.brave.qiqi\pet.db` 未被卸载程序清除，**不是安装包自带**。
+> 验收必须按 §7.4 用全新用户目录。
+
+### 7.2 生产基线（干净库首次启动后）
+
+| 表 | 允许行数 | 判定 |
+| :--- | ---: | :--- |
+| `pet_states` | 1 | 系统基础：默认「喵喵」/ `code_cat` / Lv1 / 0 分 |
+| `app_settings` | 2 | 系统基础：type=1 空三档；type=2 勿扰 + `frequency=normal` |
+| `default_model_settings` | 2 | 系统基础：智谱 / 硅基流动内置额度模型 |
+| `search_settings` | 1 | 系统基础：`tavily` / 未启用 / 空 Key |
+| `messages` | 0 | 运行时对话 |
+| `summaries` | 0 | 运行时摘要 |
+| `facts` | 0 | 运行时蒸馏事实 |
+| `vec_memory` | 0 | 运行时向量索引（派生可重建） |
+| `affection_logs` | 0 | 运行时好感度流水 |
+| `diaries` | 0 | 运行时日记 |
+| `custom_model_settings` | 0 | 用户自配，首发不得预置 |
+| `quota_usage` | 0 | 运行时用量明细 |
+| `quota_usage_monthly` | 0 | 运行时月度汇总 |
+
+合计 13 张表、**6 行系统基础数据**。任何运行时表出现非 0 行，即视为
+测试 / 临时数据混入，发布必须阻断。
+
+**禁止出现在发布构建中的标记**（守卫会扫描迁移 SQL 与 `dist/`）：
+`sk-old`、`old/v1`、`TEST_`、`test-fixture`、`mock-data`、以及任何
+`*.db` / `*.sqlite*` / `*.bak` / `*.corrupt-*` 文件。
+
+### 7.3 四层防回归
+
+| 层 | 落点 | 触发 | 作用 |
+| :--- | :--- | :--- | :--- |
+| 1 定义 | 本文件 §7.2 | 人工维护 | 基线的单一真源，改表时同步 |
+| 2 静态守卫 | `scripts/verify-release-data.mjs` | `pnpm verify:release-data` | 校验 `bundle.resources` 为空、扫描源码/`dist` 无数据文件；`dist` 命中自动删除并报告，源码命中直接失败；扫描迁移 SQL 无测试标记、INSERT 白名单 |
+| 3 运行时守卫 | `src-tauri/tests/release_data_guard.rs` | `cargo test --test release_data_guard` | 干净空库跑完 M1–M9，断言表集合、逐表行数、关键默认值与无测试串 |
+| 4 CI 阻断 | `.github/workflows/release.yml` | 打 `v*` tag | 在 `tauri-action` **之前**依次跑 2、3，任一失败即中止、不产出 Release |
+
+新增迁移若改变行数或表集合，必须同步改 §7.2 与 `release_data_guard.rs`
+的期望表；否则守卫会失败——这是刻意的"改表必经"闭环（呼应 §4.1 第 7 步）。
+
+### 7.4 全新用户目录验收（排除开发机残留）
+
+MSI 重装不会删除 `app_data_dir`，开发机上验证发布包时必须先清数据：
+
+1. 完全退出应用（托盘 → 退出），确认进程结束。
+2. 备份（可选）后删除数据目录：
+   `Remove-Item -Recurse -Force "$env:APPDATA\com.brave.qiqi"`
+3. 安装新包并**首次启动**（触发 M1–M9 现场建库）。
+4. 打开设置 → 记忆 / 好感度：记忆为空、事实 0 条、流水 0 条、好感度 0 分 / Lv1。
+5. 桌宠名应为默认「喵喵」、形象 `code_cat`；大模型与联网搜索均未配置 Key。
+
+若不清目录，旧库会走前向迁移分支（先备份 `pet.db.bak`）而**保留历史数据**，
+这是预期行为，不代表安装包带数据。
+
+### 7.5 已登记例外
+
+`M6__default_models.sql` 的两个明文 API Key 属「内置免费额度模型」的
+生产凭据：移除会让内置额度功能失效，本期按用户决策**保留**，仅在此登记。
+因此：
+
+- 守卫把 `default_model_settings` 的 2 行计入允许基线；
+- 但静态守卫仍会阻断这两个 Key 出现在 `dist/`（前端产物绝不含凭据）；
+- 后续如改为服务端下发，须同步更新 §7.2 基线与守卫期望值。

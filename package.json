@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
+    "verify:release-data": "node scripts/verify-release-data.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
