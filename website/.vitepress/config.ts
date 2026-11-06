@@ -135,7 +135,8 @@ export default defineConfig({
         sidebar: false,
         footer: {
           message: "基于 Tauri 2 构建 · 用户数据全程本地 SQLCipher 加密",
-          copyright: "Copyright © 2026 qiqi",
+          copyright:
+            'Copyright © 2026 qiqi<br><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">浙ICP备2026060710号-1</a> · 友情链接：<a href="https://www.bootai.work/" target="_blank" rel="noopener">AI应用市场</a>',
         },
         docFooter: { prev: "上一篇", next: "下一篇" },
         outline: { label: "本页目录" },
@@ -162,7 +163,8 @@ export default defineConfig({
         sidebar: false,
         footer: {
           message: "Built with Tauri 2 · Your data is encrypted locally with SQLCipher",
-          copyright: "Copyright © 2026 qiqi",
+          copyright:
+            'Copyright © 2026 qiqi<br><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">浙ICP备2026060710号-1</a> · Friend link: <a href="https://www.bootai.work/" target="_blank" rel="noopener">AI应用市场</a>',
         },
         docFooter: { prev: "Previous", next: "Next" },
         outline: { label: "On this page" },
