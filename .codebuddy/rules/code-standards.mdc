@@ -101,7 +101,7 @@ src-tauri/src/
 
 ## 7. Vue / TS 其他约定
 
-- **所有新增/修改的用户可见文案必须中英双语**，禁硬编码单语文案；单一真源、豁免边界与门禁见 [i18n-rules.mdc](mdc:.codebuddy/rules/i18n-rules.mdc)。
+- **设置窗口（窗口 B）与托盘所有新增/修改的用户可见文案必须中英双语**，禁硬编码单语文案；**窗口 A（桌宠窗口）不双语化**。单一真源、豁免边界与门禁见 [i18n-rules.mdc](mdc:.codebuddy/rules/i18n-rules.mdc)。
 - 组件一律 `<script setup lang="ts">`（`vue/component-api-style` 为 error）。
 - 模板中组件名用 `PascalCase`；禁止 `v-html`（`vue/no-v-html` error）。
 - Props 用 `defineProps<Type>()` + `withDefaults`；emit 用 `defineEmits<...>` 显式声明。
