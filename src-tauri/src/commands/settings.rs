@@ -115,11 +115,11 @@ pub fn settings_mark_ad_dismissed(
     app_settings::mark_ad_dismissed(&conn, &ad_id)
 }
 
-/// 读取用户语言（缺省/坏值回落 zh-CN）。
+/// 读取**已配置**的用户语言；未配置返回空串（供前端首启检测 OS 语言）。
 #[tauri::command]
 pub fn get_locale(state: State<'_, AppState>) -> Result<String, AppError> {
     let conn = state.db.lock().map_err(db_lock_err)?;
-    app_settings::get_locale(&conn)
+    Ok(app_settings::get_locale_configured(&conn)?.unwrap_or_default())
 }
 
 /// 写入用户语言并即时重建托盘菜单（持 `AppHandle`，命令内直接重建比前端 emit 事件更可靠）。

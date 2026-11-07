@@ -11,7 +11,7 @@ use tauri::{App, AppHandle, Manager, Runtime};
 
 use super::manager::{LABEL_MAIN, LABEL_SETTINGS};
 use crate::error::AppError;
-use crate::i18n::{tray_strings, TrayStrings};
+use crate::i18n::{TrayStrings, tray_strings};
 
 /// 菜单项 id（集中常量，禁魔法字符串）。
 const MENU_SHOW: &str = "tray_show";

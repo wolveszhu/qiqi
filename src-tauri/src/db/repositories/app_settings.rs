@@ -168,24 +168,38 @@ pub const SETTING_TYPE_LOCALE: i64 = 5;
 /// 默认/坏值回落语言。
 pub const DEFAULT_LOCALE: &str = "zh-CN";
 
+/// 读取**已显式配置**的用户语言（区分「未配置」与「配置为中文」）。
+///
+/// 首启 OS 语言检测依赖此区分：只有 `None`（未配置）才回写 OS 推断值，
+/// 否则英文 OS 上用户手动选择的中文会在每次启动时被覆盖。
+///
+/// @param conn - 数据库连接
+/// @returns 已配置且合法的语言标识；未配置 / 坏值 / 白名单外 → `None`
+pub fn get_locale_configured(conn: &Connection) -> Result<Option<String>, AppError> {
+    let raw = get_row(conn, SETTING_TYPE_LOCALE)?.and_then(|r| r.value);
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let value = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(value) if value.is_object() => value,
+        _ => return Ok(None),
+    };
+    Ok(value
+        .get("locale")
+        .and_then(|v| v.as_str())
+        .filter(|s| crate::i18n::SUPPORTED_LOCALES.contains(s))
+        .map(str::to_string))
+}
+
 /// 读取用户语言（缺省/坏值回落 `zh-CN`）。
+///
+/// 用于 Rust 侧托盘菜单构建等**必须拿到有效语言**的场景；前端首启检测请用
+/// `get_locale_configured` 对应的命令（返回空串表示未配置）。
 ///
 /// @param conn - 数据库连接
 /// @returns 语言标识（`SUPPORTED_LOCALES` 之一，或 `DEFAULT_LOCALE`）
 pub fn get_locale(conn: &Connection) -> Result<String, AppError> {
-    let raw = get_row(conn, SETTING_TYPE_LOCALE)?.and_then(|r| r.value);
-    let Some(raw) = raw else {
-        return Ok(DEFAULT_LOCALE.to_string());
-    };
-    match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(value) if value.is_object() => Ok(value
-            .get("locale")
-            .and_then(|v| v.as_str())
-            .filter(|s| crate::i18n::SUPPORTED_LOCALES.contains(s))
-            .unwrap_or(DEFAULT_LOCALE)
-            .to_string()),
-        _ => Ok(DEFAULT_LOCALE.to_string()),
-    }
+    Ok(get_locale_configured(conn)?.unwrap_or_else(|| DEFAULT_LOCALE.to_string()))
 }
 
 /// 写入用户语言（落 type=5 行；非法值返回 `AppError::Config`，防注入/乱码）。
@@ -387,6 +401,25 @@ mod tests {
     fn locale_defaults_to_zh_cn_when_row_missing() {
         let (_dir, conn) = fresh_db();
         assert_eq!(get_locale(&conn).expect("读取"), DEFAULT_LOCALE, "缺省回落中文");
+    }
+
+    #[test]
+    fn locale_configured_distinguishes_unset_from_explicit_zh_cn() {
+        let (_dir, conn) = fresh_db();
+        assert_eq!(get_locale_configured(&conn).expect("读取"), None, "未配置 → None");
+
+        set_locale(&conn, "zh-CN").expect("写中文");
+        assert_eq!(
+            get_locale_configured(&conn).expect("读取"),
+            Some("zh-CN".to_string()),
+            "显式中文必须可与未配置区分（英文 OS 首启不覆盖）"
+        );
+
+        set_locale(&conn, "en-US").expect("写英文");
+        assert_eq!(get_locale_configured(&conn).expect("读取"), Some("en-US".to_string()));
+
+        upsert_value(&conn, SETTING_TYPE_LOCALE, "not-json").expect("写坏值");
+        assert_eq!(get_locale_configured(&conn).expect("读取"), None, "坏值 → None");
     }
 
     #[test]

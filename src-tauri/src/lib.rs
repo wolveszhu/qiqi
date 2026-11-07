@@ -11,8 +11,8 @@
 )]
 
 pub mod affection;
-pub mod llm;
 mod i18n;
+pub mod llm;
 mod proactive;
 mod probe;
 mod window;
