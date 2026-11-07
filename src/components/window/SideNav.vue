@@ -1,11 +1,14 @@
 <script setup lang="ts">
 /**
- * 设置窗侧导航（设计方案 §3/§4）：六个 Tab，选中项由父级受控。
+ * 设置窗侧导航（设计方案 §3/§4）：八个 Tab，选中项由父级受控。
  */
+
+import { useI18n } from "vue-i18n";
 
 withDefaults(
   defineProps<{
-    active?: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about";
+    active?:
+      "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about" | "general";
     hasUpdate?: boolean;
   }>(),
   { active: "avatar", hasUpdate: false },
@@ -14,18 +17,21 @@ withDefaults(
 const emit = defineEmits<{
   (
     e: "change",
-    key: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about",
+    key: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about" | "general",
   ): void;
 }>();
 
+const { t } = useI18n();
+
 const items = [
-  { key: "chat", label: "对话" },
-  { key: "avatar", label: "桌宠" },
-  { key: "llm", label: "大模型" },
-  { key: "dnd", label: "勿扰与频率" },
-  { key: "affection", label: "好感度" },
-  { key: "memory", label: "记忆" },
-  { key: "about", label: "关于" },
+  { key: "chat" },
+  { key: "avatar" },
+  { key: "llm" },
+  { key: "dnd" },
+  { key: "affection" },
+  { key: "memory" },
+  { key: "general" },
+  { key: "about" },
 ] as const;
 </script>
 
@@ -38,11 +44,11 @@ const items = [
       :class="{ 'is-active': item.key === active }"
       @click="emit('change', item.key)"
     >
-      <span class="sidenav__label">{{ item.label }}</span>
+      <span class="sidenav__label">{{ t(`sideNav.${item.key}`) }}</span>
       <span
         v-if="item.key === 'about' && hasUpdate"
         class="sidenav__badge"
-        aria-label="有可用更新"
+        :aria-label="t('sideNav.updateAvailable')"
       ></span>
     </button>
     <!-- 底部广告位由父级注入（slot 保持本组件零业务依赖） -->
