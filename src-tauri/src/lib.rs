@@ -67,7 +67,7 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window::manager::hide_window(window);
-                // 隐藏时复位穿透（避免隐藏态残留"不穿透"，恢复显示时误判）
+                // 隐藏时复位穿透（仅窗口 A 生效；常规窗口始终可点击，见 click_through 文档）
                 let _ = window::click_through::reset_to_passthrough(window);
             }
         })

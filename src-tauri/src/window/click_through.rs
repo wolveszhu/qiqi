@@ -4,10 +4,20 @@
 //! 最多一次系统调用，且多数轮询零调用）；判定输入全部来自进程内缓存
 //! （`AppState.hit_region` / `cursor`），不走事件。
 
-use tauri::{AppHandle, Manager, WebviewWindow, Window};
+use tauri::{AppHandle, Manager, Runtime, WebviewWindow, Window};
 
 use crate::error::AppError;
 use crate::state::{AppState, HitRegion};
+use crate::window::manager::LABEL_MAIN;
+
+/// 是否由穿透状态机托管（**纯函数**）：仅窗口 A（透明桌宠层）。
+///
+/// 窗口 B 是常规不透明窗口，`set_ignore_cursor_events` 对其等于"整窗点不动"；
+/// 而 `start_click_through_sync` 只驱动窗口 A，B 一旦被置穿透便无任何复位路径，
+/// 只能靠重启进程清除。故所有穿透写入都必须先过这道判定。
+pub fn is_passthrough_managed(label: &str) -> bool {
+    label == LABEL_MAIN
+}
 
 /// 命中判定（**纯函数**，单测覆盖）：cursor 是否落在窗口 A 的命中矩形内。
 ///
@@ -36,8 +46,15 @@ pub fn target_ignore(over_pet: bool, click_through_enabled: bool) -> bool {
 
 /// 执行一次穿透同步：读缓存 → 判翻转 → 必要时调用系统 API。
 ///
+/// 仅窗口 A 受托管；传入其它窗口一律不写穿透（避免误伤设置窗口）。
 /// 返回本次是否发生了系统调用（供测试/诊断）。
-pub fn sync_click_through(app: &AppHandle, window: &WebviewWindow) -> Result<bool, AppError> {
+pub fn sync_click_through<R: Runtime>(
+    app: &AppHandle<R>,
+    window: &WebviewWindow<R>,
+) -> Result<bool, AppError> {
+    if !is_passthrough_managed(window.label()) {
+        return Ok(false);
+    }
     let Some(state) = app.try_state::<AppState>() else {
         return Ok(false);
     };
@@ -68,11 +85,36 @@ where
     AppError::Db(format!("获取状态锁失败: {e}"))
 }
 
-/// 窗口 A 的穿透状态复位（窗口隐藏/失焦时调用：强制回退穿透开）。
-/// 由 lib.rs 的窗口事件接线（B1.2 关闭拦截与隐藏场景复用）；
+/// 窗口隐藏时的穿透复位（由 `lib.rs` 的 `on_window_event` 调用）。
+///
+/// **仅窗口 A 生效**：此前对 A/B 一律 `set_ignore_cursor_events(true)`，
+/// 导致设置窗口关闭后被永久穿透、重新 `show()` 也无法恢复（状态机只轮询 A），
+/// 只能重启进程清除。常规窗口必须始终保持可点击。
+/// 同时把 `last_ignore` 缓存对齐为 `Some(true)`，避免 A 重新显示时状态机
+/// 因缓存与实际不一致而漏掉一次必要的翻转。
 /// 收 `&Window`：`on_window_event` 传入即该类型。
-pub fn reset_to_passthrough(window: &Window) -> Result<(), AppError> {
-    window.set_ignore_cursor_events(true).map_err(AppError::from)
+pub fn reset_to_passthrough<R: Runtime>(window: &Window<R>) -> Result<(), AppError> {
+    if !is_passthrough_managed(window.label()) {
+        return Ok(());
+    }
+    window.set_ignore_cursor_events(true).map_err(AppError::from)?;
+    if let Some(state) = window.try_state::<AppState>() {
+        let mut last = state.last_ignore.lock().map_err(lock_err)?;
+        *last = Some(true);
+    }
+    Ok(())
+}
+
+/// 显示常规窗口前确保其可点击（防御性自愈）。
+///
+/// 用于 `window_show` 命令与托盘 `reveal_window`：即使窗口因历史版本逻辑
+/// 被置为穿透，也能在每次显示时复位，无需用户重启应用。
+/// 窗口 A 交给状态机按命中区翻转，此处不干预。
+pub fn ensure_interactive<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), AppError> {
+    if is_passthrough_managed(window.label()) {
+        return Ok(());
+    }
+    window.set_ignore_cursor_events(false).map_err(AppError::from)
 }
 
 #[cfg(test)]
@@ -137,5 +179,14 @@ mod tests {
         let r = region(0, 0, 400, 400);
         assert!(is_over_pet((-200, -200), (-400, -400), &r));
         assert!(!is_over_pet((-401, -200), (-400, -400), &r));
+    }
+
+    // 回归：关闭设置窗口再打开后整窗点击穿透（2026-11-07 手工回归发现）。
+    // 根因是隐藏时对所有窗口一律置穿透，而状态机只轮询窗口 A，B 再无复位路径。
+    #[test]
+    fn only_main_window_is_passthrough_managed() {
+        assert!(is_passthrough_managed(LABEL_MAIN));
+        assert!(!is_passthrough_managed(crate::window::manager::LABEL_SETTINGS));
+        assert!(!is_passthrough_managed("unknown"));
     }
 }

@@ -15,9 +15,13 @@ pub fn window_start_drag(app: AppHandle) -> Result<(), AppError> {
 }
 
 /// 显隐窗口 A/B（关闭=hide 由 lib.rs 的 CloseRequested 拦截，见 B1.2）。
+///
+/// 显示常规窗口前复位点击穿透：关闭拦截曾把设置窗口一并置为穿透，
+/// 而 `show()` 本身不会清除该标志，会造成"窗口可见却整窗点不动"。
 #[tauri::command]
 pub fn window_show(target: String, app: AppHandle) -> Result<(), AppError> {
     let window = resolve(&app, &target)?;
+    window::click_through::ensure_interactive(&window)?;
     window.show().map_err(AppError::from)
 }
 

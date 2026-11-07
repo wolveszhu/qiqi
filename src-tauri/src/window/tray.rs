@@ -9,6 +9,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager, Runtime};
 
+use super::click_through;
 use super::manager::{LABEL_MAIN, LABEL_SETTINGS};
 use crate::error::AppError;
 use crate::i18n::{TrayStrings, tray_strings};
@@ -126,6 +127,9 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
 /// **为什么显式 unminimize**：窗口 B 缩到任务栏后仅调 `show()` 不保证还原到桌面
 /// （底层 tao 对最小化窗口的 show 行为随平台而异），故先判最小化态再还原，
 /// 让「托盘左键 / 菜单」两类唤起在最小化态下都能把应用带回桌面。
+///
+/// **为什么显式复位穿透**：`CloseRequested` 拦截隐藏窗口时曾对 A/B 一律置穿透，
+/// 而 `show()` 不清除该标志，导致「关闭设置窗口 → 托盘重新打开」后整窗点不动。
 fn reveal_window<R: Runtime>(app: &AppHandle<R>, label: &str, focus: bool) {
     use tauri::Manager as _;
     let Some(w) = app.get_webview_window(label) else {
@@ -134,6 +138,7 @@ fn reveal_window<R: Runtime>(app: &AppHandle<R>, label: &str, focus: bool) {
     if w.is_minimized().unwrap_or(false) {
         let _ = w.unminimize();
     }
+    let _ = click_through::ensure_interactive(&w);
     let _ = w.show();
     if focus {
         let _ = w.set_focus();
