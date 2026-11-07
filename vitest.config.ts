@@ -12,5 +12,7 @@ export default defineConfig({
     environment: "node",
     environmentMatchGlobs: [["src/tests/components/**", "happy-dom"]],
     include: ["src/tests/**/*.spec.ts"],
+    // 组件挂载统一注入 vue-i18n（窗口 B 组件在 setup 内调用 useI18n）
+    setupFiles: ["./src/tests/setup-i18n.ts"],
   },
 });
