@@ -9,6 +9,8 @@ import { createApp } from "vue";
 
 import PetWindow from "./views/pet/PetWindow.vue";
 import SettingsWindow from "./views/settings/SettingsWindow.vue";
+import i18n from "./i18n";
+import { loadLocale } from "./composables/useLocale";
 import "./styles/tokens.css";
 import "./styles/base.css";
 
@@ -22,7 +24,7 @@ async function resolveRootComponent(): Promise<typeof PetWindow | typeof Setting
   }
 }
 
-void resolveRootComponent().then((Root) => {
+void resolveRootComponent().then(async (Root) => {
   // 桌宠层（窗口 A）整窗透明：body 默认背景（--bg-page）只属于设置层，
   // 否则 400×400 不透明色块盖住桌面、透明窗口失效（B1）。
   if (Root === PetWindow) {
@@ -30,5 +32,7 @@ void resolveRootComponent().then((Root) => {
     document.body.classList.add("pet-window");
     document.documentElement.classList.add("pet-window");
   }
-  createApp(Root).mount("#app");
+  // 启动加载语言偏好（设置窗口 UI 与托盘菜单据此渲染）；失败不阻断启动
+  await loadLocale().catch(() => {});
+  createApp(Root).use(i18n).mount("#app");
 });
