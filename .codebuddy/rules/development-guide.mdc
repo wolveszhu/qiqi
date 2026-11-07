@@ -24,7 +24,7 @@ Tauri 2 双进程模型（详见 [CODEBUDDY.md](mdc:CODEBUDDY.md)）：
 2. **首选** `pnpm tauri dev`（拉起 Rust + 前端，热重载）；
    只调 UI 时用 `pnpm dev`（Vite，端口 1420）。
 3. **先设计后写代码**：先确认架构/伪代码（多模块或改数据库时必须），再写实现。
-4. 实现后跑 `pnpm lint`、`pnpm typecheck`；涉及 Rust 再跑 `pnpm lint:rust`。
+4. 实现后跑 `pnpm lint`、`pnpm typecheck`；涉及 Rust 再跑 `pnpm lint:rust`。新增/修改 UI 文案时须同时过 [i18n-rules.mdc](mdc:.codebuddy/rules/i18n-rules.mdc) 的双语门禁（字典成对 + 手工切 English 走查）。
 5. 按 baseline §M 的 Phase 路线推进：Phase 0 透明窗口与点击穿透 → Phase 1 MVP 闭环（DB + LLM + 好感度）→ Phase 2 语音与系统感知 → Phase 3 自定义形象。
 
 ## 3. 新增一个 IPC 能力的清单

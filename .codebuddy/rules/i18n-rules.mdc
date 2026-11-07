@@ -1,0 +1,98 @@
+---
+alwaysApply: true
+description: qiqi 国际化硬性规则——后续所有新增/修改的用户可见文案必须中英双语，含单一真源、豁免边界、落地清单与验收门禁
+---
+
+# qiqi 国际化规则（中英文切换）
+
+> 生效：2026-11-07。依据已交付的 [国际化-中英文切换实施计划.md](mdc:.codebuddy/plans/国际化-中英文切换实施计划.md)。
+> 上位规则：[code-standards.mdc](mdc:.codebuddy/rules/code-standards.mdc)、[design-baseline.mdc](mdc:.codebuddy/rules/design-baseline.mdc)。
+> 本文件是**规范性规则**，不复制实现细节；代码真源见 §4，真源变更时本文件同步更新。
+
+## 1. 硬性红线（面向后续所有开发）
+
+1. **任何新增或修改的用户可见文案必须同时提供 `zh-CN` 与 `en-US` 两套文本**，且随语言切换即时生效。**禁止**在 Vue 模板/脚本、Rust 代码里硬编码单语文案。
+2. **字典键必须成对**：`zh-CN.ts` 与 `en-US.ts` 同键，键名按区域/组件分区（`camelCase`，如 `general.title`、`llm.apiKey`）。只加一边即视为未完成。
+3. **禁止另起炉灶**：不得新建第二套字典、第二个 i18n 实例、第二份语言状态或第二套语言偏好存储；一律复用 §4 真源。
+4. **语言偏好不落前端**：禁止写 `localStorage`、前端 `.env` 或日志；只经 IPC → Rust → SQLCipher（见 baseline §G）。
+5. **切换必须即时生效并持久化**；落库失败须回滚前端状态并给用户可见反馈，绝不吞错（code-standards §4）。
+6. 注释、日志、控制台输出按 code-standards §3 保持「中文说明 + 英文标签」，**不需要**国际化。
+
+## 2. 适用范围（按载体列举，不限于此）
+
+| 载体 | 要求 |
+| :--- | :--- |
+| Vue 模板文本、按钮、表单 label/placeholder、HintBox、空状态、二次确认 | `t("key")` |
+| `aria-label` / `title` / `alt` / 下拉选项 / 状态徽标 / toast | 同上，含无障碍文案 |
+| 组件 script 内的中文常量数组、映射表、选项清单 | 改 `computed(() => [...t(...)])`，不能留静态中文数组 |
+| `ui/` 纯展示组件 | 默认零业务文案；若新增了默认文案（如 placeholder 缺省），改 `computed` + `t()` |
+| 后端下发的中文字段（如 `costTier`、`scene`） | 按**原文精确映射**到 i18n 键，未知值原样回落；禁止假设后端给的是英文 key |
+| Rust 托盘菜单、原生通知、系统对话框等无 WebView 渲染的文案 | 走 `src-tauri/src/i18n.rs`，两套分支同步 |
+| 前端自己产生的错误/兜底提示（`pushToast` 的中文串） | 一律 `t("key")`，禁止硬编码 |
+| **窗口 A（桌宠窗口）新增/修改的 UI 文案** | 同样纳入双语（vue-i18n 实例全局挂载，可直接 `useI18n()`） |
+| 新增第三种语言 | 见 §7 |
+
+## 3. 明确豁免（非 UI 静态文案，不翻译）
+
+- **LLM 人设 / 系统提示词语种**、LLM 生成的对话内容：猫娘说话语种不随界面切换（用户已确认）。
+- **用户或模型生成的内容**：日记正文、事实标签内容、会话消息、主动话术文本。
+- **广告运营下发的正文**（`config/ads`）：属运营数据；但广告位的 UI 标签（「广告」角标、关闭/详情 aria-label、了解详情）仍须双语。
+- **品牌与专有名词**：「七七」；语言名按惯例以母语呈现（「中文」/「English」）；第三方平台名、模型名、API 名。
+- **测试断言中的中文字符串**：默认 `zh-CN`（见 `src/tests/setup-i18n.ts`），无需翻译。
+- **存量单语文案不追溯改造**：窗口 A 既有中文文案、既有广告正文、LLM 提示词保持现状；但**一旦被本次改动触及，必须同步双语化**。
+
+> 豁免边界有争议时，先按「用户能否在界面上看到这句固定文字」判断：能 → 双语；内容由人/模型动态产生 → 豁免。
+
+**已知存量缺口（登记，非豁免）**：`src-tauri/src/error.rs` 的 `AppError` 变体携带中文 `message`，前端 `normalizeError`（`src/api/client.ts`）→ `pushToast` 直接展示，英文模式下这些错误提示仍是中文。`kind` 只有 6 类、粒度不足以表达具体文案，需后端补错误码机制才能彻底本地化。**本规则不追溯改造存量错误串**，但要求：新增功能**不得**再新增「把 Rust 中文 message 直出给用户」的路径；新增错误场景一律在前端按 `kind` 给出 `t()` 本地化兜底提示。彻底解决需单独立项。
+
+## 4. 单一真源（禁止复制）
+
+| 关注点 | 真源 |
+| :--- | :--- |
+| 前端字典 | `src/i18n/locales/zh-CN.ts`、`en-US.ts` |
+| 编译期同键约束 | `en-US.ts` 末尾 `satisfies MessageShape<typeof zhCN>` |
+| i18n 实例 / `Locale` / `SUPPORTED_LOCALES` / `DEFAULT_LOCALE` / `detectLocale` | `src/i18n/index.ts` |
+| 语言状态与切换 | `src/composables/useLocale.ts`（`useLocale` / `switchLocale` / `loadLocale`） |
+| 好感度展示文案适配 | `src/composables/useAffectionI18n.ts`（纯函数 `utils/affection.ts`、`constants/mood.ts` 不改动） |
+| IPC 封装 | `src/api/locale.ts`（`getLocale` / `setLocale`） |
+| 持久化 | `src-tauri/src/db/repositories/app_settings.rs`（`SETTING_TYPE_LOCALE = 5`） |
+| Tauri 命令 | `src-tauri/src/commands/settings.rs`（`get_locale` / `set_locale`） |
+| 托盘词条 | `src-tauri/src/i18n.rs`（`TrayStrings` / `tray_strings` / `SUPPORTED_LOCALES`） |
+| 托盘构建与重建 | `src-tauri/src/window/tray.rs` |
+| 切换入口 | `src/views/settings/panels/GeneralPanel.vue`（通用 Tab） |
+| 测试基建 | `src/tests/setup-i18n.ts`（Vitest `setupFiles`）、`src/tests/i18n/locale.spec.ts`（键集合 + 插值） |
+
+## 5. 新增功能的落地清单（每个功能都要过一遍）
+
+1. **先加字典**：`zh-CN.ts` 写中文原值（与产品文案一致），`en-US.ts` 加同名键与译文；插值用命名占位符 `{name}`，禁止字符串拼接翻译。
+2. **再改组件**：`const { t } = useI18n()`；模板用 `t("key")`，动态数组/映射用 `computed`。
+3. **后端有 UI 文案**：同步 `src-tauri/src/i18n.rs` 两条语言分支 + 菜单/通知构建处。
+4. **错误与 toast**：前端自己写的兜底串一律 `t()`；新增错误场景按 `kind` 给本地化兜底提示，**不得**新开「Rust 中文 `message` 直出」路径（见 §3 存量缺口登记）。
+5. **测试**：组件测试默认已注入 i18n；需验证英文断言时置 `i18n.global.locale.value = "en-US"`，用例结束还原为 `DEFAULT_LOCALE`。
+6. **门禁**：`pnpm typecheck`、`pnpm test`、`pnpm lint`、`pnpm format:check`；Rust 侧改动加 `cargo test --lib`、`cargo clippy --all-targets -- -D warnings`。
+7. **自查硬编码中文**（Windows PowerShell；命中结果人工排除注释/日志/§3 豁免项）：
+   `Get-ChildItem -Path src -Recurse -Include *.vue,*.ts -File | Select-String -Pattern '[\u4e00-\u9fff]'`
+   若已装 ripgrep，等价命令：`rg -n "[\x{4e00}-\x{9fff}]" src --glob "*.vue" --glob "*.ts"`
+8. **手工回归**：`pnpm tauri dev` 下切到 English，逐项走查新增界面（含窗口 A 新增文案）、托盘右键菜单、关闭设置窗口再打开仍可点击且语言保持。
+
+## 6. 反模式（评审直接打回）
+
+| 反模式 | 正确做法 |
+| :--- | :--- |
+| `<button>保存</button>` / `<AppCard title="通用" />` | `<button>{{ t("common.save") }}</button>` / `<AppCard :title="t('general.title')" />` |
+| `pushToast("保存失败", "error")` | `pushToast(t("common.saveFailed"), "error")` |
+| 只在 `zh-CN.ts` 加键 | 两份字典同步；`satisfies` 会在 `pnpm typecheck` 报错 |
+| 组件内 `const OPTIONS = [{ label: "安静" }]` | `const options = computed(() => [{ label: t("dnd.freqQuiet") }])` |
+| 新增托盘项只写中文 | `TrayStrings` 两套分支同步 |
+| 语言存 `localStorage` / 前端自行 emit 事件同步托盘 | 走 `setLocale` 命令（落库 + 命令内重建托盘） |
+| 新增功能只做中文，声称「后续补 i18n」 | 双语是本次功能的 Definition of Done，不拆期 |
+
+## 7. 新增第三种语言时
+
+必须同步：`SUPPORTED_LOCALES` 与 `Locale`（前端 `i18n/index.ts`）、`detectLocale` 的 OS 语言映射、Rust `i18n::SUPPORTED_LOCALES` 与 `tray_strings` 新分支、Rust `set_locale` 白名单校验、`GeneralPanel` 语言选项、新字典文件、`src/tests/i18n/locale.spec.ts` 白名单断言、`useLocale.loadLocale` 的回落分支（现为 `stored === "en-US" ? "en-US" : "zh-CN"`，二元回落需改成查表）。现有 `satisfies` 只约束中英两份字典，新字典需另加同形状约束。
+
+## 8. 规则维护
+
+- 本规则新增于 2026-11-07，与 [国际化-中英文切换实施计划.md](mdc:.codebuddy/plans/国际化-中英文切换实施计划.md) 的范围边界一致；若用户决定把窗口 A 存量文案或 LLM 提示词全面纳入，须**先更新本规则与子计划 §一/§三**，再动代码。
+- 更换 i18n 方案、改持久化位置或改语言白名单时，先改本文件 §4/§7。
+- 提交 scope 可用 `i18n`（已在 [commitlint.config.js](mdc:commitlint.config.js) 登记）；文案随功能一起提交时也可用对应模块 scope。
