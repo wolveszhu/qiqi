@@ -5,12 +5,14 @@
  */
 import { computed } from "vue";
 
-import { levelLabel } from "../../utils/affection";
+import { useAffectionI18n } from "../../composables/useAffectionI18n";
 
 const props = defineProps<{ level: number }>();
 
-// 等级文案单一真源（utils/affection；未知等级回退 "Lv.N"）
-const name = computed(() => levelLabel(props.level));
+const { levelName } = useAffectionI18n();
+
+// 等级文案随语言切换（未知等级回退 "Lv.N"）
+const name = computed(() => levelName(props.level));
 </script>
 
 <template>

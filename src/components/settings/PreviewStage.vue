@@ -6,9 +6,12 @@
  * onBeforeUnmount / 切换形象时 dispose + 清空容器，杜绝实例泄漏（冷眼三问③）。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { createRenderer } from "../../renderer/factory";
 import type { IPetRenderer } from "../../renderer/IPetRenderer";
+
+const { t } = useI18n();
 
 const props = defineProps<{ rendererId: string }>();
 
@@ -83,11 +86,11 @@ watch(
     ref="stageEl"
     class="preview-stage"
     role="img"
-    aria-label="桌宠实时预览"
+    :aria-label="t('preview.aria')"
     @click="onClick"
   >
-    <span class="preview-stage__badge">LIVE PREVIEW · 窗口 A</span>
-    <span class="preview-stage__hint">点击角色体验果冻物理</span>
+    <span class="preview-stage__badge">{{ t("preview.badge") }}</span>
+    <span class="preview-stage__hint">{{ t("preview.hint") }}</span>
   </div>
 </template>
 

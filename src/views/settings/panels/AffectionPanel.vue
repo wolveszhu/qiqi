@@ -9,6 +9,7 @@
  * `relationshipLevel` 上升，弹出「升级！」庆祝浮层一次。均用原生 rAF / CSS，不引第三方库。
  */
 import { computed, onActivated, onMounted, onUnmounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import AffectionRing from "../../../components/affection/AffectionRing.vue";
 import AppCard from "../../../components/ui/AppCard.vue";
@@ -18,8 +19,12 @@ import LevelPill from "../../../components/affection/LevelPill.vue";
 import LogItem from "../../../components/affection/LogItem.vue";
 import { getState, listAffectionLogs } from "../../../api/pet";
 import { applyPetState, petStore, setPetLogs } from "../../../state/petStore";
-import { levelLabel, nextLevelInfo } from "../../../utils/affection";
+import { nextLevelInfo } from "../../../utils/affection";
+import { useAffectionI18n } from "../../../composables/useAffectionI18n";
 import type { LogItem as LogItemDto } from "../../../api/types";
+
+const { t } = useI18n();
+const { levelName, nextSub } = useAffectionI18n();
 
 /** 动画用展示分（tween 后的整数），避免数字硬跳。 */
 const displayPoints = ref(petStore.affectionPoints);
@@ -54,10 +59,12 @@ watch(
   (v) => tweenTo(v),
 );
 
-/** 距下档差（随动画分平滑变化；level 即时切换）。 */
-const nextInfo = computed(() =>
-  nextLevelInfo(petStore.relationshipLevel, Math.round(displayPoints.value)),
-);
+/** 距下档差（随动画分平滑变化；level 即时切换），情绪文案随语言切换。 */
+const nextInfo = computed(() => {
+  const points = Math.round(displayPoints.value);
+  const info = nextLevelInfo(petStore.relationshipLevel, points);
+  return { diff: info.diff, sub: nextSub(petStore.relationshipLevel, points) };
+});
 
 // 升级庆祝浮层
 const celebrate = ref(false);
@@ -85,12 +92,12 @@ watch(
 );
 
 const RULES: Array<{ title: string; delta: string; plus: boolean }> = [
-  { title: "每日打卡", delta: "+10", plus: true },
-  { title: "抚摸（日上限 20）", delta: "+1", plus: true },
-  { title: "深度对话（日上限·递减）", delta: "+5→0", plus: true },
-  { title: "情感共鸣（日上限·递减）", delta: "+10~+20", plus: true },
-  { title: "超 3 天未互动（止于等级下限）", delta: "−5", plus: false },
-  { title: "触犯禁忌", delta: "−10~−30", plus: false },
+  { title: t("affection.ruleDailyCheckin"), delta: "+10", plus: true },
+  { title: t("affection.rulePet"), delta: "+1", plus: true },
+  { title: t("affection.ruleDeep"), delta: "+5→0", plus: true },
+  { title: t("affection.ruleResonate"), delta: "+10~+20", plus: true },
+  { title: t("affection.ruleIdle"), delta: "−5", plus: false },
+  { title: t("affection.ruleTaboo"), delta: "−10~−30", plus: false },
 ];
 
 /**
@@ -129,12 +136,12 @@ onUnmounted(() => {
   <div class="aff-layout">
     <!-- 左列：等级 hero + 成长路线地图 -->
     <div class="aff-col">
-      <AppCard title="好感度">
+      <AppCard :title="t('affection.title')">
         <div class="aff-hero">
           <AffectionRing :points="Math.round(displayPoints)" />
           <LevelPill :level="petStore.relationshipLevel" />
           <div class="aff-next">
-            距离下一级还差 <b>{{ nextInfo.diff }}</b> 分 · {{ nextInfo.sub }}
+            {{ t("affection.nextDiff", { diff: nextInfo.diff, sub: nextInfo.sub }) }}
           </div>
           <!-- <div class="aff-badges">
             <span class="aff-badge">弹性衰减已启用</span>
@@ -147,23 +154,31 @@ onUnmounted(() => {
             v-if="celebrate"
             class="aff-celebrate"
           >
-            🎉 升级！Lv.{{ petStore.relationshipLevel }}
-            {{ levelLabel(petStore.relationshipLevel) }}
+            {{
+              t("affection.levelUp", {
+                level: petStore.relationshipLevel,
+                name: levelName(petStore.relationshipLevel),
+              })
+            }}
           </div>
         </Transition>
       </AppCard>
 
       <AppCard
         v-model:collapsed="journeyCollapsed"
-        title="成长路线"
+        :title="t('affection.journey')"
         collapsible
       >
         <template #collapsed>
           <LevelPill :level="petStore.relationshipLevel" />
           <span class="journey-mini__text">
-            Lv.{{ petStore.relationshipLevel }}
-            {{ levelLabel(petStore.relationshipLevel) }} · 当前
-            {{ Math.round(displayPoints) }} 分（进行中）
+            {{
+              t("affection.journeyMini", {
+                level: petStore.relationshipLevel,
+                name: levelName(petStore.relationshipLevel),
+                points: Math.round(displayPoints),
+              })
+            }}
           </span>
         </template>
         <LevelJourney
@@ -175,7 +190,7 @@ onUnmounted(() => {
 
     <!-- 右列：规则 + 流水 -->
     <div class="aff-col aff-col--right">
-      <AppCard title="加减分规则">
+      <AppCard :title="t('affection.rules')">
         <div class="rule-list">
           <div
             v-for="r in RULES"
@@ -192,7 +207,7 @@ onUnmounted(() => {
         </div>
       </AppCard>
 
-      <AppCard title="近期变动">
+      <AppCard :title="t('affection.recent')">
         <div
           v-if="petStore.logs.length"
           class="log-list"
@@ -203,7 +218,7 @@ onUnmounted(() => {
             :log="log"
           />
         </div>
-        <HintBox v-else> 还没有流水，去摸摸她吧。 </HintBox>
+        <HintBox v-else> {{ t("affection.noLogs") }} </HintBox>
       </AppCard>
     </div>
   </div>

@@ -10,6 +10,7 @@
  */
 
 import { nextTick, onActivated, onMounted, onUnmounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -29,6 +30,8 @@ import {
   startNewSession,
   switchSession,
 } from "../../../state/chatStore";
+
+const { t } = useI18n();
 
 const stream = useChatStream();
 const unlisteners: UnlistenFn[] = [];
@@ -58,7 +61,7 @@ async function selectSession(sessionId: string): Promise<void> {
     setMessages(await getMessages(sessionId));
     scrollToBottom();
   } catch (e: unknown) {
-    pushToast(e instanceof Error ? e.message : "会话消息加载失败", "error");
+    pushToast(e instanceof Error ? e.message : t("chat.loadMessagesFailed"), "error");
   }
 }
 
@@ -69,7 +72,7 @@ async function dropSession(sessionId: string): Promise<void> {
     removeSession(sessionId);
     if (chatStore.currentId === sessionId) startNewSession();
   } catch (e: unknown) {
-    pushToast(e instanceof Error ? e.message : "删除会话失败", "error");
+    pushToast(e instanceof Error ? e.message : t("chat.deleteSessionFailed"), "error");
   }
 }
 
@@ -141,7 +144,7 @@ onUnmounted((): void => {
         type="button"
         @click="startNewSession()"
       >
-        + 新建对话
+        + {{ t("chat.new") }}
       </button>
       <ul class="chat-list scroll-area">
         <li
@@ -152,13 +155,17 @@ onUnmounted((): void => {
           @click="selectSession(s.sessionId)"
         >
           <div class="chat-item__body">
-            <span class="chat-item__title">{{ s.preview || "新对话" }}</span>
-            <span class="chat-item__meta">{{ s.messageCount }} 条</span>
+            <span class="chat-item__title">{{
+              s.preview || t("chat.newConversation")
+            }}</span>
+            <span class="chat-item__meta">{{
+              t("chat.messageCount", { n: s.messageCount })
+            }}</span>
           </div>
           <button
             class="chat-item__del"
             type="button"
-            aria-label="删除会话"
+            :aria-label="t('chat.deleteSession')"
             @click.stop="dropSession(s.sessionId)"
           >
             ✕
@@ -169,7 +176,7 @@ onUnmounted((): void => {
         v-if="chatStore.sessions.length === 0"
         class="chat-empty-list"
       >
-        还没有对话，说一句话开始吧
+        {{ t("chat.emptyList") }}
       </p>
     </aside>
 
@@ -281,7 +288,7 @@ onUnmounted((): void => {
           v-if="!chatStore.messages.length && !chatStore.streamingText"
           class="chat-placeholder"
         >
-          随便聊点什么吧～我会记住你说过的话
+          {{ t("chat.placeholder") }}
         </p>
       </div>
       <ChatInput

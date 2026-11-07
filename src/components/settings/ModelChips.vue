@@ -7,6 +7,9 @@
  */
 
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -17,8 +20,15 @@ const props = withDefaults(
   }>(),
   {
     suggestions: () => [],
-    placeholder: "输入模型名，回车 / 逗号添加",
+    placeholder: "",
   },
+);
+
+/** 实际占位符（未传 placeholder 时回落默认文案，随语言切换）。 */
+const placeholderText = computed(
+  () =>
+    props.placeholder ||
+    (props.modelValue.length ? t("modelChips.continue") : t("modelChips.placeholder")),
 );
 
 const emit = defineEmits<{ (e: "update:modelValue", value: string[]): void }>();
@@ -75,7 +85,7 @@ function onKeydown(e: KeyboardEvent): void {
       <button
         class="chips__del"
         type="button"
-        :aria-label="`删除模型 ${m}`"
+        :aria-label="t('modelChips.deleteAria', { m })"
         @click="remove(m)"
       >
         ✕
@@ -85,7 +95,7 @@ function onKeydown(e: KeyboardEvent): void {
     <input
       class="chips__input"
       :value="draft"
-      :placeholder="modelValue.length ? '继续添加…' : placeholder"
+      :placeholder="placeholderText"
       @input="draft = ($event.target as HTMLInputElement).value"
       @keydown="onKeydown"
       @blur="add(draft)"

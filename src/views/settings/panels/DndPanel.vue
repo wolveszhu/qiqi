@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, reactive, ref, computed, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import AppCard from "../../../components/ui/AppCard.vue";
 import TimeChip from "../../../components/ui/TimeChip.vue";
@@ -15,11 +16,13 @@ import {
 import { getTyped, saveDnd } from "../../../api/settings";
 import type { DndConfig, ProactiveFrequency } from "../../../api/types";
 
-const FREQ_OPTIONS = [
-  { value: "quiet", label: "安静", sub: "3-5 次/天" },
-  { value: "normal", label: "正常", sub: "5-8 次/天" },
-  { value: "sticky", label: "粘人", sub: "10+ 次/天" },
-];
+const { t } = useI18n();
+
+const freqOptions = computed(() => [
+  { value: "quiet", label: t("dnd.freqQuiet"), sub: t("dnd.freqQuietSub") },
+  { value: "normal", label: t("dnd.freqNormal"), sub: t("dnd.freqNormalSub") },
+  { value: "sticky", label: t("dnd.freqSticky"), sub: t("dnd.freqStickySub") },
+]);
 
 const dnd = reactive<DndConfig>({ enabled: false, ranges: [] });
 const frequency = ref<ProactiveFrequency>("normal");
@@ -125,12 +128,12 @@ function rollback(): void {
 
 async function doSave(): Promise<void> {
   if (overlapWarn.value) {
-    pushToast("勿扰时段存在重叠，请调整", "error");
+    pushToast(t("dnd.overlapToast"), "error");
     rollback();
     return;
   }
   if (invalidRanges.value) {
-    pushToast("时段起止需满足 start < end", "error");
+    pushToast(t("dnd.rangeToast"), "error");
     rollback();
     return;
   }
@@ -142,7 +145,7 @@ async function doSave(): Promise<void> {
     // 同步窗口 A 铃铛（D4.3 双向）
     void emit("settings:dnd:changed", { enabled: dnd.enabled });
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+    pushToast(e instanceof Error ? e.message : t("dnd.saveFailed"), "error");
     rollback();
   }
 }
@@ -185,10 +188,10 @@ onUnmounted(() => {
 <template>
   <div class="dnd-grid">
     <!-- 勿扰时段 -->
-    <AppCard title="勿扰时段">
+    <AppCard :title="t('dnd.dndPeriod')">
       <AppToggle
         v-model="dnd.enabled"
-        label="启用勿扰（静默主动互动）"
+        :label="t('dnd.enableDnd')"
       />
       <div class="dnd-grid__ranges">
         <TimeChip
@@ -205,55 +208,55 @@ onUnmounted(() => {
           type="button"
           @click="addRange"
         >
-          ＋ 添加时段
+          {{ t("dnd.addRange") }}
         </button>
       </div>
       <HintBox
         v-if="invalidRanges"
         tone="warn"
       >
-        每段时段需满足 开始时间 &lt; 结束时间。
+        {{ t("dnd.rangeInvalid") }}
       </HintBox>
       <HintBox
         v-else-if="overlapWarn"
         tone="warn"
       >
-        存在重叠的勿扰时段，请调整后再保存。
+        {{ t("dnd.overlap") }}
       </HintBox>
     </AppCard>
 
     <!-- 主动互动频率 -->
-    <AppCard title="主动互动频率">
+    <AppCard :title="t('dnd.freqTitle')">
       <SegmentedControl
         v-model="frequency"
-        :options="FREQ_OPTIONS"
+        :options="freqOptions"
       />
       <HintBox tone="info">
-        🐙 时间窗口内随机触发，拒绝准点打卡——安静档偶尔想你，粘人档挂你身上。
+        {{ t("dnd.freqHint") }}
       </HintBox>
     </AppCard>
 
     <!-- 全局快捷键（只读展示；自启开关后端 IPC 待补） -->
-    <AppCard title="全局快捷键">
+    <AppCard :title="t('dnd.shortcuts')">
       <div class="dnd-grid__rows">
         <div class="set-row">
           <div>
-            <div class="set-row__title">唤起输入框</div>
-            <div class="set-row__sub">在桌宠窗口唤起对话输入</div>
+            <div class="set-row__title">{{ t("dnd.raiseInput") }}</div>
+            <div class="set-row__sub">{{ t("dnd.raiseInputSub") }}</div>
           </div>
           <KbdChip keys="Ctrl+Shift+P" />
         </div>
         <div class="set-row">
           <div>
-            <div class="set-row__title">隐藏 / 显示桌宠</div>
-            <div class="set-row__sub">全局切换窗口 A 显隐</div>
+            <div class="set-row__title">{{ t("dnd.togglePet") }}</div>
+            <div class="set-row__sub">{{ t("dnd.togglePetSub") }}</div>
           </div>
           <KbdChip keys="Ctrl+Shift+H" />
         </div>
         <div class="set-row">
           <div>
-            <div class="set-row__title">开机自启</div>
-            <div class="set-row__sub">经由托盘菜单设置（前端开关待接入）</div>
+            <div class="set-row__title">{{ t("dnd.autostart") }}</div>
+            <div class="set-row__sub">{{ t("dnd.autostartSub") }}</div>
           </div>
           <AppToggle
             :model-value="false"
@@ -264,12 +267,12 @@ onUnmounted(() => {
     </AppCard>
 
     <!-- 情境感知（探针配置持久化后端命令缺失，占位） -->
-    <AppCard title="情境感知">
+    <AppCard :title="t('dnd.context')">
       <div class="dnd-grid__rows">
         <div class="set-row">
           <div>
-            <div class="set-row__title">工作 / 游戏让路</div>
-            <div class="set-row__sub">主动概率 −80%</div>
+            <div class="set-row__title">{{ t("dnd.workGame") }}</div>
+            <div class="set-row__sub">{{ t("dnd.workGameSub") }}</div>
           </div>
           <AppToggle
             :model-value="true"
@@ -278,8 +281,8 @@ onUnmounted(() => {
         </div>
         <div class="set-row">
           <div>
-            <div class="set-row__title">空闲 30 分钟睡觉</div>
-            <div class="set-row__sub">回归时伸懒腰</div>
+            <div class="set-row__title">{{ t("dnd.idleSleep") }}</div>
+            <div class="set-row__sub">{{ t("dnd.idleSleepSub") }}</div>
           </div>
           <AppToggle
             :model-value="true"
@@ -288,8 +291,8 @@ onUnmounted(() => {
         </div>
         <div class="set-row">
           <div>
-            <div class="set-row__title">连续 3 天未互动触发傲娇</div>
-            <div class="set-row__sub">依赖探针配置持久化</div>
+            <div class="set-row__title">{{ t("dnd.threeDays") }}</div>
+            <div class="set-row__sub">{{ t("dnd.threeDaysSub") }}</div>
           </div>
           <AppToggle
             :model-value="true"
@@ -298,7 +301,7 @@ onUnmounted(() => {
         </div>
       </div>
       <HintBox tone="info">
-        情境感知开关的后端持久化命令将在后续阶段补齐（本面板不造假状态）。
+        {{ t("dnd.contextHint") }}
       </HintBox>
     </AppCard>
   </div>

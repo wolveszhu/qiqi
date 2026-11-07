@@ -4,6 +4,10 @@
  * disabled 供尚未实现的形象灰显（当前两套内置形象均已实现，故不传）；
  * dashed 变体为「导入自定义形象」占位（＋）。点击上抛 select 事件，业务无耦合。
  */
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
+
 withDefaults(
   defineProps<{
     name: string;
@@ -39,7 +43,7 @@ const emit = defineEmits<{ (e: "select"): void }>();
     <span
       v-if="selected"
       class="pet-opt__check"
-      >✓ 使用中</span
+      >{{ t("petOption.inUse") }}</span
     >
   </button>
 </template>

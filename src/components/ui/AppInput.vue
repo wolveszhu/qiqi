@@ -23,6 +23,9 @@ withDefaults(
 const emit = defineEmits<{ (e: "update:modelValue", value: string): void }>();
 
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 const revealed = ref(false);
 </script>
@@ -49,10 +52,10 @@ const revealed = ref(false);
         v-if="type === 'password' && revealable"
         class="app-input__reveal"
         type="button"
-        :aria-label="revealed ? '隐藏 API Key' : '显示 API Key'"
+        :aria-label="revealed ? t('ui.hideKey') : t('ui.showKey')"
         @click="revealed = !revealed"
       >
-        {{ revealed ? "隐藏" : "显示" }}
+        {{ revealed ? t("ui.hide") : t("ui.show") }}
       </button>
     </span>
   </label>

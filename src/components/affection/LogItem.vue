@@ -6,14 +6,20 @@
 import { computed } from "vue";
 
 import { reasonMeta } from "../../utils/affection";
+import { useAffectionI18n } from "../../composables/useAffectionI18n";
 import type { LogItem } from "../../api/types";
 
 const props = defineProps<{ log: LogItem }>();
 
+const { reasonLabel } = useAffectionI18n();
+
 const isPlus = computed(() => props.log.changeValue >= 0);
 
-/** reason（后端英文 key）→ 中文文案 + emoji（映射单一真源在 utils/affection）。 */
-const meta = computed(() => reasonMeta(props.log.reason));
+/** reason（后端英文 key）→ 本地化文案 + emoji（emoji 仍来自 utils 单一真源）。 */
+const meta = computed(() => ({
+  label: reasonLabel(props.log.reason),
+  emoji: reasonMeta(props.log.reason).emoji,
+}));
 
 function fmtTime(s: string): string {
   // 兼容 ISO（T 分隔）与 "YYYY-MM-DD HH:MM:SS"

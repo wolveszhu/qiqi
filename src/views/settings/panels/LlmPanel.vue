@@ -9,6 +9,7 @@
  * - 记忆沉淀档由后端自动派生（取首个启用平台），UI 不再暴露。
  */
 import { computed, onMounted, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 import AppButton from "../../../components/ui/AppButton.vue";
 import AppCard from "../../../components/ui/AppCard.vue";
@@ -45,6 +46,8 @@ import type {
   SearchSettings,
 } from "../../../api/types";
 
+const { t } = useI18n();
+
 /** 服务商预设（Rust 单一真源经 IPC 下发，前端不复制）。 */
 const providers = ref<ProviderPreset[]>([]);
 /** 已配置的自定义平台（顺序即编排优先级）。 */
@@ -78,11 +81,11 @@ const searchForm = reactive({
   lang: "zh",
 });
 /** 可选搜索服务商（与 Rust `SearchProvider` 对齐；前端仅展示，真源在后端）。 */
-const searchProviders: Array<{ id: string; label: string }> = [
-  { id: "tavily", label: "Tavily（推荐，AI 搜索）" },
-  { id: "brave", label: "Brave Search" },
-  { id: "serpapi", label: "SerpAPI（Google）" },
-];
+const searchProviders = computed<Array<{ id: string; label: string }>>(() => [
+  { id: "tavily", label: t("llm.providerTavily") },
+  { id: "brave", label: t("llm.providerBrave") },
+  { id: "serpapi", label: t("llm.providerSerpapi") },
+]);
 
 /** 刷新自定义平台列表（失败 toast——不让用户以为保存成功）。 */
 async function refreshCustoms(): Promise<void> {
@@ -132,7 +135,7 @@ async function submitCustom(): Promise<void> {
     await saveCustomModel(payload);
     await refreshCustoms();
     customEditorOpen.value = false;
-    pushToast("已保存");
+    pushToast(t("common.saved"));
   } catch (e) {
     pushToast(normalizeError(e).message, "error");
   } finally {
@@ -145,7 +148,7 @@ async function removeCustom(id: number): Promise<void> {
   try {
     await deleteCustomModel(id);
     await refreshCustoms();
-    pushToast("已删除");
+    pushToast(t("llm.deleted"));
   } catch (e) {
     pushToast(normalizeError(e).message, "error");
   }
@@ -192,7 +195,7 @@ async function saveSearch(): Promise<void> {
   try {
     await saveSearchSettings(payload);
     await refreshSearch();
-    pushToast("已保存");
+    pushToast(t("common.saved"));
   } catch (e) {
     pushToast(normalizeError(e).message, "error");
   } finally {
@@ -224,7 +227,7 @@ async function toggleQuota(useBuiltin: boolean): Promise<void> {
     await setQuotaMode(useBuiltin ? 1 : 2);
     const snap = await getTyped();
     applySnapshot(snap);
-    pushToast(useBuiltin ? "已切换到内置额度" : "已切换到自带 Key");
+    pushToast(useBuiltin ? t("llm.switchedBuiltin") : t("llm.switchedOwn"));
     await refreshQuota();
   } catch (e) {
     pushToast(normalizeError(e).message, "error");
@@ -237,13 +240,16 @@ const quotaRecords = ref<QuotaUsageRecord[]>([]);
 const quotaDetailsOpen = ref(false);
 const quotaLoading = ref(false);
 
-/** 场景中文标签（与 Rust scene 常量对齐）。 */
-const sceneLabels: Record<string, string> = {
-  chat: "主对话",
-  proactive: "主动话术",
-  distill: "记忆沉淀",
-  diary: "日记",
-};
+/** 场景标签（与 Rust scene 常量对齐；缺省回落原值）。 */
+function sceneLabel(scene: string): string {
+  const map: Record<string, string> = {
+    chat: t("llm.sceneChat"),
+    proactive: t("llm.sceneProactive"),
+    distill: t("llm.sceneDistill"),
+    diary: t("llm.sceneDiary"),
+  };
+  return map[scene] ?? scene;
+}
 
 /** credits 数字千分位（等宽对齐扫读）。 */
 function fmtCredits(n: number): string {
@@ -258,9 +264,10 @@ const quotaTone = computed<"ok" | "warn">(() => {
 });
 
 const quotaBadgeText = computed(() => {
-  if (settingsStore.snapshot?.isCustomQuotaUsed === 2) return "使用自带 Key";
-  if (quotaSummary.value && quotaSummary.value.remainingRatio <= 0) return "额度已用完";
-  return "内置额度启用";
+  if (settingsStore.snapshot?.isCustomQuotaUsed === 2) return t("llm.useOwnKey");
+  if (quotaSummary.value && quotaSummary.value.remainingRatio <= 0)
+    return t("llm.quotaExhaustedBadge");
+  return t("llm.builtinEnabledBadge");
 });
 
 /** 拉取汇总与明细（失败 toast——不让用户以为加载成功）。 */
@@ -271,7 +278,7 @@ async function refreshQuota(): Promise<void> {
     quotaSummary.value = summary;
     quotaRecords.value = records;
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "额度数据加载失败", "error");
+    pushToast(e instanceof Error ? e.message : t("llm.quotaLoadFailed"), "error");
   } finally {
     quotaLoading.value = false;
   }
@@ -294,15 +301,14 @@ onMounted(async (): Promise<void> => {
 <template>
   <div class="llm-panel">
     <!-- 卡片 1：自定义大模型服务商（平台预设 + 平台列表 + 编辑器） -->
-    <AppCard title="自定义大模型服务商">
+    <AppCard :title="t('llm.customProvider')">
       <HintBox tone="info">
-        按列表顺序依次调用，某个失败自动切下一个；全部失败时回落到内置免费模型
-        （需保持下方「使用内置额度」开启）。记忆沉淀档由后台自动选择，无需配置。
+        {{ t("llm.customHint") }}
       </HintBox>
 
       <!-- 平台预设：点击即预填（URL 可改、模型按需点选、Key 手输）；手动新增入口跟随其后 -->
       <div class="preset-block">
-        <span class="preset-block__label">选择平台快速开始</span>
+        <span class="preset-block__label">{{ t("llm.pickPlatform") }}</span>
         <div class="preset-row">
           <ProviderChip
             v-for="p in providers"
@@ -319,7 +325,7 @@ onMounted(async (): Promise<void> => {
             class="preset-row__add"
             @click="openCustomEditor()"
           >
-            ＋ 手动新增
+            {{ t("llm.manualAdd") }}
           </AppButton>
         </div>
       </div>
@@ -338,14 +344,18 @@ onMounted(async (): Promise<void> => {
           <div class="custom-item__main">
             <span class="custom-item__name">{{ c.name }}</span>
             <span class="custom-item__models">{{
-              c.models.length ? c.models.join(" · ") : "未填写模型"
+              c.models.length ? c.models.join(" · ") : t("llm.noModels")
             }}</span>
             <span class="custom-item__url">{{ c.baseUrl }}</span>
           </div>
           <div class="custom-item__side">
             <StatusBadge
               :tone="c.hasKey ? 'ok' : 'warn'"
-              :text="c.hasKey ? `🔒 ····${c.keyFingerprint ?? ''}` : '未配置 Key'"
+              :text="
+                c.hasKey
+                  ? t('llm.configuredKey', { fp: c.keyFingerprint ?? '' })
+                  : t('llm.unconfiguredKey')
+              "
             />
             <AppToggle
               :model-value="c.enabled"
@@ -354,7 +364,7 @@ onMounted(async (): Promise<void> => {
             <button
               class="custom-item__btn"
               type="button"
-              aria-label="上移"
+              :aria-label="t('llm.moveUp')"
               :disabled="i === 0"
               @click="moveCustom(c.id, true)"
             >
@@ -363,7 +373,7 @@ onMounted(async (): Promise<void> => {
             <button
               class="custom-item__btn"
               type="button"
-              aria-label="下移"
+              :aria-label="t('llm.moveDown')"
               :disabled="i === customs.length - 1"
               @click="moveCustom(c.id, false)"
             >
@@ -374,12 +384,12 @@ onMounted(async (): Promise<void> => {
               type="button"
               @click="openCustomEditor(c)"
             >
-              编辑
+              {{ t("common.edit") }}
             </button>
             <button
               class="custom-item__btn custom-item__btn--danger"
               type="button"
-              aria-label="删除平台"
+              :aria-label="t('llm.deletePlatform')"
               @click="removeCustom(c.id)"
             >
               ✕
@@ -391,7 +401,7 @@ onMounted(async (): Promise<void> => {
         v-else
         class="custom-empty"
       >
-        还没有配置平台。点击上方平台快速开始，或手动新增。
+        {{ t("llm.noPlatform") }}
       </p>
 
       <!-- 编辑器 -->
@@ -401,8 +411,8 @@ onMounted(async (): Promise<void> => {
       >
         <AppInput
           v-model="customForm.name"
-          label="平台名称"
-          placeholder="我的 DeepSeek"
+          :label="t('llm.name')"
+          :placeholder="t('llm.namePlaceholder')"
           :maxlength="20"
           :disabled="customForm.presetId !== null"
         />
@@ -410,15 +420,15 @@ onMounted(async (): Promise<void> => {
           v-if="customForm.presetId !== null"
           class="custom-editor__hint"
         >
-          预设平台名称不可修改；如需自定义名称，请点「手动新增」。
+          {{ t("llm.presetNameHint") }}
         </p>
         <AppInput
           v-model="customForm.baseUrl"
-          label="Base URL"
-          placeholder="https://api.example.com/v1"
+          :label="t('llm.baseUrl')"
+          :placeholder="t('llm.baseUrlPlaceholder')"
         />
         <div class="custom-editor__models">
-          <span class="custom-editor__label">大模型（回车 / 逗号添加，点 ✕ 删除）</span>
+          <span class="custom-editor__label">{{ t("llm.models") }}</span>
           <ModelChips
             :model-value="customForm.models"
             :suggestions="
@@ -430,24 +440,24 @@ onMounted(async (): Promise<void> => {
             v-if="!customForm.models.length"
             class="custom-editor__hint"
           >
-            至少添加一个模型；可从下方建议快速添加，或手动输入。
+            {{ t("llm.modelsHint") }}
           </p>
         </div>
         <AppInput
           v-model="customForm.keyInput"
           type="password"
-          label="API Key（手动输入）"
+          :label="t('llm.apiKey')"
           :placeholder="
             customForm.keyHas
-              ? `已配置 ····${customForm.keyFingerprint ?? ''}（留空=不改动）`
-              : '粘贴该平台的 API Key'
+              ? t('llm.apiKeyHas', { fp: customForm.keyFingerprint ?? '' })
+              : t('llm.apiKeyPlaceholder')
           "
         />
         <!-- align-self 收缩包裹：label 默认会随列向 flex 拉伸成整行，点击范围随之扩大到整行 -->
         <div class="custom-editor__toggle">
           <AppToggle
             :model-value="customForm.enabled"
-            label="启用该平台"
+            :label="t('llm.enablePlatform')"
             @update:model-value="(v: boolean) => (customForm.enabled = v)"
           />
         </div>
@@ -457,28 +467,27 @@ onMounted(async (): Promise<void> => {
             :loading="customSaving"
             @click="submitCustom"
           >
-            保存
+            {{ t("llm.save") }}
           </AppButton>
           <AppButton
             variant="ghost"
             @click="customEditorOpen = false"
           >
-            取消
+            {{ t("common.cancel") }}
           </AppButton>
         </div>
       </div>
 
       <HintBox tone="info">
-        计费说明：各服务商按调用量计费，价格以官方控制台为准。关闭「使用内置额度」后
-        全部调用走你自己配置的平台与 Key。
+        {{ t("llm.billingNote") }}
       </HintBox>
     </AppCard>
 
     <!-- 卡片 2：内置体验额度 -->
-    <AppCard title="内置体验额度">
+    <AppCard :title="t('llm.builtinQuota')">
       <div class="llm-panel__quota">
         <div class="llm-panel__quota-head">
-          <span>剩余体验额度</span>
+          <span>{{ t("llm.remainingQuota") }}</span>
           <StatusBadge
             :tone="quotaTone"
             :text="quotaBadgeText"
@@ -488,39 +497,39 @@ onMounted(async (): Promise<void> => {
         <div
           v-if="quotaSummary"
           class="quota-summary"
-          aria-label="本月用量汇总"
+          :aria-label="t('llm.quotaSummaryAria')"
         >
           <div class="quota-summary__item">
             <span class="quota-summary__num">{{ fmtCredits(quotaSummary.used) }}</span>
-            <span class="quota-summary__label">本月已用</span>
+            <span class="quota-summary__label">{{ t("llm.usedThisMonth") }}</span>
           </div>
           <div class="quota-summary__item">
             <span class="quota-summary__num">{{ fmtCredits(quotaSummary.granted) }}</span>
-            <span class="quota-summary__label">月度总量</span>
+            <span class="quota-summary__label">{{ t("llm.monthlyTotal") }}</span>
           </div>
           <div class="quota-summary__item">
             <span class="quota-summary__num">{{ quotaSummary.requests }}</span>
-            <span class="quota-summary__label">请求次数</span>
+            <span class="quota-summary__label">{{ t("llm.requests") }}</span>
           </div>
           <div class="quota-summary__item">
             <span class="quota-summary__num">{{ quotaSummary.periodKey }}</span>
-            <span class="quota-summary__label">计费周期</span>
+            <span class="quota-summary__label">{{ t("llm.billingCycle") }}</span>
           </div>
           <AppButton
             variant="ghost"
             class="quota-summary__details-btn"
             @click="quotaDetailsOpen = !quotaDetailsOpen"
           >
-            {{ quotaDetailsOpen ? "收起明细" : "查看明细" }}
+            {{ quotaDetailsOpen ? t("llm.hideDetails") : t("llm.viewDetails") }}
           </AppButton>
         </div>
         <!-- 按平台拆分的当月用量（仅内置额度段记账） -->
         <div
           v-if="quotaSummary?.platforms?.length"
           class="quota-platforms"
-          aria-label="按平台用量"
+          :aria-label="t('llm.platformUsageAria')"
         >
-          <span class="quota-platforms__title">各平台用量</span>
+          <span class="quota-platforms__title">{{ t("llm.platformUsage") }}</span>
           <ul class="quota-platforms__list">
             <li
               v-for="p in quotaSummary.platforms"
@@ -538,13 +547,13 @@ onMounted(async (): Promise<void> => {
           v-if="quotaSummary && quotaSummary.remainingRatio <= 0"
           class="llm-panel__quota-note llm-panel__quota-note--warn"
         >
-          这个月的体验额度用完啦。配好你自己的平台 Key 就能继续聊～
+          {{ t("llm.quotaExhausted") }}
         </p>
         <p
           v-else
           class="llm-panel__quota-note"
         >
-          体验额度按自然月发放（每月 1 日重置，不结转）。关闭即完全切到自有平台。
+          {{ t("llm.quotaMonthly") }}
         </p>
 
         <!-- 明细抽屉（时间倒序；空状态说明） -->
@@ -556,7 +565,7 @@ onMounted(async (): Promise<void> => {
             v-if="quotaRecords.length === 0"
             class="quota-details__empty"
           >
-            本月还没有消耗记录。和七七聊几句就有了～
+            {{ t("llm.quotaEmpty") }}
           </p>
           <ul
             v-else
@@ -569,9 +578,7 @@ onMounted(async (): Promise<void> => {
               :class="{ 'quota-details__row--fail': !r.ok }"
             >
               <span class="quota-details__time">{{ r.createdAt.slice(5, 16) }}</span>
-              <span class="quota-details__scene">{{
-                sceneLabels[r.scene] ?? r.scene
-              }}</span>
+              <span class="quota-details__scene">{{ sceneLabel(r.scene) }}</span>
               <span class="quota-details__platform">{{ r.platform }}</span>
               <span class="quota-details__model">{{ r.model }}</span>
               <span class="quota-details__tokens"
@@ -584,19 +591,18 @@ onMounted(async (): Promise<void> => {
       </div>
       <AppToggle
         :model-value="settingsStore.snapshot?.isCustomQuotaUsed !== 2"
-        label="使用内置额度"
+        :label="t('llm.useBuiltin')"
         @update:model-value="toggleQuota($event)"
       />
     </AppCard>
 
     <!-- 卡片 3：联网搜索（实时资料，BYOK） -->
-    <AppCard title="联网搜索（实时资料）">
+    <AppCard :title="t('llm.webSearch')">
       <HintBox tone="info">
-        开启后，发送消息会先检索实时资料注入对话——回答更有时效性，但会多消耗额度。 未配置
-        Key 时自动回落普通对话，不会报错。
+        {{ t("llm.webSearchHint") }}
       </HintBox>
       <div class="search-form">
-        <label class="search-form__label">搜索服务商</label>
+        <label class="search-form__label">{{ t("llm.searchProvider") }}</label>
         <select
           v-model="searchForm.provider"
           class="search-form__select"
@@ -613,16 +619,16 @@ onMounted(async (): Promise<void> => {
         <AppInput
           v-model="searchForm.apiKey"
           type="password"
-          label="API Key（手动输入）"
+          :label="t('llm.apiKey')"
           :placeholder="
             searchForm.hasKey
-              ? `已配置 ····${searchForm.keyFingerprint ?? ''}（留空=不改动）`
-              : '粘贴搜索服务的 API Key'
+              ? t('llm.apiKeyHas', { fp: searchForm.keyFingerprint ?? '' })
+              : t('llm.apiKeyPlaceholder')
           "
         />
 
         <div class="search-form__row">
-          <label class="search-form__label">单次结果上限</label>
+          <label class="search-form__label">{{ t("llm.maxResults") }}</label>
           <input
             v-model.number="searchForm.maxResults"
             class="search-form__num"
@@ -633,20 +639,20 @@ onMounted(async (): Promise<void> => {
         </div>
 
         <div class="search-form__row">
-          <label class="search-form__label">结果语言</label>
+          <label class="search-form__label">{{ t("llm.resultLang") }}</label>
           <select
             v-model="searchForm.lang"
             class="search-form__select search-form__select--sm"
           >
-            <option value="zh">中文</option>
-            <option value="en">英文</option>
+            <option value="zh">{{ t("llm.langZh") }}</option>
+            <option value="en">{{ t("llm.langEn") }}</option>
           </select>
         </div>
 
         <div class="search-form__toggle">
           <AppToggle
             :model-value="searchForm.enabled"
-            label="启用联网搜索"
+            :label="t('llm.enableWebSearch')"
             @update:model-value="(v: boolean) => (searchForm.enabled = v)"
           />
         </div>
@@ -657,7 +663,7 @@ onMounted(async (): Promise<void> => {
           :loading="searchSaving"
           @click="saveSearch"
         >
-          保存
+          {{ t("llm.save") }}
         </AppButton>
       </div>
     </AppCard>

@@ -5,11 +5,14 @@
  * mood 映射走 `constants/mood`（后端 0=开心/1=平静/2=低落，null=未记录）。
  */
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 import AppButton from "../../components/ui/AppButton.vue";
 import StatusBadge from "../../components/ui/StatusBadge.vue";
 import type { DiaryDto, DiaryMood } from "../../api/types";
 import { moodView } from "../../constants/mood";
+
+const { t } = useI18n();
 
 const props = withDefaults(defineProps<{ diary: DiaryDto; loading?: boolean }>(), {
   loading: false,
@@ -18,9 +21,17 @@ const emit = defineEmits<{ (e: "regenerate", date: string): void }>();
 
 const confirming = ref(false);
 
+/** 情绪文案键（数值来自后端契约 0/1/2，null=平静兜底）。 */
+const MOOD_KEYS: Record<DiaryMood, string> = {
+  0: "diary.moodHappy",
+  1: "diary.moodCalm",
+  2: "diary.moodLow",
+};
+
 function moodLabel(m: DiaryMood | null): string {
   const v = moodView(m);
-  return `${v.emoji} ${v.label}`;
+  const key = m == null ? "diary.moodCalm" : (MOOD_KEYS[m] ?? "diary.moodCalm");
+  return `${v.emoji} ${t(key)}`;
 }
 
 function onRegen(): void {
@@ -42,7 +53,7 @@ function onRegen(): void {
     >
     <header class="diary-card__head">
       <span class="diary-card__icon">📖</span>
-      <span class="diary-card__title">猫猫日记</span>
+      <span class="diary-card__title">{{ t("memory.diary") }}</span>
       <span class="diary-card__date">{{ diary.diaryDate }}</span>
     </header>
     <p class="diary-card__body">{{ diary.content }}</p>
@@ -57,7 +68,7 @@ function onRegen(): void {
         :class="{ 'is-confirm': confirming }"
         @click="onRegen"
       >
-        {{ confirming ? "确认重写?" : "重新生成" }}
+        {{ confirming ? t("diary.confirmRegen") : t("diary.regen") }}
       </AppButton>
     </footer>
   </article>

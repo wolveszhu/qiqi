@@ -7,6 +7,9 @@
  * ui/ 红线：零业务依赖，仅受控 range 驱动 + 删除/更新事件。
  */
 import { ref, onMounted, nextTick, watch } from "vue";
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
 
 interface Range {
   start: string;
@@ -103,7 +106,7 @@ onMounted(() => {
         v-if="editable"
         class="time-chip__del"
         type="button"
-        aria-label="删除时段"
+        :aria-label="t('timeChip.deleteRange')"
         @click.stop="onRemove"
       >
         ✕
@@ -116,7 +119,7 @@ onMounted(() => {
         v-model="start"
         class="time-chip__input"
         type="time"
-        aria-label="开始时间"
+        :aria-label="t('timeChip.startTime')"
         @keydown.enter="confirm"
         @keydown.esc="cancel"
       />
@@ -125,14 +128,14 @@ onMounted(() => {
         v-model="end"
         class="time-chip__input"
         type="time"
-        aria-label="结束时间"
+        :aria-label="t('timeChip.endTime')"
         @keydown.enter="confirm"
         @keydown.esc="cancel"
       />
       <button
         class="time-chip__ok"
         type="button"
-        aria-label="完成"
+        :aria-label="t('timeChip.done')"
         @click.stop="confirm"
       >
         ✓

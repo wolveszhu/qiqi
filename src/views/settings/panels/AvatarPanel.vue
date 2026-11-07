@@ -6,7 +6,8 @@
  * 注册表登记一行，本面板无需改动；未注册 id（含导入占位）点击走 Phase 3 提示。
  */
 import { emit } from "@tauri-apps/api/event";
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 
 import AppCard from "../../../components/ui/AppCard.vue";
 import AppInput from "../../../components/ui/AppInput.vue";
@@ -22,28 +23,37 @@ import { pushToast } from "../../../composables/useToast";
 import { applyPetState, petStore } from "../../../state/petStore";
 import { applySnapshot, settingsStore } from "../../../state/settingsStore";
 
-/** 内置形象的展示元数据（键必须与 `renderer/factory.ts` 的注册表 id 一致）。 */
-const PET_META: Record<string, { name: string; sub: string; emoji: string }> = {
-  code_cat: { name: "猫猫", sub: "奶油黄", emoji: "🐱" },
-  code_dog: { name: "汪汪", sub: "抹茶绿", emoji: "🐶" },
+const { t } = useI18n();
+
+/** 注册表 id → i18n 键（键必须与 `renderer/factory.ts` 的注册表 id 一致）。 */
+const PET_META_KEYS: Record<string, { name: string; sub: string; emoji: string }> = {
+  code_cat: { name: "avatar.catName", sub: "avatar.catSub", emoji: "🐱" },
+  code_dog: { name: "avatar.dogName", sub: "avatar.dogSub", emoji: "🐶" },
 };
 
 /**
  * 选项卡清单**由注册表派生**（Phase 3 加形象只需在 factory 登记一行）。
- * 未登记元数据的 id 也能显示（回退占位文案），不会因为漏配元数据就消失。
+ * computed 保证切换语言时文案即时刷新；未登记元数据的 id 也能显示（回退占位文案）。
  */
-const OPTIONS = listRenderers().map((id) => ({
-  id,
-  ...(PET_META[id] ?? { name: id, sub: "内置形象", emoji: "🐾" }),
-}));
+const OPTIONS = computed(() =>
+  listRenderers().map((id) => {
+    const meta = PET_META_KEYS[id];
+    return {
+      id,
+      name: meta ? t(meta.name) : id,
+      sub: meta ? t(meta.sub) : t("avatar.builtinFallback"),
+      emoji: meta?.emoji ?? "🐾",
+    };
+  }),
+);
 
 const savedName = ref(petStore.petName);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** 选中形象：未注册 id（如导入占位）→ 维持原 Phase 3 提示。 */
 function selectRenderer(id: string): void {
-  if (!OPTIONS.some((o) => o.id === id)) {
-    pushToast("自定义形象将在 未来版本 开放", "error");
+  if (!OPTIONS.value.some((o) => o.id === id)) {
+    pushToast(t("avatar.customComing"), "error");
     return;
   }
   const prev = petStore.activeRenderer;
@@ -59,7 +69,7 @@ async function saveRenderer(id: string, prev: string): Promise<void> {
   try {
     await updateState({ activeRenderer: id });
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "切换形象失败", "error");
+    pushToast(e instanceof Error ? e.message : t("avatar.switchFailed"), "error");
     petStore.activeRenderer = prev;
   }
 }
@@ -69,7 +79,7 @@ watch(
   (v): void => {
     if (v.length > 20) {
       petStore.petName = v.slice(0, 20);
-      pushToast("名字最长 20 字", "error");
+      pushToast(t("avatar.nameMax"), "error");
       return;
     }
     if (v === savedName.value) return;
@@ -84,7 +94,7 @@ async function saveName(v: string): Promise<void> {
     applyPetState(dto);
     savedName.value = dto.petName;
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+    pushToast(e instanceof Error ? e.message : t("common.saveFailed"), "error");
     petStore.petName = savedName.value;
   }
 }
@@ -97,9 +107,9 @@ async function toggleSnapSleep(enabled: boolean): Promise<void> {
     // 同步窗口 A（双窗口独立 webview，store 不共享；A 只在挂载时拉一次快照，
     // 不发事件会让 A 缓存陈旧开关 → 吸附门控失效）
     void emit("settings:snap_sleep:changed", { enabled });
-    pushToast(enabled ? "已开启：拖到屏幕边缘会休眠" : "已关闭：拖到边缘不再休眠");
+    pushToast(enabled ? t("avatar.snapOn") : t("avatar.snapOff"));
   } catch (e) {
-    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+    pushToast(e instanceof Error ? e.message : t("common.saveFailed"), "error");
   }
 }
 
@@ -116,7 +126,7 @@ async function changeSnapRatio(v: number): Promise<void> {
       ratio: settingsStore.snapShowRatio,
     });
   } catch (e: unknown) {
-    pushToast(e instanceof Error ? e.message : "保存失败", "error");
+    pushToast(e instanceof Error ? e.message : t("common.saveFailed"), "error");
   }
 }
 
@@ -155,20 +165,20 @@ onMounted((): void => {
 <template>
   <div class="avatar-layout">
     <!-- 左：预览 -->
-    <AppCard title="预览">
+    <AppCard :title="t('avatar.preview')">
       <div class="preview-card">
         <PreviewStage :renderer-id="petStore.activeRenderer" />
         <div class="preview-card__name">{{ petStore.petName }}</div>
         <div class="preview-card__badges">
-          <span class="preview-card__badge">果冻物理</span>
+          <span class="preview-card__badge">{{ t("avatar.badgeJelly") }}</span>
           <!-- <span class="preview-card__badge">视线跟随</span> -->
-          <span class="preview-card__badge">点击穿透</span>
+          <span class="preview-card__badge">{{ t("avatar.badgeClickThrough") }}</span>
         </div>
       </div>
     </AppCard>
 
     <!-- 右上：选择形象 -->
-    <AppCard title="选择内置形象">
+    <AppCard :title="t('avatar.chooseBuiltin')">
       <div class="pet-grid">
         <PetOptionCard
           v-for="o in OPTIONS"
@@ -180,8 +190,8 @@ onMounted((): void => {
           @select="selectRenderer(o.id)"
         />
         <PetOptionCard
-          name="导入自定义形象"
-          sub="暂不可用 · 期待版本更新哦"
+          :name="t('avatar.importTitle')"
+          :sub="t('avatar.importSub')"
           emoji="＋"
           dashed
           @select="selectRenderer('import')"
@@ -190,20 +200,20 @@ onMounted((): void => {
     </AppCard>
 
     <!-- 右下：窗口与交互 -->
-    <AppCard title="窗口与交互">
+    <AppCard :title="t('avatar.windowInteract')">
       <div class="row2">
         <AppInput
           v-model="petStore.petName"
-          label="桌宠名字"
-          placeholder="喵喵"
+          :label="t('avatar.petName')"
+          :placeholder="t('avatar.petNamePlaceholder')"
           :maxlength="20"
         />
       </div>
       <div class="set-rows">
         <div class="set-row">
           <div>
-            <div class="set-row__title">边缘吸附休眠</div>
-            <div class="set-row__sub">拖到屏幕边缘即休眠：只露耳朵和眼睛，彻底静默</div>
+            <div class="set-row__title">{{ t("avatar.edgeSleep") }}</div>
+            <div class="set-row__sub">{{ t("avatar.edgeSleepSub") }}</div>
           </div>
           <AppToggle
             :model-value="settingsStore.snapSleepEnabled"
@@ -212,8 +222,8 @@ onMounted((): void => {
         </div>
         <div class="set-row">
           <div>
-            <div class="set-row__title">吸附露出比例</div>
-            <div class="set-row__sub">贴边时露出形象圆盘的百分比</div>
+            <div class="set-row__title">{{ t("avatar.snapRatio") }}</div>
+            <div class="set-row__sub">{{ t("avatar.snapRatioSub") }}</div>
           </div>
           <div class="ratio-ctl">
             <input
@@ -233,7 +243,7 @@ onMounted((): void => {
         </div>
       </div>
       <HintBox tone="info">
-        形象切换与名字已即时生效。休眠期间主动话术、弹窗、好感度衰减与后台日记都会暂停；把桌宠拖离边缘即可唤醒。
+        {{ t("avatar.hint") }}
       </HintBox>
     </AppCard>
   </div>

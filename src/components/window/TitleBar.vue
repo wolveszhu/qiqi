@@ -5,7 +5,10 @@
  */
 
 import { ref, onMounted, onUnmounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+
+const { t } = useI18n();
 
 const emit = defineEmits<{ (e: "close"): void }>();
 
@@ -48,7 +51,7 @@ onUnmounted(() => unlisten?.());
     <span class="titlebar__kbd">{{ kbdHint }}</span>
     <button
       class="titlebar__btn"
-      aria-label="最小化"
+      :aria-label="t('titleBar.minimize')"
       @click="minimize"
       @mousedown.stop.prevent
     >
@@ -56,7 +59,7 @@ onUnmounted(() => unlisten?.());
     </button>
     <button
       class="titlebar__btn"
-      :aria-label="isMax ? '还原' : '最大化'"
+      :aria-label="isMax ? t('titleBar.restore') : t('titleBar.maximize')"
       @click="toggleMaximize"
       @mousedown.stop.prevent
     >
@@ -64,7 +67,7 @@ onUnmounted(() => unlisten?.());
     </button>
     <button
       class="titlebar__close"
-      aria-label="关闭"
+      :aria-label="t('titleBar.close')"
       @click="emit('close')"
       @mousedown.stop.prevent
     >

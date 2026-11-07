@@ -11,8 +11,13 @@
  * 阈值与 `utils/affection` 单一真源对齐，不在此重复魔法数。
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
-import { LEVEL_NAMES, LEVEL_THRESHOLDS } from "../../utils/affection";
+import { LEVEL_THRESHOLDS } from "../../utils/affection";
+import { useAffectionI18n } from "../../composables/useAffectionI18n";
+
+const { t } = useI18n();
+const { levelName } = useAffectionI18n();
 
 const props = defineProps<{ points: number; level: number }>();
 
@@ -41,7 +46,7 @@ const steps = computed<Step[]>(() => {
     }
     out.push({
       idx: i,
-      name: LEVEL_NAMES[i] ?? `Lv.${i}`,
+      name: levelName(i),
       require: lower,
       state: i < props.level ? "achieved" : i === props.level ? "current" : "locked",
       progress,
@@ -80,7 +85,9 @@ const steps = computed<Step[]>(() => {
         <div class="jstep__head">
           <span class="jstep__name">Lv.{{ s.idx }} {{ s.name }}</span>
           <span class="jstep__req">
-            {{ s.require === 0 ? "起点" : `${s.require} 分解锁` }}
+            {{
+              s.require === 0 ? t("journey.start") : t("journey.unlock", { n: s.require })
+            }}
           </span>
         </div>
 
@@ -92,9 +99,9 @@ const steps = computed<Step[]>(() => {
         </div>
 
         <div class="jstep__tag">
-          <span v-if="s.state === 'achieved'">已达成</span>
-          <span v-else-if="s.state === 'current'">进行中</span>
-          <span v-else>未解锁</span>
+          <span v-if="s.state === 'achieved'">{{ t("journey.achieved") }}</span>
+          <span v-else-if="s.state === 'current'">{{ t("journey.current") }}</span>
+          <span v-else>{{ t("journey.locked") }}</span>
         </div>
       </div>
     </div>

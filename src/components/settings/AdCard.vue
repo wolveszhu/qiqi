@@ -7,7 +7,11 @@
  * 业务动作由父级处理：`open`（跳转系统浏览器）/ `dismiss`（今日不再显示）。
  */
 
+import { useI18n } from "vue-i18n";
+
 import type { AdItem } from "../../config/ads";
+
+const { t } = useI18n();
 
 defineProps<{ ad: AdItem }>();
 
@@ -22,7 +26,7 @@ const emit = defineEmits<{
     <button
       class="ad-card__hit"
       type="button"
-      aria-label="查看广告详情"
+      :aria-label="t('ad.viewDetail')"
       @click="emit('open')"
     >
       <img
@@ -30,14 +34,14 @@ const emit = defineEmits<{
         :src="ad.image"
         width="144"
         height="120"
-        alt="广告"
+        :alt="t('ad.imageAlt')"
       />
-      <span class="ad-card__tag">广告</span>
+      <span class="ad-card__tag">{{ t("ad.tag") }}</span>
     </button>
     <button
       class="ad-card__close"
       type="button"
-      aria-label="关闭广告"
+      :aria-label="t('ad.close')"
       @click="emit('dismiss')"
     >
       ✕

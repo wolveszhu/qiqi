@@ -5,8 +5,11 @@
  * 均上抛事件，写操作在父级。
  */
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 import type { FactDto } from "../../api/types";
+
+const { t } = useI18n();
 
 const props = defineProps<{ fact: FactDto }>();
 const emit = defineEmits<{
@@ -65,7 +68,7 @@ function onDel(): void {
       <button
         class="fact-chip__btn"
         type="button"
-        aria-label="编辑"
+        :aria-label="t('fact.edit')"
         @click="startEdit"
       >
         ✎
@@ -74,10 +77,10 @@ function onDel(): void {
         class="fact-chip__btn fact-chip__btn--del"
         :class="{ 'is-confirm': confirming }"
         type="button"
-        aria-label="删除"
+        :aria-label="t('fact.delete')"
         @click="onDel"
       >
-        {{ confirming ? "确认?" : "✕" }}
+        {{ confirming ? t("fact.confirm") : "✕" }}
       </button>
     </template>
   </div>

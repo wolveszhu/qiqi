@@ -4,8 +4,11 @@
  * 纯展示，points 由父级注入（0–2000，随 `AFFECTION_MAX` 自适应）。
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
 import { AFFECTION_MAX, ringAngle } from "../../utils/affection";
+
+const { t } = useI18n();
 
 const props = defineProps<{ points: number }>();
 
@@ -20,7 +23,7 @@ const angle = computed(() => ringAngle(props.points));
       background: `conic-gradient(var(--peach) ${angle}deg, #EDE2CB ${angle}deg 360deg)`,
     }"
     role="img"
-    :aria-label="`好感度 ${points} / ${AFFECTION_MAX}`"
+    :aria-label="t('affectionRing.aria', { points, max: AFFECTION_MAX })"
   >
     <div class="aff-ring__inner">
       <span class="aff-ring__num">{{ points }}</span>

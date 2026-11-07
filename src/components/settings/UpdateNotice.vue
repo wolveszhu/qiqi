@@ -6,10 +6,12 @@
  * 此处展示在设置窗口顶部；关闭仅隐藏横幅与 Tab 标记，「关于」面板内的信息仍在。
  */
 
+import { useI18n } from "vue-i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { useUpdate } from "../../composables/useUpdate";
 
+const { t } = useI18n();
 const { updateInfo, hasUpdate, dismiss } = useUpdate();
 
 async function download(): Promise<void> {
@@ -25,19 +27,19 @@ async function download(): Promise<void> {
   >
     <span class="update-notice__dot"></span>
     <span class="update-notice__text">
-      发现新版本 v{{ updateInfo?.latest }}，建议更新
+      {{ t("updateNotice.found", { v: updateInfo?.latest ?? "" }) }}
     </span>
     <button
       class="update-notice__btn"
       type="button"
       @click="download"
     >
-      下载更新
+      {{ t("updateNotice.download") }}
     </button>
     <button
       class="update-notice__close"
       type="button"
-      aria-label="稍后"
+      :aria-label="t('updateNotice.later')"
       @click="dismiss"
     >
       ✕

@@ -8,7 +8,11 @@
  * 组件自身零业务依赖、不发 IPC，便于隔离测试。
  */
 
+import { useI18n } from "vue-i18n";
+
 import type { AdItem } from "../../config/ads";
+
+const { t } = useI18n();
 
 defineProps<{ ad: AdItem }>();
 
@@ -24,19 +28,19 @@ const emit = defineEmits<{
     :class="`ad-banner--${ad.tone ?? 'matcha'}`"
     @click="emit('open')"
   >
-    <span class="ad-banner__tag">广告</span>
+    <span class="ad-banner__tag">{{ t("ad.tag") }}</span>
     <span class="ad-banner__text">{{ ad.text }}</span>
     <button
       class="ad-banner__link"
       type="button"
       @click.stop="emit('open')"
     >
-      了解详情 →
+      {{ t("ad.learnMore") }}
     </button>
     <button
       class="ad-banner__close"
       type="button"
-      aria-label="关闭广告"
+      :aria-label="t('ad.close')"
       @click.stop="emit('dismiss')"
     >
       ✕

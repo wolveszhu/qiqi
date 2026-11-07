@@ -4,11 +4,23 @@
  * ★ 必选前缀 + 成本档徽标（低/极低/免费）+ 可选"内置额度池候选"角标。
  * 点击回填 Base URL/模型到所在档位表单（事件上抛，业务无耦合）。
  */
-const COST_LABEL: Record<string, string> = {
-  low: "低",
-  lower: "极低",
-  free: "免费",
-  high: "较高",
+import { useI18n } from "vue-i18n";
+
+const { t } = useI18n();
+
+/**
+ * Rust `PROVIDER_PRESETS.cost_tier` 下发的原文 → i18n 键。
+ * 后端下发的就是中文文案（如 "免费/极低"），故按原文精确映射；
+ * 未知档位原样回退，防止后续新增档位丢展示。
+ */
+const COST_LABEL_KEYS: Record<string, string> = {
+  低: "provider.costLow",
+  极低: "provider.costLower",
+  免费: "provider.costFree",
+  较高: "provider.costHigh",
+  "低-中": "provider.costLowMid",
+  "免费/极低": "provider.costFreeLower",
+  "免费/低": "provider.costFreeLow",
 };
 
 withDefaults(
@@ -25,8 +37,9 @@ withDefaults(
 
 const emit = defineEmits<{ (e: "select"): void }>();
 
-function costLabel(t: string): string {
-  return COST_LABEL[t] ?? t;
+function costLabel(tier: string): string {
+  const key = COST_LABEL_KEYS[tier];
+  return key ? t(key) : tier;
 }
 </script>
 
@@ -53,7 +66,7 @@ function costLabel(t: string): string {
     <span
       v-if="quotaCandidate"
       class="p-chip__quota"
-      >内置额度池</span
+      >{{ t("provider.quotaPool") }}</span
     >
   </button>
 </template>

@@ -7,11 +7,14 @@
  */
 
 import { onActivated, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import AppButton from "../../../components/ui/AppButton.vue";
 import { pushToast } from "../../../composables/useToast";
 import { useUpdate } from "../../../composables/useUpdate";
+
+const { t } = useI18n();
 
 const { updateInfo, checking, lastError, checkNow, dismiss } = useUpdate();
 
@@ -30,7 +33,7 @@ async function download(): Promise<void> {
   try {
     await openUrl(url);
   } catch (e: unknown) {
-    pushToast(e instanceof Error ? e.message : "打开下载链接失败", "error");
+    pushToast(e instanceof Error ? e.message : t("about.openLinkFailed"), "error");
   }
 }
 
@@ -39,20 +42,20 @@ async function copyLink(): Promise<void> {
   if (!url) return;
   try {
     await navigator.clipboard.writeText(url);
-    pushToast("下载链接已复制", "ok");
+    pushToast(t("about.linkCopied"), "ok");
   } catch {
-    pushToast("复制失败，请手动复制链接", "error");
+    pushToast(t("about.copyFailed"), "error");
   }
 }
 
 /** 检查状态文案。 */
 function statusText(): string {
-  if (checking.value) return "检查中…";
-  if (lastError.value) return `检查失败：${lastError.value}`;
-  if (!updateInfo.value) return "尚未检查";
+  if (checking.value) return t("about.checking");
+  if (lastError.value) return t("about.checkFailed", { msg: lastError.value });
+  if (!updateInfo.value) return t("about.notChecked");
   return updateInfo.value.available
-    ? `发现新版本 v${updateInfo.value.latest}`
-    : `已是最新版本（v${updateInfo.value.current}）`;
+    ? t("about.foundNew", { v: updateInfo.value.latest })
+    : t("about.upToDate", { v: updateInfo.value.current });
 }
 </script>
 
@@ -68,7 +71,7 @@ function statusText(): string {
         :loading="checking"
         @click="checkNow"
       >
-        检查更新
+        {{ t("about.checkUpdate") }}
       </AppButton>
       <span class="about__status">{{ statusText() }}</span>
     </section>
@@ -78,7 +81,7 @@ function statusText(): string {
       class="about__card"
     >
       <div class="about__card-head">
-        <span class="about__badge">新版本</span>
+        <span class="about__badge">{{ t("about.newVersion") }}</span>
         <span class="about__latest">v{{ updateInfo.latest }}</span>
       </div>
       <p
@@ -93,27 +96,26 @@ function statusText(): string {
           :disabled="!updateInfo.downloadUrl"
           @click="download"
         >
-          下载更新
+          {{ t("about.download") }}
         </AppButton>
         <AppButton
           variant="ghost"
           :disabled="!updateInfo.downloadUrl"
           @click="copyLink"
         >
-          复制链接
+          {{ t("about.copyLink") }}
         </AppButton>
         <AppButton
           variant="ghost"
           @click="dismiss"
         >
-          稍后
+          {{ t("about.later") }}
         </AppButton>
       </div>
     </section>
 
     <p class="about__hint">
-      更新包托管于 GitHub
-      Releases，下载后手动运行安装即可（当前为轻量自建更新，暂不支持静默安装）。
+      {{ t("about.hint") }}
     </p>
   </div>
 </template>
