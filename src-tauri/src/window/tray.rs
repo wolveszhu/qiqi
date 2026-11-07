@@ -11,6 +11,7 @@ use tauri::{App, AppHandle, Manager, Runtime};
 
 use super::manager::{LABEL_MAIN, LABEL_SETTINGS};
 use crate::error::AppError;
+use crate::i18n::{tray_strings, TrayStrings};
 
 /// 菜单项 id（集中常量，禁魔法字符串）。
 const MENU_SHOW: &str = "tray_show";
@@ -24,19 +25,12 @@ const TRAY_ICON_PNG: &[u8] = include_bytes!("../../icons/tray.png");
 
 /// 构建托盘并挂接菜单/点击事件（setup 内调用一次）。
 ///
+/// 菜单文案按 `locale` 本地化（托盘由 OS 直接绘制，不进 WebView）。
 /// 左键打开设置窗口：捕获 `AppHandle`（闭包需 `'static`，不能借 `&App`）；
 /// 右键弹菜单（`show_menu_on_left_click(false)` 让左键不再弹菜单，菜单默认在右键弹出）。
-pub fn build_tray(app: &App) -> Result<(), AppError> {
-    let menu = MenuBuilder::new(app)
-        .items(&[
-            &MenuItemBuilder::with_id(MENU_SHOW, "显示桌宠").build(app)?,
-            &MenuItemBuilder::with_id(MENU_HIDE, "隐藏桌宠").build(app)?,
-            &MenuItemBuilder::with_id(MENU_SETTINGS, "设置").build(app)?,
-            &MenuItemBuilder::with_id(MENU_AUTOSTART, "开机自启").build(app)?,
-            &MenuItemBuilder::with_id(MENU_QUIT, "退出").build(app)?,
-        ])
-        .build()
-        .map_err(AppError::from)?;
+pub fn build_tray(app: &App, locale: &str) -> Result<(), AppError> {
+    let strings = tray_strings(locale);
+    let menu = build_menu(app, &strings)?;
 
     let icon = Image::from_bytes(TRAY_ICON_PNG)
         .map_err(|e| AppError::Window(format!("托盘图标解码失败: {e}")))?;
@@ -63,6 +57,37 @@ pub fn build_tray(app: &App) -> Result<(), AppError> {
         })
         .build(app)
         .map_err(AppError::from)?;
+    Ok(())
+}
+
+/// 按本地化文案构建托盘菜单（Rust 侧菜单 API 要求 `MenuItem` 生命周期 ≤ manager）。
+///
+/// 抽为独立函数：首次构建（`build_tray`）与运行时重建（`rebuild_tray_menu`）共用同一份文案来源。
+fn build_menu<M: tauri::Manager<R>, R: tauri::Runtime>(
+    manager: &M,
+    s: &TrayStrings,
+) -> Result<tauri::menu::Menu<R>, AppError> {
+    MenuBuilder::new(manager)
+        .items(&[
+            &MenuItemBuilder::with_id(MENU_SHOW, s.show).build(manager)?,
+            &MenuItemBuilder::with_id(MENU_HIDE, s.hide).build(manager)?,
+            &MenuItemBuilder::with_id(MENU_SETTINGS, s.settings).build(manager)?,
+            &MenuItemBuilder::with_id(MENU_AUTOSTART, s.autostart).build(manager)?,
+            &MenuItemBuilder::with_id(MENU_QUIT, s.quit).build(manager)?,
+        ])
+        .build()
+        .map_err(AppError::from)
+}
+
+/// 运行时重建托盘菜单（语言切换后立即生效；`set_locale` 命令调用）。
+///
+/// 取已注册的托盘图标（`qiqi-main`）并替换其菜单；托盘不存在时静默（不致命）。
+pub fn rebuild_tray_menu<R: Runtime>(app: &AppHandle<R>, locale: &str) -> Result<(), AppError> {
+    let strings = tray_strings(locale);
+    let menu = build_menu(app, &strings)?;
+    if let Some(tray) = app.tray_by_id("qiqi-main") {
+        tray.set_menu(Some(menu)).map_err(AppError::from)?;
+    }
     Ok(())
 }
 

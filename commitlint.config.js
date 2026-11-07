@@ -35,6 +35,7 @@ export default {
         "ipc",
         "window",
         "db",
+        "i18n",
         "ai",
         "memory",
         "affection",

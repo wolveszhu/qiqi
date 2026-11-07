@@ -161,6 +161,46 @@ pub fn mark_ad_dismissed(conn: &Connection, ad_id: &str) -> Result<(), AppError>
     merge_interaction_value(conn, patch)
 }
 
+// ---------- type=5 语言偏好（中/英；首启读 OS，之后以用户选择为准） ----------
+
+/// type=5 行：语言偏好（JSON `{"locale":"zh-CN"}`）。
+pub const SETTING_TYPE_LOCALE: i64 = 5;
+/// 默认/坏值回落语言。
+pub const DEFAULT_LOCALE: &str = "zh-CN";
+
+/// 读取用户语言（缺省/坏值回落 `zh-CN`）。
+///
+/// @param conn - 数据库连接
+/// @returns 语言标识（`SUPPORTED_LOCALES` 之一，或 `DEFAULT_LOCALE`）
+pub fn get_locale(conn: &Connection) -> Result<String, AppError> {
+    let raw = get_row(conn, SETTING_TYPE_LOCALE)?.and_then(|r| r.value);
+    let Some(raw) = raw else {
+        return Ok(DEFAULT_LOCALE.to_string());
+    };
+    match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(value) if value.is_object() => Ok(value
+            .get("locale")
+            .and_then(|v| v.as_str())
+            .filter(|s| crate::i18n::SUPPORTED_LOCALES.contains(s))
+            .unwrap_or(DEFAULT_LOCALE)
+            .to_string()),
+        _ => Ok(DEFAULT_LOCALE.to_string()),
+    }
+}
+
+/// 写入用户语言（落 type=5 行；非法值返回 `AppError::Config`，防注入/乱码）。
+///
+/// @param conn - 数据库连接
+/// @param locale - 语言标识（必须为白名单成员）
+/// @returns 落库结果
+pub fn set_locale(conn: &Connection, locale: &str) -> Result<(), AppError> {
+    if !crate::i18n::SUPPORTED_LOCALES.contains(&locale) {
+        return Err(AppError::Config(format!("不支持的语言: {locale}")));
+    }
+    let json = serde_json::json!({ "locale": locale }).to_string();
+    upsert_value(conn, SETTING_TYPE_LOCALE, &json)
+}
+
 // ---------- C3 tiered 读写辅助 ----------
 
 /// 读取三档配置（type=1 的 value）。
@@ -341,5 +381,48 @@ mod tests {
         assert_eq!(map.get("banner-a"), Some(&today), "写入 Rust 本地当日日期");
         assert_eq!(map.get("sidebar-b"), Some(&today), "两条独立关闭");
         assert!(!get_snap_sleep_enabled(&conn).expect("读取开关"), "合并写入不抹掉同桶兄弟键");
+    }
+
+    #[test]
+    fn locale_defaults_to_zh_cn_when_row_missing() {
+        let (_dir, conn) = fresh_db();
+        assert_eq!(get_locale(&conn).expect("读取"), DEFAULT_LOCALE, "缺省回落中文");
+    }
+
+    #[test]
+    fn locale_roundtrip_and_idempotent() {
+        let (_dir, conn) = fresh_db();
+        set_locale(&conn, "en-US").expect("写英文");
+        assert_eq!(get_locale(&conn).expect("读取"), "en-US");
+
+        set_locale(&conn, "en-US").expect("重复写（幂等）");
+        set_locale(&conn, "zh-CN").expect("写回中文");
+        assert_eq!(get_locale(&conn).expect("读取"), "zh-CN");
+
+        // type=5 只有一行（upsert 语义）
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE type = ?1",
+                params![SETTING_TYPE_LOCALE],
+                |row| row.get(0),
+            )
+            .expect("计数");
+        assert_eq!(count, 1, "type=5 应只有一行");
+    }
+
+    #[test]
+    fn locale_tolerates_garbage_value() {
+        let (_dir, conn) = fresh_db();
+        upsert_value(&conn, SETTING_TYPE_LOCALE, "not-json").expect("写坏值");
+        assert_eq!(get_locale(&conn).expect("读取"), DEFAULT_LOCALE, "坏 JSON → 回落中文");
+
+        upsert_value(&conn, SETTING_TYPE_LOCALE, r#"{"locale":"xx-XX"}"#).expect("写非法 locale");
+        assert_eq!(get_locale(&conn).expect("读取"), DEFAULT_LOCALE, "白名单外 → 回落中文");
+    }
+
+    #[test]
+    fn set_locale_rejects_unsupported() {
+        let (_dir, conn) = fresh_db();
+        assert!(set_locale(&conn, "fr-FR").is_err(), "非法语言应报错");
     }
 }

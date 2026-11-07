@@ -12,6 +12,7 @@
 
 pub mod affection;
 pub mod llm;
+mod i18n;
 mod proactive;
 mod probe;
 mod window;
@@ -82,8 +83,19 @@ pub fn run() {
             let db::Db { conn } = db::init(&db_path)?;
             app.manage(crate::state::AppState::new(conn));
 
+            // 读取语言偏好（首启缺省 zh-CN；前端会在检测 OS 语言后回写并重建托盘）
+            let locale = {
+                use crate::db::repositories::app_settings;
+                let state = app.state::<AppState>();
+                let conn = state
+                    .db
+                    .lock()
+                    .map_err(|e| error::AppError::Db(format!("获取数据库连接失败: {e}")))?;
+                app_settings::get_locale(&conn)?
+            };
+
             // [C2] 桌面融合装配：托盘 + 探针单点轮询 + 穿透同步循环
-            window::tray::build_tray(app)?;
+            window::tray::build_tray(app, &locale)?;
             let handle = app.handle().clone();
             probe::scheduler::start_cursor_probe(handle.clone());
             start_click_through_sync(handle.clone());
@@ -154,6 +166,8 @@ pub fn run() {
             commands::settings::settings_set_snap_ratio,
             commands::settings::settings_get_ad_dismissals,
             commands::settings::settings_mark_ad_dismissed,
+            commands::settings::get_locale,
+            commands::settings::set_locale,
             commands::settings::settings_list_custom_models,
             commands::settings::settings_save_custom_model,
             commands::settings::settings_delete_custom_model,

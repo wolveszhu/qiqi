@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use rusqlite::Connection;
 
@@ -113,6 +113,30 @@ pub fn settings_mark_ad_dismissed(
     }
     let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     app_settings::mark_ad_dismissed(&conn, &ad_id)
+}
+
+/// 读取用户语言（缺省/坏值回落 zh-CN）。
+#[tauri::command]
+pub fn get_locale(state: State<'_, AppState>) -> Result<String, AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    app_settings::get_locale(&conn)
+}
+
+/// 写入用户语言并即时重建托盘菜单（持 `AppHandle`，命令内直接重建比前端 emit 事件更可靠）。
+///
+/// 语言白名单在仓储层校验，非法值返回 `AppError::Config`，防注入/乱码。
+#[tauri::command]
+pub fn set_locale(
+    locale: String,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    app_settings::set_locale(&conn, &locale)?;
+    // 语言切换即时反映到系统托盘（无 WebView 渲染，纯 OS 菜单）。
+    // 托盘重建失败非致命：locale 已落库，下次启动仍生效，故吞掉错误。
+    let _ = crate::window::tray::rebuild_tray_menu(&app, &locale);
+    Ok(())
 }
 
 /// 读取设置快照（Key 脱敏回传）。
