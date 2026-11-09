@@ -14,7 +14,7 @@
 | `README.md` | 本文件：表清单、职责地图、改表 SOP、命名与红线 | 任何表结构变更 |
 | `mod.rs` | 模块声明与 `Db` / `init` 重导出；不含业务 SQL | 新增模块时 |
 | `connection.rs` | SQLCipher 密钥、sqlite-vec 扩展注册、连接打开、版本三分支与迁移前备份 | 连接策略变化时 |
-| `migrations.rs` | 有序迁移链（10 条）、`TARGET_VERSION`、迁移链测试 | **每次表结构变更** |
+| `migrations.rs` | 有序迁移链（11 条）、`TARGET_VERSION`、迁移链测试 | **每次表结构变更** |
 | `migrations/M*.sql` | 各版本 DDL / 数据迁移 / 种子，静态文件 | 新增迁移时 |
 | `models/rows.rs` | SQL 行结构体（内部使用，不序列化） | 新增/改表且需行映射时 |
 | `models/values.rs` | `app_settings.value` 列的 JSON 存储结构（含旧库兼容读取） | 改配置结构时 |
@@ -25,7 +25,7 @@
 | `../../tests/release_data_guard.rs` | 发布数据运行时守卫：干净库断言仅含系统基础数据 | 基线变化时 |
 | `../../../scripts/verify-release-data.mjs` | 发布数据构建期守卫：扫描构建输入中的数据文件 | 发布链路变化时 |
 
-## 2. 表清单（14 张）
+## 2. 表清单（15 张）
 
 | 表 | 用途 | 建表迁移 | 仓储 | 行结构体 |
 | :--- | :--- | :--- | :--- | :--- |
@@ -43,18 +43,20 @@
 | `quota_usage_monthly` | 额度月度全局汇总缓存 | M8 | `quota_usage.rs` | `QuotaUsageMonthlyRow` |
 | `quota_usage_platform_monthly` | 按平台拆分的月度用量（`period_key+platform` 主键） | M10 | `quota_usage.rs` | `QuotaPlatformMonthlyRow` |
 | `search_settings` | 联网搜索配置，单行 `id=1` | M9 | `search_settings.rs` | — |
+| `translate_settings` | 划词翻译配置，单行 `id=1`（M11 只建表，运行时播种） | M11 | `translate_settings.rs` | — |
 
 说明：
 
-- `quota_usage.rs` 一个仓储管三张表（明细 + 全局汇总 + 平台汇总，同事务 upsert），
-  故仓储数 12 < 表数 14。
+- `quota_usage.rs` 一个仓储管三张表（明细 + 全局汇总 + 平台汇总，同事务 upsert），故仓储数小于表数。
+- `translate_settings` 的内置凭据由构建期环境变量注入、首次启动由 Rust 幂等播种，**表定义里没有任何明文 Key**；
+  干净库首次启动后该表 1 行（播种尚未落地前为 0 行，见 §7.2 基线登记）。
 - `quota_usage.platform` 列由 M10 追加（存量按 `model` 反查内置模型回填，查不到 `unknown`）；
   M8 历史 SQL 不改动。
 - `CustomModelRow` / `DefaultModelRow` 含明文 `api_key`，**刻意就近定义在仓储内**，不放进
   `models/rows.rs`，避免经 `pub use` 重导出扩散到全 crate。
 - 无独立 Row 的表由仓储直接投影为 DTO 或使用局部类型。
 
-## 3. 迁移链（M1–M10）
+## 3. 迁移链（M1–M11）
 
 | 版本 | 文件 / 来源 | 类型 | 内容 |
 | :--- | :--- | :--- | :--- |
@@ -68,12 +70,13 @@
 | M8 | `M8__quota_usage.sql` | DDL | 额度明细 + 月度汇总 |
 | M9 | `M9__search_settings.sql` | DDL + 种子 | 联网搜索配置 |
 | M10 | `M10__quota_platform.sql` | DDL + 数据回填 | 额度明细加 platform 列、平台月表、存量回填、`granted` 对齐 100,000 |
+| M11 | `M11__translate_settings.sql` | DDL（仅建表） | 划词翻译配置单行表；内置凭据由编译期注入 + 运行时播种，SQL 不含明文 |
 
 **M2 没有 SQL 文件是有意设计，不是遗漏**：vec0 的 `float[dim]` 必须与
 `config::EMBEDDING_DIM` 单点一致，而 `M::up` 只接受 `&'static str`，故在
 `chain()` 内用 `format!` 渲染后 `Box::leak`。请勿补一个静态 M2 文件。
 
-`TARGET_VERSION = 10`（= 链上迁移条数），由 `connection::apply_migrations` 用于
+`TARGET_VERSION = 11`（= 链上迁移条数），由 `connection::apply_migrations` 用于
 版本三分支：相等跳过 / 大于失败关闭 / 小于（且有数据）先备份 `pet.db.bak` 再迁移。
 
 ## 4. 新增或修改数据表的操作路径
@@ -139,7 +142,7 @@
 
 安装包**不含任何 `.db` 文件**：`tauri.conf.json` 未配置 `bundle.resources`，
 `build.rs` 无拷贝逻辑，`lib.rs` 在 `app_data_dir()/pet.db` 首次启动现场建库。
-种子以 `include_str!` 编译进二进制，由迁移链 M1–M10 写入。
+种子以 `include_str!` 编译进二进制，由迁移链 M1–M11 写入。
 
 因此治理对象是**迁移 SQL 与构建输入**，不是磁盘上的库文件；"自动排除测试数据"
 落实为「构建期扫描 + 运行时基线断言 + CI 阻断」，而不是打包时清理 `.db`。
@@ -166,8 +169,9 @@
 | `quota_usage` | 0 | 运行时用量明细 |
 | `quota_usage_monthly` | 0 | 运行时月度全局汇总 |
 | `quota_usage_platform_monthly` | 0 | 运行时按平台月度汇总（M10 新增，干净库无数据） |
+| `translate_settings` | 0 | 运行时配置：M11 只建表；播种落地后应登记为 1 行 |
 
-合计 14 张表、**6 行系统基础数据**。任何运行时表出现非 0 行，即视为
+合计 15 张表、**6 行系统基础数据**。任何运行时表出现非 0 行，即视为
 测试 / 临时数据混入，发布必须阻断。
 
 **禁止出现在发布构建中的标记**（守卫会扫描迁移 SQL 与 `dist/`）：
@@ -180,7 +184,7 @@
 | :--- | :--- | :--- | :--- |
 | 1 定义 | 本文件 §7.2 | 人工维护 | 基线的单一真源，改表时同步 |
 | 2 静态守卫 | `scripts/verify-release-data.mjs` | `pnpm verify:release-data` | 校验 `bundle.resources` 为空、扫描源码/`dist` 无数据文件；`dist` 命中自动删除并报告，源码命中直接失败；扫描迁移 SQL 无测试标记、INSERT 白名单 |
-| 3 运行时守卫 | `src-tauri/tests/release_data_guard.rs` | `cargo test --test release_data_guard` | 干净空库跑完 M1–M10，断言表集合、逐表行数、关键默认值与无测试串 |
+| 3 运行时守卫 | `src-tauri/tests/release_data_guard.rs` | `cargo test --test release_data_guard` | 干净空库跑完 M1–M11，断言表集合、逐表行数、关键默认值与无测试串 |
 | 4 CI 阻断 | `.github/workflows/release.yml` | 打 `v*` tag | 在 `tauri-action` **之前**依次跑 2、3，任一失败即中止、不产出 Release |
 
 新增迁移若改变行数或表集合，必须同步改 §7.2 与 `release_data_guard.rs`
@@ -193,7 +197,7 @@ MSI 重装不会删除 `app_data_dir`，开发机上验证发布包时必须先�
 1. 完全退出应用（托盘 → 退出），确认进程结束。
 2. 备份（可选）后删除数据目录：
    `Remove-Item -Recurse -Force "$env:APPDATA\com.brave.qiqi"`
-3. 安装新包并**首次启动**（触发 M1–M9 现场建库）。
+3. 安装新包并**首次启动**（触发 M1–M11 现场建库）。
 4. 打开设置 → 记忆 / 好感度：记忆为空、事实 0 条、流水 0 条、好感度 0 分 / Lv1。
 5. 桌宠名应为默认「喵喵」、形象 `code_cat`；大模型与联网搜索均未配置 Key。
 

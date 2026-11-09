@@ -1,4 +1,4 @@
-//! 有序迁移链 M1–M10（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
+//! 有序迁移链 M1–M11（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
 //!
 //! 链全表与改表操作路径见同目录 `README.md` §3–§4。
 //! 铁律：任何结构变更都**追加新迁移**，禁止改历史 SQL；每条迁移独立事务、失败回滚；
@@ -17,11 +17,12 @@ use crate::config::EMBEDDING_DIM;
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1（操作路径见 `README.md` §4.1）；
 /// `connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 10;
+pub const TARGET_VERSION: usize = 11;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered → M4 dnd/频率 →
 /// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 →
-/// M9 搜索配置 → M10 额度平台维度与存量回填）。
+/// M9 搜索配置 → M10 额度平台维度与存量回填 →
+/// M11 划词翻译配置表，只建表不写种子）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -67,12 +68,36 @@ pub fn chain() -> Migrations<'static> {
         // M10：额度用量加 platform 维度 + 平台月表 + 存量回填 + 月度额度改 100,000。
         // 仅加量（ADD COLUMN / CREATE TABLE）与幂等回填，不改 M8 历史 SQL。
         M::up(include_str!("migrations/M10__quota_platform.sql")),
+        // M11：划词翻译配置（单行 id=1）。只建表、不写种子——内置凭据走编译期注入 +
+        // 首次启动参数化幂等播种，避免明文进仓库与发布守卫 INSERT 白名单冲突。
+        M::up(include_str!("migrations/M11__translate_settings.sql")),
     ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn m11_upgrades_existing_db_and_only_creates_table() {
+        crate::db::connection::register_vec_extension().expect("vec 注册");
+        let mut conn = rusqlite::Connection::open_in_memory().expect("内存库");
+        chain().to_version(&mut conn, 10).expect("迁移到 M10");
+        chain().to_latest(&mut conn).expect("迁移到 M11");
+        let current: usize = chain().current_version(&conn).expect("版本读取").into();
+        assert_eq!(current, TARGET_VERSION);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM translate_settings", [], |row| row.get(0))
+            .expect("表应存在");
+        assert_eq!(count, 0, "M11 只建表；凭据与配置由 Rust 运行时幂等播种");
+
+        chain().to_latest(&mut conn).expect("重复迁移");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM translate_settings", [], |row| row.get(0))
+            .expect("表应存在");
+        assert_eq!(count, 0, "幂等：重复迁移不新增行");
+    }
 
     #[test]
     fn chain_migrates_empty_db_to_target_version() {
