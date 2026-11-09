@@ -78,6 +78,8 @@ export default {
       keyConfigured: "Configured (last 4: {fingerprint})",
       builtinReady: "Built-in channel ready",
       builtinMissing: "Built-in channel not configured",
+      builtinFallback:
+        "Built-in credentials are not injected. Enter your own Baidu app ID and key to use it as a custom service (not counted against the built-in quota).",
       save: "Save",
       saved: "Saved",
     },
@@ -87,7 +89,10 @@ export default {
       window: "Window action failed. Please try again.",
       probe: "Could not capture selection. Please select again.",
       io: "System action failed. Please try again.",
-      config: "Configuration or quota issue. Please check settings.",
+      config: "Configuration or quota issue. Please check Text Translation settings.",
+      configDisabled: "Text translation is turned off in settings.",
+      configNoCredential:
+        "No credentials available. Inject the built-in credentials, or enter a custom API key and app ID in settings.",
       unknown: "An unknown error occurred. Please try again.",
     },
     copied: "Translation copied",

@@ -16,6 +16,7 @@ import {
   captureSelection,
   copyTranslateResult,
   executeTranslate,
+  getTranslateSettings,
   hideTranslatePopup,
   retryTranslate,
   showTranslatePopup,
@@ -43,6 +44,32 @@ function localizedError(e: unknown): string {
   return te(key) ? t(key) : t("translate.error.unknown");
 }
 
+/**
+ * 配置类错误的进一步诊断：读一次脱敏配置快照，区分「总开关关闭」与「没有凭据」，
+ * 让提示可行动；查询失败或其余场景（额度 / 语种 / 取词）仍走通用本地化文案。
+ */
+async function configHint(): Promise<string> {
+  try {
+    const settings = await getTranslateSettings();
+    if (!settings.enabled) return t("translate.error.configDisabled");
+    if (!settings.hasBuiltinCredential && !settings.hasCustomKey) {
+      return t("translate.error.configNoCredential");
+    }
+    return t("translate.error.config");
+  } catch {
+    return t("translate.error.config");
+  }
+}
+
+/** 统一的错误反馈出口：按 kind 本地化，config 额外给出可行动提示。 */
+async function reportError(e: unknown): Promise<void> {
+  if (normalizeError(e).kind === "config") {
+    pushToast(await configHint(), "error");
+    return;
+  }
+  pushToast(localizedError(e), "error");
+}
+
 /** 点击小图标：这才发生取词与翻译（手势阶段只读鼠标状态）。 */
 async function onCapture(): Promise<void> {
   if (busy.value) return;
@@ -53,7 +80,7 @@ async function onCapture(): Promise<void> {
     await showTranslatePopup(anchor.value.x, anchor.value.y);
     toolbarVisible.value = false;
   } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
+    await reportError(e);
   } finally {
     busy.value = false;
   }
@@ -66,7 +93,7 @@ async function onCopy(): Promise<void> {
     await copyTranslateResult(result.value.translatedText);
     pushToast(t("translate.copied"), "ok");
   } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
+    await reportError(e);
   }
 }
 
@@ -77,7 +104,7 @@ async function onRetry(): Promise<void> {
   try {
     result.value = await retryTranslate(result.value.resultId);
   } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
+    await reportError(e);
   } finally {
     busy.value = false;
   }
@@ -91,7 +118,7 @@ async function onClose(): Promise<void> {
   try {
     await hideTranslatePopup();
   } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
+    await reportError(e);
   }
 }
 

@@ -109,17 +109,23 @@ fn prepare(conn: &Connection, text: &str, override_lang: Option<&str>) -> Result
     if !row.enabled {
         return Err(AppError::Config("划词翻译已关闭".into()));
     }
+    // 先取借用型判定，再移动 String 字段（避免部分移动后借用 row）。
+    let has_builtin = row.has_builtin_credential();
     let provider_id = row.provider;
-    let is_builtin = provider_id == "baidu";
-    let (app_id, secret) = if is_builtin {
-        (row.builtin_app_id, row.builtin_secret)
+    // baidu 通道优先用编译期注入的内置凭据；若未注入（用户只在设置里填了自己的
+    // APPID / 密钥，或直接把库里 provider 改成 baidu），回退到自定义凭据列。
+    // 回退时用用户自己的 Key，按「自定义 API 不计入内置额度」口径置 is_builtin=false。
+    let (app_id, secret, is_builtin) = if provider_id == "baidu" && has_builtin {
+        (row.builtin_app_id, row.builtin_secret, true)
     } else {
-        (row.custom_app_id, row.custom_api_key)
+        (row.custom_app_id, row.custom_api_key, false)
     };
     let credential_missing = secret.is_empty()
         || ((provider_id == "baidu" || provider_id == "youdao") && app_id.is_empty());
     if credential_missing {
-        let message = if is_builtin {
+        let message = if provider_id == "baidu" && !has_builtin {
+            "内置凭据未注入，且未填写百度 APPID/密钥"
+        } else if is_builtin {
             "内置翻译未配置"
         } else {
             "自定义翻译服务未配置密钥"
@@ -304,5 +310,27 @@ mod tests {
         assert!(prepare(&conn, "Hello", None).is_err(), "未注入内置凭据时应拒绝");
         repo::save(&conn, false, "auto", "baidu", None, None).expect("关闭开关");
         assert!(prepare(&conn, "Hello", None).is_err(), "关闭时不应发起");
+    }
+
+    #[test]
+    fn prepare_uses_seeded_builtin_credentials() {
+        let (_dir, conn) = fresh_db();
+        repo::seed_builtin(&conn, Some("app-id"), Some("secret")).expect("播种内置凭据");
+        let plan = prepare(&conn, "Hello", None).expect("内置凭据应可用");
+        assert!(plan.is_builtin, "内置凭据计入内置额度");
+        assert_eq!(plan.app_id, "app-id");
+        assert_eq!(plan.secret, "secret");
+    }
+
+    #[test]
+    fn prepare_falls_back_to_custom_baidu_credentials() {
+        let (_dir, conn) = fresh_db();
+        // 场景：内置凭据未注入，用户只在设置里填了自己的百度 APPID / 密钥。
+        repo::save(&conn, true, "auto", "baidu", Some("my-key"), Some("my-appid"))
+            .expect("保存自填凭据");
+        let plan = prepare(&conn, "Hello", None).expect("自填百度凭据应可用");
+        assert!(!plan.is_builtin, "自填凭据不计入内置额度");
+        assert_eq!(plan.app_id, "my-appid");
+        assert_eq!(plan.secret, "my-key");
     }
 }

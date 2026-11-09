@@ -67,6 +67,8 @@ export default {
       keyConfigured: "已配置（末 4 位 {fingerprint}）",
       builtinReady: "内置通道已就绪",
       builtinMissing: "内置通道未配置",
+      builtinFallback:
+        "内置凭据未注入：可填写自己的百度应用 ID 与密钥使用，此时按自定义服务计费（不计入内置额度）。",
       save: "保存",
       saved: "已保存",
     },
@@ -76,7 +78,10 @@ export default {
       window: "窗口操作失败，请重试",
       probe: "取词失败，请重新划词",
       io: "系统操作失败，请重试",
-      config: "配置或额度不满足，请检查设置",
+      config: "配置或额度不满足，请检查划词翻译设置",
+      configDisabled: "划词翻译已在设置中关闭",
+      configNoCredential:
+        "没有可用凭据：请注入内置凭据，或在设置中填写自定义服务的密钥与应用 ID",
       unknown: "发生未知错误，请重试",
     },
     copied: "译文已复制",
