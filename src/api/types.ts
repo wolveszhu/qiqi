@@ -18,6 +18,67 @@ export interface AppError {
   message: string;
 }
 
+// ---------- 全局划词翻译（接口契约 §2 translate_*） ----------
+
+/** 本版仅中英互译；auto = 按源语言自动取相反语言。 */
+export type TranslateTargetLang = "auto" | "zh" | "en";
+export type TranslateProviderId = "baidu" | "deepl" | "youdao" | "google";
+
+/** 划词翻译配置（Key 脱敏，接口不回明文）。 */
+export interface TranslateSettings {
+  enabled: boolean;
+  targetLang: TranslateTargetLang;
+  provider: TranslateProviderId;
+  hasBuiltinCredential: boolean;
+  hasCustomKey: boolean;
+  customKeyFingerprint: string | null;
+}
+
+/** 保存配置入参；Key 缺省=不改动，空串=清空。 */
+export interface SaveTranslateSettings {
+  enabled: boolean;
+  targetLang: TranslateTargetLang;
+  provider: TranslateProviderId;
+  customApiKey?: string;
+  customAppId?: string;
+}
+
+/** 选区屏幕矩形（逻辑像素）。 */
+export interface SelectionRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** 取词结果（用户点击工具条后返回）。 */
+export interface CapturedSelection {
+  selectionKey: string;
+  text: string;
+  rect: SelectionRect;
+  via: "uia" | "clipboard";
+}
+
+/** 译文结果（浮窗展示 + 重新翻译复用）。 */
+export interface TranslateResult {
+  resultId: string;
+  sourceText: string;
+  translatedText: string;
+  sourceLang: "zh" | "en";
+  targetLang: "zh" | "en";
+  provider: TranslateProviderId;
+  isBuiltin: boolean;
+  quotaExhausted: boolean;
+}
+
+/** `translate:selection:show` 事件负载。 */
+export interface TranslateSelectionPayload {
+  selectionKey: string;
+  rect: SelectionRect;
+  cursorX: number;
+  cursorY: number;
+}
+
 /** 三档模型配置档位（主对话 / 记忆沉淀 / 兜底）。 */
 export type LlmTierName = "main" | "memory" | "fallback";
 

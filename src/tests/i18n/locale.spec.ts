@@ -25,6 +25,19 @@ function leafKeys(obj: Record<string, unknown>, prefix = ""): string[] {
   return out.sort();
 }
 
+/** 递归收集字典的叶子值（支持多层分区，如 `translate.popup.copy`）。 */
+function leafValues(obj: Record<string, unknown>): unknown[] {
+  const out: unknown[] = [];
+  for (const value of Object.values(obj)) {
+    if (typeof value === "object" && value !== null) {
+      out.push(...leafValues(value as Record<string, unknown>));
+    } else {
+      out.push(value);
+    }
+  }
+  return out;
+}
+
 describe("detectLocale", () => {
   it("中文系 OS 语言 → zh-CN", () => {
     expect(detectLocale("zh-CN")).toBe("zh-CN");
@@ -55,12 +68,9 @@ describe("dictionaries", () => {
 
   it("所有叶子值均为非空字符串", () => {
     for (const dict of [zhCN, enUS]) {
-      for (const value of Object.values(dict)) {
-        // 分区对象逐个下钻，最终叶子必须是字符串
-        for (const leaf of Object.values(value as Record<string, unknown>)) {
-          expect(typeof leaf).toBe("string");
-          expect((leaf as string).length).toBeGreaterThan(0);
-        }
+      for (const leaf of leafValues(dict as unknown as Record<string, unknown>)) {
+        expect(typeof leaf).toBe("string");
+        expect((leaf as string).length).toBeGreaterThan(0);
       }
     }
   });

@@ -24,6 +24,7 @@ import LlmPanel from "./panels/LlmPanel.vue";
 import MemoryPanel from "./panels/MemoryPanel.vue";
 import AboutPanel from "./panels/AboutPanel.vue";
 import GeneralPanel from "./panels/GeneralPanel.vue";
+import TranslatePanel from "./panels/TranslatePanel.vue";
 import AppToast from "../../components/ui/AppToast.vue";
 import { initAds, useAds } from "../../composables/useAds";
 import { initUpdateWatcher, useUpdate } from "../../composables/useUpdate";
@@ -31,7 +32,15 @@ import { pushToast } from "../../composables/useToast";
 import { SIDEBAR_CARD_AD, TOP_BANNER_AD } from "../../config/ads";
 
 type PanelKey =
-  "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about" | "general";
+  | "chat"
+  | "avatar"
+  | "llm"
+  | "dnd"
+  | "affection"
+  | "memory"
+  | "about"
+  | "general"
+  | "translate";
 
 const active = ref<PanelKey>("avatar");
 const unlisteners: UnlistenFn[] = [];
@@ -113,6 +122,7 @@ onUnmounted((): void => {
           <AffectionPanel v-else-if="active === 'affection'" />
           <MemoryPanel v-else-if="active === 'memory'" />
           <GeneralPanel v-else-if="active === 'general'" />
+          <TranslatePanel v-else-if="active === 'translate'" />
           <AboutPanel v-else />
         </KeepAlive>
       </main>

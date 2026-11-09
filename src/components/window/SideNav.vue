@@ -8,7 +8,15 @@ import { useI18n } from "vue-i18n";
 withDefaults(
   defineProps<{
     active?:
-      "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about" | "general";
+      | "chat"
+      | "avatar"
+      | "llm"
+      | "dnd"
+      | "affection"
+      | "memory"
+      | "about"
+      | "general"
+      | "translate";
     hasUpdate?: boolean;
   }>(),
   { active: "avatar", hasUpdate: false },
@@ -17,7 +25,16 @@ withDefaults(
 const emit = defineEmits<{
   (
     e: "change",
-    key: "chat" | "avatar" | "llm" | "dnd" | "affection" | "memory" | "about" | "general",
+    key:
+      | "chat"
+      | "avatar"
+      | "llm"
+      | "dnd"
+      | "affection"
+      | "memory"
+      | "about"
+      | "general"
+      | "translate",
   ): void;
 }>();
 
@@ -30,6 +47,7 @@ const items = [
   { key: "dnd" },
   { key: "affection" },
   { key: "memory" },
+  { key: "translate" },
   { key: "general" },
   { key: "about" },
 ] as const;
