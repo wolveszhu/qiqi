@@ -209,6 +209,10 @@ pub fn run() {
             commands::translate::translate_popup_show,
             commands::translate::translate_popup_hide,
             commands::translate::translate_popup_position,
+            commands::translate::translate_list_custom_providers,
+            commands::translate::translate_save_custom_provider,
+            commands::translate::translate_delete_custom_provider,
+            commands::translate::translate_move_custom_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -281,6 +281,8 @@ pub struct TranslateResultDto {
     pub source_lang: String,
     pub target_lang: String,
     pub provider: String,
+    /// 实际使用的服务名（自填服务商的展示名 / 内置「百度翻译」）。
+    pub service_name: String,
     pub is_builtin: bool,
     pub quota_exhausted: bool,
 }
@@ -302,4 +304,31 @@ pub struct TranslateErrorPayload {
     pub result_id: String,
     pub kind: String,
     pub retryable: bool,
+}
+
+/// 用户自填的翻译服务商（出参；Key 与 APPID 均不明文回传）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomTranslateProviderDto {
+    pub id: i64,
+    pub name: String,
+    pub provider: String,
+    pub has_app_id: bool,
+    pub has_key: bool,
+    /// Key 末 4 位指纹（无 Key 时为 None）。
+    pub key_fingerprint: Option<String>,
+    pub enabled: bool,
+}
+
+/// 保存自填服务商入参（id 缺省 = 新建；api_key 缺省 = 不改动、空串 = 清空）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveCustomTranslateProviderPayload {
+    pub id: Option<i64>,
+    pub name: String,
+    pub provider: String,
+    /// 缺省 = 不改动存量（编辑时前端拿不到明文 APPID）。
+    pub app_id: Option<String>,
+    pub api_key: Option<String>,
+    pub enabled: Option<bool>,
 }

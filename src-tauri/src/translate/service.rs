@@ -9,7 +9,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use rusqlite::Connection;
 
 use crate::db::models::{SaveTranslateSettingsPayload, TranslateResultDto, TranslateSettingsDto};
-use crate::db::repositories::{quota_usage, translate_settings as repo};
+use crate::db::repositories::{
+    custom_translate_providers as custom_repo, quota_usage, translate_settings as repo,
+};
 use crate::error::AppError;
 use crate::llm::quota::{CallChars, record_call};
 use crate::state::AppState;
@@ -36,6 +38,8 @@ struct Plan {
     source: Lang,
     target: Lang,
     provider_id: String,
+    /// 实际使用的服务名（自填展示名 / 内置「百度翻译」），用于浮窗标识。
+    service_name: String,
     is_builtin: bool,
     app_id: String,
     secret: String,
@@ -102,35 +106,35 @@ fn new_result_id() -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// 同步阶段：读配置、校验、选凭据、判语种与额度，组装执行计划。
+/// 同步阶段：读配置、自填服务商优先、判语种与额度，组装执行计划。
 fn prepare(conn: &Connection, text: &str, override_lang: Option<&str>) -> Result<Plan, AppError> {
     let text = validate_text(text)?;
     let row = repo::get(conn)?;
     if !row.enabled {
         return Err(AppError::Config("划词翻译已关闭".into()));
     }
-    // 先取借用型判定，再移动 String 字段（避免部分移动后借用 row）。
-    let has_builtin = row.has_builtin_credential();
-    let provider_id = row.provider;
-    // baidu 通道优先用编译期注入的内置凭据；若未注入（用户只在设置里填了自己的
-    // APPID / 密钥，或直接把库里 provider 改成 baidu），回退到自定义凭据列。
-    // 回退时用用户自己的 Key，按「自定义 API 不计入内置额度」口径置 is_builtin=false。
-    let (app_id, secret, is_builtin) = if provider_id == "baidu" && has_builtin {
-        (row.builtin_app_id, row.builtin_secret, true)
+
+    // 自填服务商优先：按 sort_order 取第一个启用且凭据齐全的（BYOK 不计入内置额度）。
+    let (provider_id, app_id, secret, is_builtin, service_name) = if let Some(custom) =
+        custom_repo::list_usable(conn)?.into_iter().next()
+    {
+        (custom.provider, custom.app_id, custom.api_key, false, custom.name)
     } else {
-        (row.custom_app_id, row.custom_api_key, false)
+        // 无可用自填服务商 → 内置百度（M12 种子），或兼容 translate_settings 旧的自定义列。
+        let has_builtin = row.has_builtin_credential();
+        let provider_id = row.provider;
+        let (app_id, secret, is_builtin, service_name) = if provider_id == "baidu" && has_builtin {
+            (row.builtin_app_id, row.builtin_secret, true, "百度翻译".to_string())
+        } else {
+            (row.custom_app_id, row.custom_api_key, false, provider_id.clone())
+        };
+        (provider_id, app_id, secret, is_builtin, service_name)
     };
+
     let credential_missing = secret.is_empty()
         || ((provider_id == "baidu" || provider_id == "youdao") && app_id.is_empty());
     if credential_missing {
-        let message = if provider_id == "baidu" && !has_builtin {
-            "内置凭据未注入，且未填写百度 APPID/密钥"
-        } else if is_builtin {
-            "内置翻译未配置"
-        } else {
-            "自定义翻译服务未配置密钥"
-        };
-        return Err(AppError::Config(message.into()));
+        return Err(AppError::Config("没有可用的翻译服务凭据，请在设置中添加服务商".into()));
     }
     if is_builtin && quota_exhausted(conn)? {
         return Err(AppError::Config("内置翻译额度已用尽".into()));
@@ -139,7 +143,7 @@ fn prepare(conn: &Connection, text: &str, override_lang: Option<&str>) -> Result
     let source = detect_source(&text)?;
     let raw_target = override_lang.unwrap_or(row.target_lang.as_str());
     let target = resolve_target(source, raw_target)?;
-    Ok(Plan { text, source, target, provider_id, is_builtin, app_id, secret })
+    Ok(Plan { text, source, target, provider_id, service_name, is_builtin, app_id, secret })
 }
 
 /// 异步阶段：调用 preset（不持有任何 DB 锁）。
@@ -195,6 +199,7 @@ fn finalize(
         source_lang: plan.source.as_str().to_string(),
         target_lang: plan.target.as_str().to_string(),
         provider: plan.provider_id.clone(),
+        service_name: plan.service_name.clone(),
         is_builtin: plan.is_builtin,
         quota_exhausted: if plan.is_builtin { quota_exhausted(conn)? } else { false },
     })
@@ -307,7 +312,13 @@ mod tests {
     #[test]
     fn prepare_rejects_disabled_and_missing_credentials() {
         let (_dir, conn) = fresh_db();
-        assert!(prepare(&conn, "Hello", None).is_err(), "未注入内置凭据时应拒绝");
+        // M12 已有内置凭据种子，这里清空模拟「所有凭据都不可用」。
+        conn.execute(
+            "UPDATE translate_settings SET builtin_app_id = '', builtin_secret = '' WHERE id = 1",
+            [],
+        )
+        .expect("清空内置凭据");
+        assert!(prepare(&conn, "Hello", None).is_err(), "凭据全空时应拒绝");
         repo::save(&conn, false, "auto", "baidu", None, None).expect("关闭开关");
         assert!(prepare(&conn, "Hello", None).is_err(), "关闭时不应发起");
     }
@@ -326,11 +337,40 @@ mod tests {
     fn prepare_falls_back_to_custom_baidu_credentials() {
         let (_dir, conn) = fresh_db();
         // 场景：内置凭据未注入，用户只在设置里填了自己的百度 APPID / 密钥。
+        conn.execute(
+            "UPDATE translate_settings SET builtin_app_id = '', builtin_secret = '' WHERE id = 1",
+            [],
+        )
+        .expect("清空内置凭据");
         repo::save(&conn, true, "auto", "baidu", Some("my-key"), Some("my-appid"))
             .expect("保存自填凭据");
         let plan = prepare(&conn, "Hello", None).expect("自填百度凭据应可用");
         assert!(!plan.is_builtin, "自填凭据不计入内置额度");
         assert_eq!(plan.app_id, "my-appid");
         assert_eq!(plan.secret, "my-key");
+    }
+
+    #[test]
+    fn prepare_prefers_first_usable_custom_provider() {
+        let (_dir, conn) = fresh_db();
+        // M12 种子已提供内置凭据，但自填服务商应优先。
+        custom_repo::insert(&conn, "我的 DeepL", "deepl", "", "key-1").expect("新增 1");
+        custom_repo::insert(&conn, "我的 Google", "google", "", "key-2").expect("新增 2");
+        let plan = prepare(&conn, "Hello", None).expect("自填服务商可用");
+        assert_eq!(plan.provider_id, "deepl", "按 sort_order 取第一个");
+        assert_eq!(plan.service_name, "我的 DeepL");
+        assert_eq!(plan.secret, "key-1");
+        assert!(!plan.is_builtin, "自填服务商不计入内置额度");
+    }
+
+    #[test]
+    fn prepare_falls_back_to_builtin_when_all_custom_are_disabled() {
+        let (_dir, conn) = fresh_db();
+        let id = custom_repo::insert(&conn, "停用", "deepl", "", "key-1").expect("新增");
+        custom_repo::update(&conn, id, "停用", "deepl", "", 2).expect("停用");
+        let plan = prepare(&conn, "Hello", None).expect("回退内置");
+        assert!(plan.is_builtin, "自填全停用时回退内置百度");
+        assert_eq!(plan.provider_id, "baidu");
+        assert_eq!(plan.service_name, "百度翻译");
     }
 }
