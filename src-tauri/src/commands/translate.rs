@@ -67,14 +67,19 @@ pub fn translate_copy_result(text: String) -> Result<(), AppError> {
 
 /// 显示译文浮窗（选区旁定位；Rust 侧完成 DPI / 多显示器夹取）。
 #[tauri::command]
-pub fn translate_popup_show(x: i32, y: i32, app: AppHandle) -> Result<(), AppError> {
-    crate::window::manager::show_translator(&app, x, y)
+pub fn translate_popup_show(x: i32, y: i32, compact: bool, app: AppHandle) -> Result<(), AppError> {
+    crate::window::manager::show_translator(&app, x, y, compact)
 }
 
 /// 选区 / 鼠标移动时重定位浮窗（不改变可见性）。
 #[tauri::command]
-pub fn translate_popup_position(x: i32, y: i32, app: AppHandle) -> Result<(), AppError> {
-    crate::window::manager::move_translator(&app, x, y)
+pub fn translate_popup_position(
+    x: i32,
+    y: i32,
+    compact: bool,
+    app: AppHandle,
+) -> Result<(), AppError> {
+    crate::window::manager::move_translator(&app, x, y, compact)
 }
 
 /// 隐藏浮窗（Esc / 点击外部 / 关闭按钮；窗口不销毁）。

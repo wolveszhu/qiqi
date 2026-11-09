@@ -24,8 +24,11 @@ fn translator_window(app: &AppHandle) -> Result<tauri::WebviewWindow, AppError> 
         .ok_or_else(|| AppError::Window(format!("窗口不存在: {LABEL_TRANSLATOR}")))
 }
 
-/// 把浮窗左上角夹取到当前显示器可视范围（逻辑像素，规避多屏 / DPI 越界）。
-fn clamped_position(window: &tauri::WebviewWindow, x: i32, y: i32) -> (i32, i32) {
+/// 把浮窗左上角夹取到当前显示器内（逻辑像素，规避多屏 / DPI 越界）。
+///
+/// `content_h` 是当前展示内容的高度（工具条约 60、译文卡片约 240）。按内容高度而非
+/// 整个窗口高度夹取，选区靠近屏幕底部时工具条才不会被推离选中词。
+fn clamped_position(window: &tauri::WebviewWindow, x: i32, y: i32, content_h: i32) -> (i32, i32) {
     let scale = window.scale_factor().unwrap_or(1.0);
     let size = window
         .outer_size()
@@ -37,28 +40,51 @@ fn clamped_position(window: &tauri::WebviewWindow, x: i32, y: i32) -> (i32, i32)
     let mp = monitor.position().to_logical::<i32>(scale);
     let ms = monitor.size().to_logical::<i32>(scale);
     let max_x = (mp.x + ms.width - size.width).max(mp.x);
-    let max_y = (mp.y + ms.height - size.height).max(mp.y);
+    let max_y = (mp.y + ms.height - content_h.min(ms.height)).max(mp.y);
     (x.clamp(mp.x, max_x), y.clamp(mp.y, max_y))
 }
 
-/// 在选区旁显示译文浮窗（偏移 12px 避免遮住选中文字）。
-pub fn show_translator(app: &AppHandle, x: i32, y: i32) -> Result<(), AppError> {
+/// 展示内容高度（逻辑像素）：`compact=true` 为胶囊工具条，`false` 为译文卡片。
+fn content_height(compact: bool) -> i32 {
+    if compact { 60 } else { 240 }
+}
+
+/// 登记窗口物理矩形，供全局鼠标钩子判定「点击窗口之外」（与钩子 pt 同坐标系）。
+fn register_translator_bounds(window: &tauri::WebviewWindow) {
+    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) {
+        crate::probe::selection::set_translator_bounds(
+            pos.x,
+            pos.y,
+            size.width as i32,
+            size.height as i32,
+        );
+    }
+}
+
+/// 在选中词附近显示浮窗（坐标由前端按选区包围盒算好；Rust 只做显示器夹取）。
+pub fn show_translator(app: &AppHandle, x: i32, y: i32, compact: bool) -> Result<(), AppError> {
     let window = translator_window(app)?;
-    let (x, y) = clamped_position(&window, x + 12, y + 12);
+    let (x, y) = clamped_position(&window, x, y, content_height(compact));
     window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)?;
-    window.show().map_err(AppError::from)
+    window.show().map_err(AppError::from)?;
+    register_translator_bounds(&window);
+    Ok(())
 }
 
 /// 选区 / 鼠标移动时重定位浮窗（不改变可见性）。
-pub fn move_translator(app: &AppHandle, x: i32, y: i32) -> Result<(), AppError> {
+pub fn move_translator(app: &AppHandle, x: i32, y: i32, compact: bool) -> Result<(), AppError> {
     let window = translator_window(app)?;
-    let (x, y) = clamped_position(&window, x + 12, y + 12);
-    window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)
+    let (x, y) = clamped_position(&window, x, y, content_height(compact));
+    window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)?;
+    register_translator_bounds(&window);
+    Ok(())
 }
 
 /// 隐藏浮窗（关闭按钮 / Esc / 点击外部；窗口不销毁）。
 pub fn hide_translator(app: &AppHandle) -> Result<(), AppError> {
-    translator_window(app)?.hide().map_err(AppError::from)
+    translator_window(app)?.hide().map_err(AppError::from)?;
+    crate::probe::selection::clear_translator_bounds();
+    Ok(())
 }
 
 // TODO(C2): 托盘"显示/设置"菜单落地时补 `show_window`。

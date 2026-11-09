@@ -20,7 +20,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetClassNameW, GetForegroundWindow, GetMessageW, HHOOK, MSG,
     MSLLHOOKSTRUCT, SetForegroundWindow, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-    WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN,
 };
 
 use crate::config::{
@@ -46,6 +46,59 @@ static HOOK_STARTED: AtomicBool = AtomicBool::new(false);
 /// 拖选开始时记录的前台窗口：点击工具条后需恢复它，否则 `Ctrl+C` 会发给自家浮窗。
 static TARGET_HWND: AtomicIsize = AtomicIsize::new(0);
 
+// ---- translator 窗口物理矩形（供全局钩子判定「点击窗口之外」） ----
+
+static WIN_X: AtomicI64 = AtomicI64::new(0);
+static WIN_Y: AtomicI64 = AtomicI64::new(0);
+static WIN_W: AtomicI64 = AtomicI64::new(0);
+static WIN_H: AtomicI64 = AtomicI64::new(0);
+static WIN_VISIBLE: AtomicBool = AtomicBool::new(false);
+static DISMISS: AtomicBool = AtomicBool::new(false);
+
+/// 由 `window/manager` 在显示/移动浮窗时登记物理矩形（与钩子 `MSLLHOOKSTRUCT.pt` 同坐标系）。
+pub fn set_translator_bounds(x: i32, y: i32, width: i32, height: i32) {
+    WIN_X.store(x as i64, Ordering::Relaxed);
+    WIN_Y.store(y as i64, Ordering::Relaxed);
+    WIN_W.store(width as i64, Ordering::Relaxed);
+    WIN_H.store(height as i64, Ordering::Relaxed);
+    WIN_VISIBLE.store(true, Ordering::Relaxed);
+}
+
+/// 隐藏浮窗时清除矩形，避免窗口隐藏后误判点击。
+pub fn clear_translator_bounds() {
+    WIN_VISIBLE.store(false, Ordering::Relaxed);
+    WIN_W.store(0, Ordering::Relaxed);
+    WIN_H.store(0, Ordering::Relaxed);
+}
+
+/// 纯函数：物理像素点是否落在给定矩形内（便于单测）。
+pub fn inside_rect(px: i32, py: i32, x: i32, y: i32, width: i32, height: i32) -> bool {
+    px >= x && py >= y && px < x.saturating_add(width) && py < y.saturating_add(height)
+}
+
+/// 当前点击是否落在已显示的 translator 窗口内（钩子回调专用，只读原子量）。
+fn is_inside_translator(px: i32, py: i32) -> bool {
+    WIN_VISIBLE.load(Ordering::Relaxed)
+        && inside_rect(
+            px,
+            py,
+            WIN_X.load(Ordering::Relaxed) as i32,
+            WIN_Y.load(Ordering::Relaxed) as i32,
+            WIN_W.load(Ordering::Relaxed) as i32,
+            WIN_H.load(Ordering::Relaxed) as i32,
+        )
+}
+
+/// 纯函数：由按下/松开两点计算选区包围盒（供工具条贴合选中词定位）。
+pub fn selection_rect(down_x: i32, down_y: i32, up_x: i32, up_y: i32) -> SelectionRectDto {
+    SelectionRectDto {
+        x: down_x.min(up_x),
+        y: down_y.min(up_y),
+        width: (down_x - up_x).abs(),
+        height: (down_y - up_y).abs(),
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or_default()
 }
@@ -62,11 +115,24 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let message = wparam.0 as u32;
         if message == WM_LBUTTONDOWN {
-            TARGET_HWND.store(unsafe { GetForegroundWindow() }.0 as isize, Ordering::Relaxed);
-            DOWN_X.store(info.pt.x as i64, Ordering::Relaxed);
-            DOWN_Y.store(info.pt.y as i64, Ordering::Relaxed);
-            DOWN_MS.store(now_ms(), Ordering::Relaxed);
-            DRAGGING.store(true, Ordering::Relaxed);
+            if is_inside_translator(info.pt.x, info.pt.y) {
+                // 点击自家工具条 / 浮窗：不算划词，也不触发收起
+                DRAGGING.store(false, Ordering::Relaxed);
+            } else {
+                // 点击窗口之外：收起工具条 / 浮窗，同时仍允许本次按下成为新一次划词
+                if WIN_VISIBLE.load(Ordering::Relaxed) {
+                    DISMISS.store(true, Ordering::Relaxed);
+                }
+                TARGET_HWND.store(unsafe { GetForegroundWindow() }.0 as isize, Ordering::Relaxed);
+                DOWN_X.store(info.pt.x as i64, Ordering::Relaxed);
+                DOWN_Y.store(info.pt.y as i64, Ordering::Relaxed);
+                DOWN_MS.store(now_ms(), Ordering::Relaxed);
+                DRAGGING.store(true, Ordering::Relaxed);
+            }
+        } else if message == WM_RBUTTONDOWN && WIN_VISIBLE.load(Ordering::Relaxed) {
+            if !is_inside_translator(info.pt.x, info.pt.y) {
+                DISMISS.store(true, Ordering::Relaxed);
+            }
         } else if message == WM_LBUTTONUP && DRAGGING.swap(false, Ordering::Relaxed) {
             let dx = info.pt.x as i64 - DOWN_X.load(Ordering::Relaxed);
             let dy = info.pt.y as i64 - DOWN_Y.load(Ordering::Relaxed);
@@ -110,8 +176,14 @@ pub fn start_selection_hook() {
     });
 }
 
-/// 由 `probe/scheduler` 的唯一 100ms 轮询调用：有完成的选区才 emit，避免事件洪泛。
+/// 由 `probe/scheduler` 的唯一 100ms 轮询调用：先处理「点击窗口之外」收起，再 emit 新选区。
 pub fn poll_selection(app: &AppHandle) {
+    // 顺序不能反：先关掉旧工具条，再显示本次拖选产生的新工具条。
+    if DISMISS.swap(false, Ordering::Relaxed) {
+        clear_translator_bounds();
+        let _ = crate::window::manager::hide_translator(app);
+        let _ = app.emit("translate:selection:hide", ());
+    }
     if !PENDING.swap(false, Ordering::Relaxed) {
         return;
     }
@@ -130,9 +202,16 @@ pub fn poll_selection(app: &AppHandle) {
     LAST_X.store(x as i64, Ordering::Relaxed);
     LAST_Y.store(y as i64, Ordering::Relaxed);
 
+    // 用按下/松开两点的包围盒代替 0×0 占位，工具条据此贴合选中词定位。
+    let rect = selection_rect(
+        DOWN_X.load(Ordering::Relaxed) as i32,
+        DOWN_Y.load(Ordering::Relaxed) as i32,
+        x,
+        y,
+    );
     let payload = TranslateSelectionPayload {
         selection_key: format!("{x}-{y}-{now}"),
-        rect: SelectionRectDto { x, y, width: 0, height: 0 },
+        rect,
         cursor_x: x,
         cursor_y: y,
     };
@@ -234,11 +313,16 @@ pub fn capture_selection(selection_key: &str) -> Result<CapturedSelectionDto, Ap
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .ok_or_else(|| AppError::Config("未能读取选中文本".into()))?;
-    let (x, y) = (UP_X.load(Ordering::Relaxed) as i32, UP_Y.load(Ordering::Relaxed) as i32);
+    let rect = selection_rect(
+        DOWN_X.load(Ordering::Relaxed) as i32,
+        DOWN_Y.load(Ordering::Relaxed) as i32,
+        UP_X.load(Ordering::Relaxed) as i32,
+        UP_Y.load(Ordering::Relaxed) as i32,
+    );
     Ok(CapturedSelectionDto {
         selection_key: selection_key.to_string(),
         text,
-        rect: SelectionRectDto { x, y, width: 0, height: 0 },
+        rect,
         via: "clipboard".into(),
     })
 }
@@ -263,5 +347,21 @@ mod tests {
         assert!(!is_drag(2, 0, 100), "位移不足");
         assert!(!is_drag(20, 0, 10), "时长不足");
         assert!(!is_drag(20, 0, SELECTION_MAX_DRAG_MS + 1), "超时长按不算划词");
+    }
+
+    #[test]
+    fn selection_rect_covers_both_drag_directions() {
+        let forward = selection_rect(100, 200, 160, 190);
+        assert_eq!((forward.x, forward.y, forward.width, forward.height), (100, 190, 60, 10));
+        let backward = selection_rect(160, 190, 100, 200);
+        assert_eq!((backward.x, backward.y, backward.width, backward.height), (100, 190, 60, 10));
+    }
+
+    #[test]
+    fn inside_rect_uses_exclusive_edges() {
+        assert!(inside_rect(10, 10, 0, 0, 100, 50));
+        assert!(!inside_rect(100, 10, 0, 0, 100, 50), "右边界排他");
+        assert!(!inside_rect(10, 50, 0, 0, 100, 50), "下边界排他");
+        assert!(!inside_rect(-1, 10, 0, 0, 100, 50));
     }
 }
