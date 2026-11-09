@@ -1,8 +1,10 @@
 //! 全局划词手势检测与「仅主动触发」取词。
 //!
 //! - 手势：`WH_MOUSE_LL` 回调只做 O(1) 阈值判定与置位，事件由 scheduler 的 100ms 轮询 emit；
-//! - 取词：**只在用户点击小图标后**执行；注入 `Ctrl+C` 前备份剪贴板、读完恢复、全程互斥；
-//! - 红线：手势阶段不读剪贴板、不注入按键；不把选中文本写入日志；控制台窗口跳过。
+//! - 取词：翻译**只在用户点击「翻译」后**发生；但双击选词会在手势阶段注入一次 `Ctrl+C` 探测，
+//!   仅用于判定「是否确有选中文本」，探测后恢复原剪贴板、无副作用；
+//! - 红线：手势阶段不读剪贴板、不注入按键（双击选词探测除外，且只判定是否弹工具条，不翻译）；
+//!   不把选中文本写入日志；控制台窗口跳过。
 //!
 //! 已知边界：本版以剪贴板法为唯一取词路径（UIA `TextPattern` 主路径待接入），
 //! 目标窗口以管理员权限运行时注入按键受 UIPI 拦截，返回可行动的错误提示。
@@ -216,12 +218,15 @@ pub fn poll_selection(app: &AppHandle) {
         let _ = crate::window::manager::hide_translator(app);
         let _ = app.emit("translate:selection:hide", ());
     }
-    // 双击选中词：坐标即点击点，选区矩形退化为 0×0，工具条贴在词右下角。
+    // 双击选中词：仅当确有选中文本才弹工具条。用取词探测（Ctrl+C 读剪贴板，空则 Err）；
+    // 探测会恢复原剪贴板，无副作用；控制台窗口返回 Err 直接跳过。rect 退化为点击点 0×0。
     if DOUBLE_CLICK.swap(false, Ordering::Relaxed) {
         PENDING.store(false, Ordering::Relaxed);
         let x = DBL_X.load(Ordering::Relaxed) as i32;
         let y = DBL_Y.load(Ordering::Relaxed) as i32;
-        emit_selection(app, x, y, SelectionRectDto { x, y, width: 0, height: 0 });
+        if capture_selection(&format!("dbl-{x}-{y}")).is_ok() {
+            emit_selection(app, x, y, SelectionRectDto { x, y, width: 0, height: 0 });
+        }
         return;
     }
     if !PENDING.swap(false, Ordering::Relaxed) {
