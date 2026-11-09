@@ -110,7 +110,7 @@ async function onTranslate(): Promise<void> {
   }
 }
 
-/** 点击「复制」：取词后写入系统剪贴板，动作完成即收起工具条。 */
+/** 点击「复制」：只把当前选中的原文写入系统剪贴板，不翻译、也不收起窗口等其他操作。 */
 async function onCopySelection(): Promise<void> {
   if (busy.value) return;
   busy.value = true;
@@ -118,7 +118,6 @@ async function onCopySelection(): Promise<void> {
     const captured = await captureSelection(selectionKey.value);
     await copyTranslateResult(captured.text);
     pushToast(t("translate.toolbar.selectionCopied"), "ok");
-    await onClose();
   } catch (e: unknown) {
     await reportError(e);
   } finally {
