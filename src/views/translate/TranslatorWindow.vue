@@ -4,7 +4,7 @@
  *
  * 纪律：所有 await IPC 都 try/catch 并按 AppError.kind 用 t() 给本地化反馈，
  * 绝不把 Rust 中文 message 直出给用户；凭据与原文不进日志。
- * 窗口定位：用 Rust 下发的选区包围盒，工具条在选区上方、译文卡片在选区下方；
+ * 窗口定位：用 Rust 下发的选区包围盒（物理像素），工具条与译文卡片都贴在选中词右下角；
  * 点击窗口之外由全局钩子判定并广播 `translate:selection:hide`。
  */
 
@@ -33,10 +33,16 @@ import { pushToast } from "../../composables/useToast";
 import SelectionToolbar from "./SelectionToolbar.vue";
 import TranslationPopup from "./TranslationPopup.vue";
 
-/** 工具条高度 + 间距：放在选区上方。 */
-const TOOLBAR_OFFSET_Y = 52;
-/** 译文卡片与选区的间距：放在选区下方。 */
-const RESULT_GAP = 10;
+/** 工具条 / 译文卡片相对选中词右下角的间距（物理像素，Rust 按物理坐标定位）。 */
+const ANCHOR_GAP = 6;
+
+/** 选中词右下角锚点；双击时包围盒为 0×0，即落在点击点右下角。 */
+function anchorOf(rect: SelectionRect): { x: number; y: number } {
+  return {
+    x: rect.x + rect.width + ANCHOR_GAP,
+    y: rect.y + rect.height + ANCHOR_GAP,
+  };
+}
 
 const { t, te } = useI18n();
 
@@ -94,8 +100,8 @@ async function onTranslate(): Promise<void> {
   try {
     const captured = await captureSelection(selectionKey.value);
     result.value = await executeTranslate(captured.text);
-    const rect = selectionRect.value;
-    await showTranslatePopup(rect.x, rect.y + rect.height + RESULT_GAP, false);
+    const anchor = anchorOf(selectionRect.value);
+    await showTranslatePopup(anchor.x, anchor.y, false);
     toolbarVisible.value = false;
   } catch (e: unknown) {
     await reportError(e);
@@ -167,10 +173,9 @@ onMounted(async (): Promise<void> => {
       selectionRect.value = { ...payload.rect };
       result.value = null;
       toolbarVisible.value = true;
-      // 优先悬浮在选中词正上方；顶部空间不足时改放选区下方。
-      const above = payload.rect.y - TOOLBAR_OFFSET_Y;
-      const y = above >= 0 ? above : payload.rect.y + payload.rect.height + RESULT_GAP;
-      void showTranslatePopup(payload.rect.x, y, true).catch(() => {});
+      // 紧贴选中词右下角（双击选中词时包围盒为 0×0，即点击点右下角）。
+      const anchor = anchorOf(payload.rect);
+      void showTranslatePopup(anchor.x, anchor.y, true).catch(() => {});
     }),
     // 点击窗口之外：Rust 已隐藏窗口并清掉矩形，这里只同步视图状态。
     await listen("translate:selection:hide", () => {
