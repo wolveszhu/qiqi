@@ -1,9 +1,11 @@
 <script setup lang="ts">
 /**
- * 划词翻译浮窗根视图（第三窗口）：监听选区事件 → 显示小图标 → 点击后取词翻译。
+ * 划词翻译浮窗根视图（第三窗口）：选区旁胶囊工具条 → 点击动作后取词 → 译文卡片。
  *
  * 纪律：所有 await IPC 都 try/catch 并按 AppError.kind 用 t() 给本地化反馈，
  * 绝不把 Rust 中文 message 直出给用户；凭据与原文不进日志。
+ * 窗口定位：用 Rust 下发的选区包围盒，工具条在选区上方、译文卡片在选区下方；
+ * 点击窗口之外由全局钩子判定并广播 `translate:selection:hide`。
  */
 
 import { onMounted, onUnmounted, ref } from "vue";
@@ -21,21 +23,29 @@ import {
   retryTranslate,
   showTranslatePopup,
 } from "../../api/translate";
-import type { TranslateResult, TranslateSelectionPayload } from "../../api/types";
+import type {
+  SelectionRect,
+  TranslateResult,
+  TranslateSelectionPayload,
+} from "../../api/types";
 import AppToast from "../../components/ui/AppToast.vue";
 import { pushToast } from "../../composables/useToast";
 import SelectionToolbar from "./SelectionToolbar.vue";
 import TranslationPopup from "./TranslationPopup.vue";
 
+/** 工具条高度 + 间距：放在选区上方。 */
+const TOOLBAR_OFFSET_Y = 52;
+/** 译文卡片与选区的间距：放在选区下方。 */
+const RESULT_GAP = 10;
+
 const { t, te } = useI18n();
 
 const toolbarVisible = ref(false);
 const selectionKey = ref("");
-const anchor = ref({ x: 0, y: 0 });
+const selectionRect = ref<SelectionRect>({ x: 0, y: 0, width: 0, height: 0 });
 const result = ref<TranslateResult | null>(null);
 const busy = ref(false);
 const unlisteners: UnlistenFn[] = [];
-let hideTimer: number | null = null;
 
 /** 按错误 kind 本地化提示，避免展示后端中文 message。 */
 function localizedError(e: unknown): string {
@@ -70,15 +80,39 @@ async function reportError(e: unknown): Promise<void> {
   pushToast(localizedError(e), "error");
 }
 
-/** 点击小图标：这才发生取词与翻译（手势阶段只读鼠标状态）。 */
-async function onCapture(): Promise<void> {
+/** 只重置视图状态（Rust 侧已隐藏窗口时不再重复 hide）。 */
+function resetState(): void {
+  toolbarVisible.value = false;
+  result.value = null;
+  selectionKey.value = "";
+}
+
+/** 点击「翻译」：这才发生取词与翻译（手势阶段只读鼠标状态）。 */
+async function onTranslate(): Promise<void> {
   if (busy.value) return;
   busy.value = true;
   try {
     const captured = await captureSelection(selectionKey.value);
     result.value = await executeTranslate(captured.text);
-    await showTranslatePopup(anchor.value.x, anchor.value.y);
+    const rect = selectionRect.value;
+    await showTranslatePopup(rect.x, rect.y + rect.height + RESULT_GAP, false);
     toolbarVisible.value = false;
+  } catch (e: unknown) {
+    await reportError(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
+/** 点击「复制」：取词后写入系统剪贴板，动作完成即收起工具条。 */
+async function onCopySelection(): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    const captured = await captureSelection(selectionKey.value);
+    await copyTranslateResult(captured.text);
+    pushToast(t("translate.toolbar.selectionCopied"), "ok");
+    await onClose();
   } catch (e: unknown) {
     await reportError(e);
   } finally {
@@ -112,9 +146,7 @@ async function onRetry(): Promise<void> {
 
 /** 收起：隐藏窗口但保留进程内窗口实例。 */
 async function onClose(): Promise<void> {
-  result.value = null;
-  toolbarVisible.value = false;
-  selectionKey.value = "";
+  resetState();
   try {
     await hideTranslatePopup();
   } catch (e: unknown) {
@@ -132,15 +164,17 @@ onMounted(async (): Promise<void> => {
       const payload = event.payload;
       if (selectionKey.value === payload.selectionKey) return;
       selectionKey.value = payload.selectionKey;
-      anchor.value = { x: payload.cursorX, y: payload.cursorY };
+      selectionRect.value = { ...payload.rect };
       result.value = null;
       toolbarVisible.value = true;
-      // 透明窗口先显示在选区旁，小图标位于窗口左上角；取词时 Rust 会恢复原前台窗口。
-      void showTranslatePopup(payload.cursorX, payload.cursorY).catch(() => {});
-      if (hideTimer !== null) window.clearTimeout(hideTimer);
-      hideTimer = window.setTimeout(() => {
-        toolbarVisible.value = false;
-      }, 4000);
+      // 优先悬浮在选中词正上方；顶部空间不足时改放选区下方。
+      const above = payload.rect.y - TOOLBAR_OFFSET_Y;
+      const y = above >= 0 ? above : payload.rect.y + payload.rect.height + RESULT_GAP;
+      void showTranslatePopup(payload.rect.x, y, true).catch(() => {});
+    }),
+    // 点击窗口之外：Rust 已隐藏窗口并清掉矩形，这里只同步视图状态。
+    await listen("translate:selection:hide", () => {
+      resetState();
     }),
   );
   window.addEventListener("keydown", onKeydown);
@@ -149,7 +183,6 @@ onMounted(async (): Promise<void> => {
 onUnmounted((): void => {
   unlisteners.forEach((fn) => fn());
   window.removeEventListener("keydown", onKeydown);
-  if (hideTimer !== null) window.clearTimeout(hideTimer);
 });
 </script>
 
@@ -161,7 +194,9 @@ onUnmounted((): void => {
     <SelectionToolbar
       v-if="toolbarVisible && !result"
       :loading="busy"
-      @capture="onCapture"
+      @translate="onTranslate"
+      @copy="onCopySelection"
+      @close="onClose"
     />
     <TranslationPopup
       v-if="result"

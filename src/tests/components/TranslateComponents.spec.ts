@@ -28,23 +28,37 @@ afterEach((): void => {
 });
 
 describe("SelectionToolbar", () => {
-  it("点击才触发 capture", async () => {
+  it("翻译 / 复制 / 关闭各自触发一次 emit", async () => {
     const wrapper = mount(SelectionToolbar);
-    await wrapper.get("button").trigger("click");
-    expect(wrapper.emitted("capture")).toHaveLength(1);
+    const actions = wrapper.findAll(".toolbar__action");
+    await actions[0].trigger("click");
+    await actions[1].trigger("click");
+    await wrapper.get(".toolbar__close").trigger("click");
+    expect(wrapper.emitted("translate")).toHaveLength(1);
+    expect(wrapper.emitted("copy")).toHaveLength(1);
+    expect(wrapper.emitted("close")).toHaveLength(1);
   });
 
-  it("loading 时按钮禁用，避免重复取词", () => {
+  it("loading 时两个动作按钮均禁用", () => {
     const wrapper = mount(SelectionToolbar, { props: { loading: true } });
-    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
+    const actions = wrapper.findAll(".toolbar__action");
+    expect(actions).toHaveLength(2);
+    expect(actions[0].attributes("disabled")).toBeDefined();
+    expect(actions[1].attributes("disabled")).toBeDefined();
   });
 
-  it("aria-label 随语言切换", () => {
-    const zh = mount(SelectionToolbar).get("button").attributes("aria-label");
+  it("工具条与动作文案随语言切换", () => {
+    const zh = mount(SelectionToolbar);
+    expect(zh.get('[role="toolbar"]').attributes("aria-label")).toBe("翻译选中文本");
+    expect(zh.text()).toContain("翻译");
+    expect(zh.text()).toContain("复制");
     i18n.global.locale.value = "en-US";
-    const en = mount(SelectionToolbar).get("button").attributes("aria-label");
-    expect(zh).toBe("翻译选中文本");
-    expect(en).toBe("Translate selection");
+    const en = mount(SelectionToolbar);
+    expect(en.get('[role="toolbar"]').attributes("aria-label")).toBe(
+      "Translate selection",
+    );
+    expect(en.text()).toContain("Translate");
+    expect(en.text()).toContain("Copy");
   });
 });
 

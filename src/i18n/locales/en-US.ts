@@ -45,6 +45,10 @@ export default {
     toolbar: {
       label: "Translate selection",
       hint: "Click to capture and translate",
+      translate: "Translate",
+      copy: "Copy",
+      selectionCopied: "Selection copied",
+      close: "Close toolbar",
     },
     popup: {
       source: "Original",

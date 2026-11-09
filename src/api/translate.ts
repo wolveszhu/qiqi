@@ -53,9 +53,13 @@ export async function copyTranslateResult(text: string): Promise<void> {
   await callCommand("translate_copy_result", { text });
 }
 
-/** 显示译文浮窗（Rust 侧定位到选区旁）。 */
-export async function showTranslatePopup(x: number, y: number): Promise<void> {
-  await callCommand("translate_popup_show", { x, y });
+/** 显示译文浮窗（Rust 侧定位到选区旁；compact=true 表示当前展示胶囊工具条）。 */
+export async function showTranslatePopup(
+  x: number,
+  y: number,
+  compact: boolean,
+): Promise<void> {
+  await callCommand("translate_popup_show", { x, y, compact });
 }
 
 /** 隐藏浮窗（窗口不销毁）。 */
@@ -64,8 +68,12 @@ export async function hideTranslatePopup(): Promise<void> {
 }
 
 /** 重定位浮窗。 */
-export async function moveTranslatePopup(x: number, y: number): Promise<void> {
-  await callCommand("translate_popup_position", { x, y });
+export async function moveTranslatePopup(
+  x: number,
+  y: number,
+  compact: boolean,
+): Promise<void> {
+  await callCommand("translate_popup_position", { x, y, compact });
 }
 
 /** 用户自填的多个翻译服务商（Key 脱敏回传）。 */

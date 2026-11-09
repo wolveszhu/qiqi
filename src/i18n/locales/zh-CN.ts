@@ -35,6 +35,10 @@ export default {
     toolbar: {
       label: "翻译选中文本",
       hint: "点击后取词并翻译",
+      translate: "翻译",
+      copy: "复制",
+      selectionCopied: "选中文本已复制",
+      close: "关闭工具条",
     },
     popup: {
       source: "原文",
