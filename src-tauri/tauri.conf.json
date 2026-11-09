@@ -40,6 +40,20 @@
         "skipTaskbar": false,
         "center": true,
         "visible": true
+      },
+      {
+        "label": "translator",
+        "title": "Qiqi · Translator",
+        "width": 380,
+        "height": 260,
+        "transparent": true,
+        "decorations": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "center": false,
+        "visible": false
       }
     ],
     "security": {

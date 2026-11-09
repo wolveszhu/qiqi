@@ -206,6 +206,9 @@ pub fn run() {
             commands::translate::translate_retry,
             commands::translate::translate_capture_selection,
             commands::translate::translate_copy_result,
+            commands::translate::translate_popup_show,
+            commands::translate::translate_popup_hide,
+            commands::translate::translate_popup_position,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

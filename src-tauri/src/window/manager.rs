@@ -4,6 +4,8 @@ use crate::error::AppError;
 
 pub const LABEL_MAIN: &str = "main";
 pub const LABEL_SETTINGS: &str = "settings";
+/// 划词翻译独立浮窗（第三窗口；不参与点击穿透托管）。
+pub const LABEL_TRANSLATOR: &str = "translator";
 
 /// 窗口 A 常态尺寸（逻辑 px）：贴合形象——含尾巴摆动与伸懒腰形变余量，
 /// 与 `tauri.conf.json` 的 main 窗口 width/height **必须一致**。
@@ -13,6 +15,50 @@ pub const PET_WINDOW_EXPANDED: (i32, i32) = (420, 300);
 
 pub fn hide_window(window: &tauri::Window) -> Result<(), AppError> {
     window.hide().map_err(AppError::from)
+}
+
+// ---- 划词翻译浮窗（第三窗口，全部由 Rust 定位/显隐） ----
+
+fn translator_window(app: &AppHandle) -> Result<tauri::WebviewWindow, AppError> {
+    app.get_webview_window(LABEL_TRANSLATOR)
+        .ok_or_else(|| AppError::Window(format!("窗口不存在: {LABEL_TRANSLATOR}")))
+}
+
+/// 把浮窗左上角夹取到当前显示器可视范围（逻辑像素，规避多屏 / DPI 越界）。
+fn clamped_position(window: &tauri::WebviewWindow, x: i32, y: i32) -> (i32, i32) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let size = window
+        .outer_size()
+        .map(|s| s.to_logical::<i32>(scale))
+        .unwrap_or(LogicalSize::new(380, 260));
+    let Some(monitor) = window.current_monitor().ok().flatten() else {
+        return (x, y);
+    };
+    let mp = monitor.position().to_logical::<i32>(scale);
+    let ms = monitor.size().to_logical::<i32>(scale);
+    let max_x = (mp.x + ms.width - size.width).max(mp.x);
+    let max_y = (mp.y + ms.height - size.height).max(mp.y);
+    (x.clamp(mp.x, max_x), y.clamp(mp.y, max_y))
+}
+
+/// 在选区旁显示译文浮窗（偏移 12px 避免遮住选中文字）。
+pub fn show_translator(app: &AppHandle, x: i32, y: i32) -> Result<(), AppError> {
+    let window = translator_window(app)?;
+    let (x, y) = clamped_position(&window, x + 12, y + 12);
+    window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)?;
+    window.show().map_err(AppError::from)
+}
+
+/// 选区 / 鼠标移动时重定位浮窗（不改变可见性）。
+pub fn move_translator(app: &AppHandle, x: i32, y: i32) -> Result<(), AppError> {
+    let window = translator_window(app)?;
+    let (x, y) = clamped_position(&window, x + 12, y + 12);
+    window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)
+}
+
+/// 隐藏浮窗（关闭按钮 / Esc / 点击外部；窗口不销毁）。
+pub fn hide_translator(app: &AppHandle) -> Result<(), AppError> {
+    translator_window(app)?.hide().map_err(AppError::from)
 }
 
 // TODO(C2): 托盘"显示/设置"菜单落地时补 `show_window`。

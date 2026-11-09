@@ -7,7 +7,7 @@
 //! 已知边界：本版以剪贴板法为唯一取词路径（UIA `TextPattern` 主路径待接入），
 //! 目标窗口以管理员权限运行时注入按键受 UIPI 拦截，返回可行动的错误提示。
 
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -19,8 +19,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetClassNameW, GetForegroundWindow, GetMessageW, HHOOK, MSG,
-    MSLLHOOKSTRUCT, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_MOUSE_LL,
-    WM_LBUTTONDOWN, WM_LBUTTONUP,
+    MSLLHOOKSTRUCT, SetForegroundWindow, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+    WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP,
 };
 
 use crate::config::{
@@ -43,6 +43,8 @@ static LAST_EMIT_MS: AtomicI64 = AtomicI64::new(0);
 static LAST_X: AtomicI64 = AtomicI64::new(0);
 static LAST_Y: AtomicI64 = AtomicI64::new(0);
 static HOOK_STARTED: AtomicBool = AtomicBool::new(false);
+/// 拖选开始时记录的前台窗口：点击工具条后需恢复它，否则 `Ctrl+C` 会发给自家浮窗。
+static TARGET_HWND: AtomicIsize = AtomicIsize::new(0);
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or_default()
@@ -60,6 +62,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let message = wparam.0 as u32;
         if message == WM_LBUTTONDOWN {
+            TARGET_HWND.store(unsafe { GetForegroundWindow() }.0 as isize, Ordering::Relaxed);
             DOWN_X.store(info.pt.x as i64, Ordering::Relaxed);
             DOWN_Y.store(info.pt.y as i64, Ordering::Relaxed);
             DOWN_MS.store(now_ms(), Ordering::Relaxed);
@@ -162,6 +165,24 @@ fn capture_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// 点击工具条后恢复原前台窗口，确保 `Ctrl+C` 发给第三方应用而非自家浮窗。
+///
+/// `SetForegroundWindow` 受前台锁定 / UIPI 限制，失败时不阻断：
+/// 后续剪贴板读取若未拿到新内容会给用户可行动的提示。
+fn restore_foreground() {
+    let raw = TARGET_HWND.load(Ordering::Relaxed);
+    if raw == 0 {
+        return;
+    }
+    let target = HWND(raw as *mut std::ffi::c_void);
+    unsafe {
+        if GetForegroundWindow().0 != target.0 {
+            let _ = SetForegroundWindow(target);
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+}
+
 /// 模拟一次 `Ctrl+C`（仅在用户点击小图标后调用）。
 fn simulate_ctrl_c() {
     fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
@@ -190,6 +211,7 @@ pub fn capture_selection(selection_key: &str) -> Result<CapturedSelectionDto, Ap
     if is_console_window() {
         return Err(AppError::Config("当前窗口不支持取词".into()));
     }
+    restore_foreground();
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| AppError::Probe(format!("剪贴板打开失败: {e}")))?;
     let previous = clipboard.get_text().ok();

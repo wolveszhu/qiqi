@@ -63,6 +63,24 @@ pub fn translate_copy_result(text: String) -> Result<(), AppError> {
     selection::write_clipboard_text(&text)
 }
 
+/// 显示译文浮窗（选区旁定位；Rust 侧完成 DPI / 多显示器夹取）。
+#[tauri::command]
+pub fn translate_popup_show(x: i32, y: i32, app: AppHandle) -> Result<(), AppError> {
+    crate::window::manager::show_translator(&app, x, y)
+}
+
+/// 选区 / 鼠标移动时重定位浮窗（不改变可见性）。
+#[tauri::command]
+pub fn translate_popup_position(x: i32, y: i32, app: AppHandle) -> Result<(), AppError> {
+    crate::window::manager::move_translator(&app, x, y)
+}
+
+/// 隐藏浮窗（Esc / 点击外部 / 关闭按钮；窗口不销毁）。
+#[tauri::command]
+pub fn translate_popup_hide(app: AppHandle) -> Result<(), AppError> {
+    crate::window::manager::hide_translator(&app)
+}
+
 /// 翻译选中文本；成功后 emit `translate:result`，失败 emit `translate:error` 并返回 Err。
 #[tauri::command]
 pub async fn translate_execute(

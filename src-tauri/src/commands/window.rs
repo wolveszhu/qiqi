@@ -111,7 +111,10 @@ fn resolve<R: tauri::Runtime>(
     app: &AppHandle<R>,
     target: &str,
 ) -> Result<tauri::WebviewWindow<R>, AppError> {
-    if target != window::manager::LABEL_MAIN && target != window::manager::LABEL_SETTINGS {
+    if target != window::manager::LABEL_MAIN
+        && target != window::manager::LABEL_SETTINGS
+        && target != window::manager::LABEL_TRANSLATOR
+    {
         return Err(AppError::Config(format!("未知窗口 label: {target}")));
     }
     app.get_webview_window(target).ok_or_else(|| AppError::Window(format!("窗口不存在: {target}")))

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "双窗口共用能力集（B2 权限矩阵）：窗口操作 + 事件收发 + opener 外链。最小授权原则：每条权限可追溯到矩阵行（见 CODEBUDDY.md 配置表）；应用自定义命令免授权（勘误#1）。",
-  "windows": ["main", "settings"],
+  "description": "三窗口共用能力集（B2 权限矩阵）：窗口操作 + 事件收发 + opener 外链。translator 浮窗定位/显隐走自定义命令（免授权），故不新增权限条目；最小授权原则：每条权限可追溯到矩阵行（见接口契约 §4.1）；应用自定义命令免授权（勘误#1）。",
+  "windows": ["main", "settings", "translator"],
   "permissions": [
     "core:default",
     "opener:default",
