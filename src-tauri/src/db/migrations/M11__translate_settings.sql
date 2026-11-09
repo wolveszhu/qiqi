@@ -11,12 +11,12 @@
 -- 幂等：CREATE TABLE IF NOT EXISTS；默认值只表达结构，不产生任何行。
 
 CREATE TABLE IF NOT EXISTS translate_settings (
-    id              INTEGER PRIMARY KEY CHECK (id = 1),
-    enabled         INTEGER NOT NULL DEFAULT 1,
-    target_lang     TEXT    NOT NULL DEFAULT 'auto',
-    provider        TEXT    NOT NULL DEFAULT 'baidu',
-    custom_api_key  TEXT    NOT NULL DEFAULT '',
-    custom_app_id   TEXT    NOT NULL DEFAULT '',
-    builtin_app_id  TEXT    NOT NULL DEFAULT '',
-    builtin_secret  TEXT    NOT NULL DEFAULT ''
+    id              INTEGER PRIMARY KEY CHECK (id = 1), -- 单行配置：全表仅允许 id=1 一行
+    enabled         INTEGER NOT NULL DEFAULT 1,         -- 总开关：1=启用划词工具条，0=不弹出
+    target_lang     TEXT    NOT NULL DEFAULT 'auto',    -- 译入语言：auto 自动互译 / zh 译入中文 / en 译入英文
+    provider        TEXT    NOT NULL DEFAULT 'baidu',   -- 服务商：baidu 内置零配置 / deepl / youdao / google
+    custom_api_key  TEXT    NOT NULL DEFAULT '',        -- 用户自填密钥（BYOK）；读取接口只回末 4 位指纹
+    custom_app_id   TEXT    NOT NULL DEFAULT '',        -- 用户自填应用 ID（百度 / 有道需要，其余服务留空）
+    builtin_app_id  TEXT    NOT NULL DEFAULT '',        -- 内置百度 APPID：编译期注入后由 Rust 幂等播种
+    builtin_secret  TEXT    NOT NULL DEFAULT ''         -- 内置百度密钥：同上，明文不进仓库与迁移脚本
 );
