@@ -1,4 +1,4 @@
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition, Position};
 
 use crate::error::AppError;
 
@@ -24,23 +24,26 @@ fn translator_window(app: &AppHandle) -> Result<tauri::WebviewWindow, AppError> 
         .ok_or_else(|| AppError::Window(format!("窗口不存在: {LABEL_TRANSLATOR}")))
 }
 
-/// 把浮窗左上角夹取到当前显示器内（逻辑像素，规避多屏 / DPI 越界）。
+/// 把浮窗左上角夹取到当前显示器内（**物理像素**，与钩子 `MSLLHOOKSTRUCT.pt` 同坐标系）。
 ///
-/// `content_h` 是当前展示内容的高度（工具条约 60、译文卡片约 240）。按内容高度而非
-/// 整个窗口高度夹取，选区靠近屏幕底部时工具条才不会被推离选中词。
-fn clamped_position(window: &tauri::WebviewWindow, x: i32, y: i32, content_h: i32) -> (i32, i32) {
+/// 选区坐标来自全局鼠标钩子，是物理像素；若当逻辑像素传给 `set_position`，高 DPI 下
+/// 窗口会被放大偏移、离选中词很远。`content_h` 是内容高度（逻辑像素，内部乘 scale）。
+fn clamped_position(
+    window: &tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    content_h_logical: i32,
+) -> (i32, i32) {
     let scale = window.scale_factor().unwrap_or(1.0);
-    let size = window
-        .outer_size()
-        .map(|s| s.to_logical::<i32>(scale))
-        .unwrap_or(LogicalSize::new(380, 260));
+    let content_h = (content_h_logical as f64 * scale).round() as i32;
+    let size = window.outer_size().map(|s| (s.width as i32, s.height as i32)).unwrap_or((380, 260));
     let Some(monitor) = window.current_monitor().ok().flatten() else {
         return (x, y);
     };
-    let mp = monitor.position().to_logical::<i32>(scale);
-    let ms = monitor.size().to_logical::<i32>(scale);
-    let max_x = (mp.x + ms.width - size.width).max(mp.x);
-    let max_y = (mp.y + ms.height - content_h.min(ms.height)).max(mp.y);
+    let mp = monitor.position();
+    let ms = monitor.size();
+    let max_x = (mp.x + ms.width as i32 - size.0).max(mp.x);
+    let max_y = (mp.y + ms.height as i32 - content_h.min(ms.height as i32)).max(mp.y);
     (x.clamp(mp.x, max_x), y.clamp(mp.y, max_y))
 }
 
@@ -65,7 +68,7 @@ fn register_translator_bounds(window: &tauri::WebviewWindow) {
 pub fn show_translator(app: &AppHandle, x: i32, y: i32, compact: bool) -> Result<(), AppError> {
     let window = translator_window(app)?;
     let (x, y) = clamped_position(&window, x, y, content_height(compact));
-    window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)?;
+    window.set_position(Position::Physical(PhysicalPosition::new(x, y))).map_err(AppError::from)?;
     window.show().map_err(AppError::from)?;
     register_translator_bounds(&window);
     Ok(())
@@ -75,7 +78,7 @@ pub fn show_translator(app: &AppHandle, x: i32, y: i32, compact: bool) -> Result
 pub fn move_translator(app: &AppHandle, x: i32, y: i32, compact: bool) -> Result<(), AppError> {
     let window = translator_window(app)?;
     let (x, y) = clamped_position(&window, x, y, content_height(compact));
-    window.set_position(LogicalPosition::new(x, y)).map_err(AppError::from)?;
+    window.set_position(Position::Physical(PhysicalPosition::new(x, y))).map_err(AppError::from)?;
     register_translator_bounds(&window);
     Ok(())
 }

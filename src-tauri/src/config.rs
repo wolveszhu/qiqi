@@ -141,6 +141,9 @@ pub const SELECTION_MIN_DRAG_MS: i64 = 60;
 pub const SELECTION_MAX_DRAG_MS: i64 = 8_000;
 /// 同一位置选区事件的去重窗口（毫秒）。
 pub const SELECTION_DEDUPE_MS: i64 = 1_500;
+/// 双击选中词判定：两次按下的最大间隔（毫秒）与位移半径（物理像素）。
+pub const SELECTION_DOUBLE_CLICK_MS: i64 = 500;
+pub const SELECTION_DOUBLE_CLICK_RADIUS_PX: i64 = 6;
 /// 模拟复制后等待剪贴板更新的轮询次数与间隔。
 pub const SELECTION_CLIPBOARD_TRIES: u32 = 10;
 pub const SELECTION_CLIPBOARD_WAIT_MS: u64 = 50;

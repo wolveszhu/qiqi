@@ -25,7 +25,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::config::{
     SELECTION_CLIPBOARD_TRIES, SELECTION_CLIPBOARD_WAIT_MS, SELECTION_DEDUPE_MS,
-    SELECTION_MAX_DRAG_MS, SELECTION_MIN_DRAG_MS, SELECTION_MIN_DRAG_PX,
+    SELECTION_DOUBLE_CLICK_MS, SELECTION_DOUBLE_CLICK_RADIUS_PX, SELECTION_MAX_DRAG_MS,
+    SELECTION_MIN_DRAG_MS, SELECTION_MIN_DRAG_PX,
 };
 use crate::db::models::{CapturedSelectionDto, SelectionRectDto, TranslateSelectionPayload};
 use crate::error::AppError;
@@ -54,6 +55,15 @@ static WIN_W: AtomicI64 = AtomicI64::new(0);
 static WIN_H: AtomicI64 = AtomicI64::new(0);
 static WIN_VISIBLE: AtomicBool = AtomicBool::new(false);
 static DISMISS: AtomicBool = AtomicBool::new(false);
+
+// ---- 双击选中词（两次左键按下，间隔短且位移小） ----
+
+static LAST_CLICK_MS: AtomicI64 = AtomicI64::new(0);
+static LAST_CLICK_X: AtomicI64 = AtomicI64::new(0);
+static LAST_CLICK_Y: AtomicI64 = AtomicI64::new(0);
+static DOUBLE_CLICK: AtomicBool = AtomicBool::new(false);
+static DBL_X: AtomicI64 = AtomicI64::new(0);
+static DBL_Y: AtomicI64 = AtomicI64::new(0);
 
 /// 由 `window/manager` 在显示/移动浮窗时登记物理矩形（与钩子 `MSLLHOOKSTRUCT.pt` 同坐标系）。
 pub fn set_translator_bounds(x: i32, y: i32, width: i32, height: i32) {
@@ -109,6 +119,13 @@ pub fn is_drag(dx: i64, dy: i64, elapsed_ms: i64) -> bool {
         && (SELECTION_MIN_DRAG_MS..=SELECTION_MAX_DRAG_MS).contains(&elapsed_ms)
 }
 
+/// 纯函数：两次左键按下是否构成双击选词（间隔短、位移小；不依赖系统 API）。
+pub fn is_double_click(elapsed_ms: i64, dx: i64, dy: i64) -> bool {
+    (0..=SELECTION_DOUBLE_CLICK_MS).contains(&elapsed_ms)
+        && dx.abs() <= SELECTION_DOUBLE_CLICK_RADIUS_PX
+        && dy.abs() <= SELECTION_DOUBLE_CLICK_RADIUS_PX
+}
+
 /// 低级鼠标钩子回调：`HC_ACTION`（code=0）之外一律直接转发。
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == 0 && lparam.0 != 0 {
@@ -124,9 +141,24 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                     DISMISS.store(true, Ordering::Relaxed);
                 }
                 TARGET_HWND.store(unsafe { GetForegroundWindow() }.0 as isize, Ordering::Relaxed);
+                let now = now_ms();
+                let last = LAST_CLICK_MS.load(Ordering::Relaxed);
+                let dx = info.pt.x as i64 - LAST_CLICK_X.load(Ordering::Relaxed);
+                let dy = info.pt.y as i64 - LAST_CLICK_Y.load(Ordering::Relaxed);
+                if last > 0 && is_double_click(now - last, dx, dy) {
+                    // 双击选中词：无需拖选位移，直接请求弹工具条；清零防止三击重复
+                    DOUBLE_CLICK.store(true, Ordering::Relaxed);
+                    DBL_X.store(info.pt.x as i64, Ordering::Relaxed);
+                    DBL_Y.store(info.pt.y as i64, Ordering::Relaxed);
+                    LAST_CLICK_MS.store(0, Ordering::Relaxed);
+                } else {
+                    LAST_CLICK_MS.store(now, Ordering::Relaxed);
+                    LAST_CLICK_X.store(info.pt.x as i64, Ordering::Relaxed);
+                    LAST_CLICK_Y.store(info.pt.y as i64, Ordering::Relaxed);
+                }
                 DOWN_X.store(info.pt.x as i64, Ordering::Relaxed);
                 DOWN_Y.store(info.pt.y as i64, Ordering::Relaxed);
-                DOWN_MS.store(now_ms(), Ordering::Relaxed);
+                DOWN_MS.store(now, Ordering::Relaxed);
                 DRAGGING.store(true, Ordering::Relaxed);
             }
         } else if message == WM_RBUTTONDOWN && WIN_VISIBLE.load(Ordering::Relaxed) {
@@ -176,22 +208,42 @@ pub fn start_selection_hook() {
     });
 }
 
-/// 由 `probe/scheduler` 的唯一 100ms 轮询调用：先处理「点击窗口之外」收起，再 emit 新选区。
+/// 由 `probe/scheduler` 的唯一 100ms 轮询调用：先收起、再处理双击 / 拖选并 emit。
 pub fn poll_selection(app: &AppHandle) {
-    // 顺序不能反：先关掉旧工具条，再显示本次拖选产生的新工具条。
+    // 顺序不能反：先关掉旧工具条，再显示本次手势产生的新工具条。
     if DISMISS.swap(false, Ordering::Relaxed) {
         clear_translator_bounds();
         let _ = crate::window::manager::hide_translator(app);
         let _ = app.emit("translate:selection:hide", ());
     }
-    if !PENDING.swap(false, Ordering::Relaxed) {
+    // 双击选中词：坐标即点击点，选区矩形退化为 0×0，工具条贴在词右下角。
+    if DOUBLE_CLICK.swap(false, Ordering::Relaxed) {
+        PENDING.store(false, Ordering::Relaxed);
+        let x = DBL_X.load(Ordering::Relaxed) as i32;
+        let y = DBL_Y.load(Ordering::Relaxed) as i32;
+        emit_selection(app, x, y, SelectionRectDto { x, y, width: 0, height: 0 });
         return;
     }
-    if is_console_window() {
+    if !PENDING.swap(false, Ordering::Relaxed) {
         return;
     }
     let x = UP_X.load(Ordering::Relaxed) as i32;
     let y = UP_Y.load(Ordering::Relaxed) as i32;
+    // 用按下/松开两点的包围盒，工具条据此贴合选中词定位。
+    let rect = selection_rect(
+        DOWN_X.load(Ordering::Relaxed) as i32,
+        DOWN_Y.load(Ordering::Relaxed) as i32,
+        x,
+        y,
+    );
+    emit_selection(app, x, y, rect);
+}
+
+/// 统一去重并广播选区事件（拖选与双击共用；控制台窗口跳过）。
+fn emit_selection(app: &AppHandle, x: i32, y: i32, rect: SelectionRectDto) {
+    if is_console_window() {
+        return;
+    }
     let now = now_ms();
     let near_last = (x as i64 - LAST_X.load(Ordering::Relaxed)).abs() < 4
         && (y as i64 - LAST_Y.load(Ordering::Relaxed)).abs() < 4;
@@ -201,14 +253,6 @@ pub fn poll_selection(app: &AppHandle) {
     LAST_EMIT_MS.store(now, Ordering::Relaxed);
     LAST_X.store(x as i64, Ordering::Relaxed);
     LAST_Y.store(y as i64, Ordering::Relaxed);
-
-    // 用按下/松开两点的包围盒代替 0×0 占位，工具条据此贴合选中词定位。
-    let rect = selection_rect(
-        DOWN_X.load(Ordering::Relaxed) as i32,
-        DOWN_Y.load(Ordering::Relaxed) as i32,
-        x,
-        y,
-    );
     let payload = TranslateSelectionPayload {
         selection_key: format!("{x}-{y}-{now}"),
         rect,
@@ -363,5 +407,14 @@ mod tests {
         assert!(!inside_rect(100, 10, 0, 0, 100, 50), "右边界排他");
         assert!(!inside_rect(10, 50, 0, 0, 100, 50), "下边界排他");
         assert!(!inside_rect(-1, 10, 0, 0, 100, 50));
+    }
+
+    #[test]
+    fn double_click_requires_short_interval_and_small_distance() {
+        assert!(is_double_click(120, 1, -2));
+        assert!(is_double_click(SELECTION_DOUBLE_CLICK_MS, 0, 0), "含上界");
+        assert!(!is_double_click(SELECTION_DOUBLE_CLICK_MS + 1, 0, 0), "间隔过长");
+        assert!(!is_double_click(120, 20, 0), "位移过大");
+        assert!(!is_double_click(-1, 0, 0), "时钟回拨不算双击");
     }
 }
