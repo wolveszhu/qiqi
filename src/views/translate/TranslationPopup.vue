@@ -28,7 +28,10 @@ const providerLabel = computed((): string =>
 <template>
   <section class="popup">
     <header class="popup__head">
-      <span class="popup__tag">{{ providerLabel }}</span>
+      <div class="popup__tags">
+        <span class="popup__tag">{{ result?.serviceName }}</span>
+        <span class="popup__tag popup__tag--muted">{{ providerLabel }}</span>
+      </div>
       <button
         class="popup__icon"
         type="button"
@@ -103,12 +106,26 @@ const providerLabel = computed((): string =>
   justify-content: space-between;
 }
 
+.popup__tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .popup__tag {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--bg-soft);
-  color: var(--ink-soft);
+  color: var(--ink);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup__tag--muted {
+  color: var(--ink-soft);
 }
 
 .popup__block {

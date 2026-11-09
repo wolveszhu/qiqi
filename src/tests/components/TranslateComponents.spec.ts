@@ -18,6 +18,7 @@ const result: TranslateResult = {
   sourceLang: "en",
   targetLang: "zh",
   provider: "baidu",
+  serviceName: "百度翻译",
   isBuiltin: true,
   quotaExhausted: false,
 };

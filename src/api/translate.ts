@@ -8,6 +8,8 @@
 import { callCommand } from "./client";
 import type {
   CapturedSelection,
+  CustomTranslateProvider,
+  SaveCustomTranslateProvider,
   SaveTranslateSettings,
   TranslateResult,
   TranslateSettings,
@@ -64,4 +66,29 @@ export async function hideTranslatePopup(): Promise<void> {
 /** 重定位浮窗。 */
 export async function moveTranslatePopup(x: number, y: number): Promise<void> {
   await callCommand("translate_popup_position", { x, y });
+}
+
+/** 用户自填的多个翻译服务商（Key 脱敏回传）。 */
+export function listCustomTranslateProviders(): Promise<CustomTranslateProvider[]> {
+  return callCommand<CustomTranslateProvider[]>("translate_list_custom_providers");
+}
+
+/** 新增 / 编辑自填服务商，返回行 id。 */
+export function saveCustomTranslateProvider(
+  payload: SaveCustomTranslateProvider,
+): Promise<number> {
+  return callCommand<number>("translate_save_custom_provider", { payload });
+}
+
+/** 删除自填服务商。 */
+export async function deleteCustomTranslateProvider(id: number): Promise<void> {
+  await callCommand("translate_delete_custom_provider", { id });
+}
+
+/** 上移 / 下移自填服务商（决定优先级）。 */
+export async function moveCustomTranslateProvider(
+  id: number,
+  up: boolean,
+): Promise<void> {
+  await callCommand("translate_move_custom_provider", { id, up });
 }

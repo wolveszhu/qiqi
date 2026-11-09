@@ -67,6 +67,8 @@ export interface TranslateResult {
   sourceLang: "zh" | "en";
   targetLang: "zh" | "en";
   provider: TranslateProviderId;
+  /** 实际使用的服务名（自填服务商的展示名 / 内置「百度翻译」）。 */
+  serviceName: string;
   isBuiltin: boolean;
   quotaExhausted: boolean;
 }
@@ -77,6 +79,28 @@ export interface TranslateSelectionPayload {
   rect: SelectionRect;
   cursorX: number;
   cursorY: number;
+}
+
+/** 用户自填的翻译服务商（Key 脱敏，接口不回明文）。 */
+export interface CustomTranslateProvider {
+  id: number;
+  name: string;
+  provider: TranslateProviderId;
+  hasAppId: boolean;
+  hasKey: boolean;
+  keyFingerprint: string | null;
+  enabled: boolean;
+}
+
+/** 保存自填服务商入参；apiKey 缺省=不改动、空串=清空。 */
+export interface SaveCustomTranslateProvider {
+  id?: number;
+  name: string;
+  provider: TranslateProviderId;
+  /** 缺省=不改动存量；空串=清空。 */
+  appId?: string;
+  apiKey?: string;
+  enabled?: boolean;
 }
 
 /** 三档模型配置档位（主对话 / 记忆沉淀 / 兜底）。 */
