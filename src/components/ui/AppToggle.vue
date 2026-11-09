@@ -4,7 +4,7 @@
  * 受控组件：v-model 语义（modelValue + update:modelValue）。
  */
 
-defineProps<{ modelValue: boolean; label?: string }>();
+defineProps<{ modelValue: boolean; label?: string; ariaLabel?: string }>();
 
 const emit = defineEmits<{ (e: "update:modelValue", value: boolean): void }>();
 </script>
@@ -19,7 +19,9 @@ const emit = defineEmits<{ (e: "update:modelValue", value: boolean): void }>();
     <button
       class="app-toggle__track"
       :class="{ 'is-on': modelValue }"
+      type="button"
       role="switch"
+      :aria-label="ariaLabel"
       :aria-checked="modelValue"
       @click="emit('update:modelValue', !modelValue)"
     >

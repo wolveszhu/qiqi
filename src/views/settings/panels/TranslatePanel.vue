@@ -13,6 +13,7 @@ import { normalizeError } from "../../../api/client";
 import { getTranslateSettings, saveTranslateSettings } from "../../../api/translate";
 import type { TranslateProviderId, TranslateTargetLang } from "../../../api/types";
 import { pushToast } from "../../../composables/useToast";
+import AppToggle from "../../../components/ui/AppToggle.vue";
 
 const { t, te } = useI18n();
 
@@ -89,16 +90,17 @@ async function onSave(): Promise<void> {
     <h2 class="translate-panel__title">{{ t("translate.panel.title") }}</h2>
     <p class="translate-panel__desc">{{ t("translate.panel.desc") }}</p>
 
-    <label class="translate-panel__row">
+    <div class="translate-panel__row">
       <span>
         <span class="translate-panel__name">{{ t("translate.panel.enabled") }}</span>
         <span class="translate-panel__hint">{{ t("translate.panel.enabledDesc") }}</span>
       </span>
-      <input
+      <AppToggle
         v-model="enabled"
-        type="checkbox"
+        class="translate-panel__toggle"
+        :aria-label="t('translate.panel.enabled')"
       />
-    </label>
+    </div>
 
     <div class="translate-panel__row">
       <span class="translate-panel__name">{{ t("translate.panel.targetLang") }}</span>
@@ -143,6 +145,12 @@ async function onSave(): Promise<void> {
           ? t("translate.panel.builtinReady")
           : t("translate.panel.builtinMissing")
       }}
+    </p>
+    <p
+      v-if="!hasBuiltin && provider === 'baidu'"
+      class="translate-panel__hint"
+    >
+      {{ t("translate.panel.builtinFallback") }}
     </p>
 
     <div class="translate-panel__row">
@@ -216,6 +224,11 @@ async function onSave(): Promise<void> {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--bg-soft);
+}
+
+/* 开关固定在右侧，描述文字较长时不被压缩 */
+.translate-panel__toggle {
+  flex-shrink: 0;
 }
 
 .translate-panel__name {
