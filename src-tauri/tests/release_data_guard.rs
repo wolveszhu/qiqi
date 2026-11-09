@@ -29,7 +29,7 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
     ("app_settings", "SELECT COUNT(*) FROM app_settings", 2),
     ("default_model_settings", "SELECT COUNT(*) FROM default_model_settings", 2),
     ("search_settings", "SELECT COUNT(*) FROM search_settings", 1),
-    // M11 只建表；单行与内置凭据由 Rust 首次启动幂等播种，故干净库有 1 行。
+    // M11 建表 + M12 幂等种子写入内置百度凭据，故干净库有 1 行。
     ("translate_settings", "SELECT COUNT(*) FROM translate_settings", 1),
     // ---- 运行时数据（必须为空）----
     ("messages", "SELECT COUNT(*) FROM messages", 0),
@@ -39,6 +39,7 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
     ("affection_logs", "SELECT COUNT(*) FROM affection_logs", 0),
     ("diaries", "SELECT COUNT(*) FROM diaries", 0),
     ("custom_model_settings", "SELECT COUNT(*) FROM custom_model_settings", 0),
+    ("custom_translate_providers", "SELECT COUNT(*) FROM custom_translate_providers", 0),
     ("quota_usage", "SELECT COUNT(*) FROM quota_usage", 0),
     ("quota_usage_monthly", "SELECT COUNT(*) FROM quota_usage_monthly", 0),
     ("quota_usage_platform_monthly", "SELECT COUNT(*) FROM quota_usage_platform_monthly", 0),
@@ -47,7 +48,7 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
 /// 发布构建中禁止出现的测试 / 临时数据标记（与 README §7.2 一致）。
 const FORBIDDEN_MARKERS: &[&str] = &["sk-old", "old/v1", "TEST_", "test-fixture", "mock-data"];
 
-/// 新建临时库并跑完 M1–M11，等价于用户首次启动。
+/// 新建临时库并跑完 M1–M12，等价于用户首次启动。
 fn fresh_db() -> (tempfile::TempDir, Connection) {
     register_vec_extension().expect("vec 注册");
     let dir = tempfile::tempdir().expect("临时目录");
@@ -183,6 +184,16 @@ fn baseline_values_are_production_defaults() {
     assert_eq!(tr_enabled, 1, "划词翻译默认开启");
     assert!(tr_key.is_empty(), "首发不得预置自定义翻译 Key");
     assert!(tr_app_id.is_empty(), "首发不得预置自定义 APPID");
+
+    // M12 已登记的生产凭据：必须非空，但断言信息不得回显凭据值。
+    let (builtin_id, builtin_key): (String, String) = conn
+        .query_row(
+            "SELECT builtin_app_id, builtin_secret FROM translate_settings WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("读内置凭据");
+    assert!(!builtin_id.is_empty() && !builtin_key.is_empty(), "M12 内置百度凭据种子缺失");
 }
 
 #[test]
@@ -225,5 +236,25 @@ fn baseline_rows_contain_no_test_markers() {
             !merged.contains(marker),
             "translate_settings 含禁止测试标记 `{marker}`（列值不回显）"
         );
+    }
+
+    // 多服务商表首发 0 行；仍检查文本列，防止将来预置配置混入测试标记（断言不回显凭据）。
+    let mut provider_stmt = conn
+        .prepare("SELECT name, provider, app_id, api_key FROM custom_translate_providers")
+        .expect("准备");
+    let provider_rows: Vec<(String, String, String, String)> = provider_stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        .expect("查询")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("收集");
+    for row in provider_rows {
+        for text in [&row.0, &row.1, &row.2, &row.3] {
+            for marker in FORBIDDEN_MARKERS {
+                assert!(
+                    !text.contains(marker),
+                    "自填服务商含禁止测试标记 `{marker}`（列值不回显）"
+                );
+            }
+        }
     }
 }

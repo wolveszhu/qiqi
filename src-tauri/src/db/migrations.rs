@@ -1,4 +1,4 @@
-//! 有序迁移链 M1–M11（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
+//! 有序迁移链 M1–M12（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
 //!
 //! 链全表与改表操作路径见同目录 `README.md` §3–§4。
 //! 铁律：任何结构变更都**追加新迁移**，禁止改历史 SQL；每条迁移独立事务、失败回滚；
@@ -17,12 +17,12 @@ use crate::config::EMBEDDING_DIM;
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1（操作路径见 `README.md` §4.1）；
 /// `connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 11;
+pub const TARGET_VERSION: usize = 12;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered → M4 dnd/频率 →
 /// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 →
-/// M9 搜索配置 → M10 额度平台维度与存量回填 →
-/// M11 划词翻译配置表，只建表不写种子）。
+/// M9 搜索配置 → M10 额度平台维度与存量回填 → M11 划词翻译配置表 →
+/// M12 内置翻译凭据种子 + 用户自填多服务商表）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -68,9 +68,11 @@ pub fn chain() -> Migrations<'static> {
         // M10：额度用量加 platform 维度 + 平台月表 + 存量回填 + 月度额度改 100,000。
         // 仅加量（ADD COLUMN / CREATE TABLE）与幂等回填，不改 M8 历史 SQL。
         M::up(include_str!("migrations/M10__quota_platform.sql")),
-        // M11：划词翻译配置（单行 id=1）。只建表、不写种子——内置凭据走编译期注入 +
-        // 首次启动参数化幂等播种，避免明文进仓库与发布守卫 INSERT 白名单冲突。
+        // M11：划词翻译配置（单行 id=1），只建表、不写种子。
         M::up(include_str!("migrations/M11__translate_settings.sql")),
+        // M12：已登记的生产凭据（内置百度 APPID/密钥）幂等种子 + custom_translate_providers。
+        // 存量库不会重跑 M11，故凭据与新表一律追加本迁移；构建期环境变量可覆盖内置凭据。
+        M::up(include_str!("migrations/M12__translate_providers.sql")),
     ])
 }
 
@@ -79,24 +81,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn m11_upgrades_existing_db_and_only_creates_table() {
+    fn m11_only_creates_table_then_m12_seeds_builtin() {
         crate::db::connection::register_vec_extension().expect("vec 注册");
         let mut conn = rusqlite::Connection::open_in_memory().expect("内存库");
-        chain().to_version(&mut conn, 10).expect("迁移到 M10");
-        chain().to_latest(&mut conn).expect("迁移到 M11");
-        let current: usize = chain().current_version(&conn).expect("版本读取").into();
-        assert_eq!(current, TARGET_VERSION);
-
+        chain().to_version(&mut conn, 11).expect("迁移到 M11");
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM translate_settings", [], |row| row.get(0))
             .expect("表应存在");
-        assert_eq!(count, 0, "M11 只建表；凭据与配置由 Rust 运行时幂等播种");
+        assert_eq!(count, 0, "M11 只建表，不写种子");
+
+        chain().to_latest(&mut conn).expect("迁移到 M12");
+        let current: usize = chain().current_version(&conn).expect("版本读取").into();
+        assert_eq!(current, TARGET_VERSION);
+        let (count, app_id, secret): (i64, String, String) = conn
+            .query_row(
+                "SELECT COUNT(*), builtin_app_id, builtin_secret FROM translate_settings WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("读内置凭据");
+        assert_eq!(count, 1, "M12 应播种单行配置");
+        assert!(!app_id.is_empty() && !secret.is_empty(), "内置凭据不得为空");
 
         chain().to_latest(&mut conn).expect("重复迁移");
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM translate_settings", [], |row| row.get(0))
-            .expect("表应存在");
-        assert_eq!(count, 0, "幂等：重复迁移不新增行");
+            .expect("统计行数");
+        assert_eq!(count, 1, "幂等：重复迁移不新增行");
+    }
+
+    #[test]
+    fn m12_upgrades_existing_builtin_row_without_overwriting_user_config() {
+        crate::db::connection::register_vec_extension().expect("vec 注册");
+        let mut conn = rusqlite::Connection::open_in_memory().expect("内存库");
+        chain().to_version(&mut conn, 11).expect("迁移到 M11");
+        conn.execute(
+            "INSERT INTO translate_settings (id, enabled, target_lang, provider, custom_api_key) \
+             VALUES (1, 1, 'en', 'deepl', 'user-key')",
+            [],
+        )
+        .expect("模拟存量空凭据行");
+
+        chain().to_latest(&mut conn).expect("迁移到 M12");
+        let (target, provider, key, builtin_id): (String, String, String, String) = conn
+            .query_row(
+                "SELECT target_lang, provider, custom_api_key, builtin_app_id \
+                 FROM translate_settings WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("读配置");
+        assert_eq!(target, "en", "不得覆盖用户译入语言");
+        assert_eq!(provider, "deepl", "不得覆盖用户服务商");
+        assert_eq!(key, "user-key", "不得覆盖用户自定义 Key");
+        assert!(!builtin_id.is_empty(), "存量行应补齐内置凭据");
+
+        let providers: i64 = conn
+            .query_row("SELECT COUNT(*) FROM custom_translate_providers", [], |row| row.get(0))
+            .expect("多服务商表应存在");
+        assert_eq!(providers, 0, "用户自配表首发不得预置数据");
     }
 
     #[test]

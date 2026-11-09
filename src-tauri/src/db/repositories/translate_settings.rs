@@ -231,8 +231,8 @@ mod tests {
         assert_eq!(row.target_lang, "auto");
         assert_eq!(row.provider, "baidu");
         assert!(!row.has_custom_key());
-        assert!(!row.has_builtin_credential(), "未注入环境变量时内置凭据为空");
-        assert!(!row.is_ready(), "凭据未注入时不可发起内置翻译");
+        assert!(row.has_builtin_credential(), "M12 种子应写入内置百度凭据");
+        assert!(row.is_ready(), "内置凭据就绪即可发起翻译");
         assert_eq!(row.provider_enum(), TranslateProvider::Baidu);
         assert_eq!(row.target_lang_enum(), TargetLang::Auto);
     }

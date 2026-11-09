@@ -9,7 +9,7 @@
  * 1. `tauri.conf.json` 未配置 bundle.resources / externalBin / assets（否则会携带预置库）；
  * 2. 源码侧无数据库 / 备份 / 损坏隔离文件；`dist/` 命中则自动删除并报告（可重建产物）；
  * 3. 迁移 SQL 无测试标记，且 INSERT / UPDATE 只允许写系统基础数据表（白名单）；
- * 4. `dist/` 不含明文凭据（M6 的生产 Key 只允许存在于 Rust 侧 SQL）；
+ * 4. `dist/` 不含明文凭据（M6 / M12 的已登记生产 Key 只允许存在于 Rust 侧 SQL）；
  * 5. README §7.2 基线表与 `release_data_guard.rs` 的 BASELINE_ROWS 一致，防止定义漂移。
  *
  * 用法：`pnpm verify:release-data`（无第三方依赖，Windows / Linux 均可跑）。
@@ -119,12 +119,20 @@ const INSERT_ALLOW = new Set([
   "app_settings",
   "default_model_settings",
   "search_settings",
+  // M12：内置百度翻译凭据种子（单行 id=1，NOT EXISTS 守卫）
+  "translate_settings",
 ]);
 // 存量回填表：只允许 INSERT...SELECT 从已有业务数据聚合，禁止 VALUES 硬编码。
 // M10 的平台月表回填属此类——对全新空库不产生任何行，不是种子数据。
 const BACKFILL_INSERT_ALLOW = new Set(["quota_usage_platform_monthly"]);
-// 数据迁移白名单：app_settings 结构升级（M3/M4/M7）+ quota 维度/额度对齐（M10）。
-const UPDATE_ALLOW = new Set(["app_settings", "quota_usage", "quota_usage_monthly"]);
+// 数据迁移白名单：app_settings 结构升级（M3/M4/M7）+ quota 维度/额度对齐（M10）
+// + M12 存量库补齐内置翻译凭据（条件 UPDATE，仅填补空值）。
+const UPDATE_ALLOW = new Set([
+  "app_settings",
+  "quota_usage",
+  "quota_usage_monthly",
+  "translate_settings",
+]);
 const migrationsDir = abs("src-tauri", "src", "db", "migrations");
 const sqlFiles = readdirSync(migrationsDir).filter((name) => name.endsWith(".sql"));
 

@@ -9,6 +9,7 @@
 pub mod affection_logs;
 pub mod app_settings;
 pub mod custom_model_settings;
+pub mod custom_translate_providers;
 pub mod default_model_settings;
 pub mod diaries;
 pub mod facts;
