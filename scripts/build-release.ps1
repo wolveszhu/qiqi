@@ -321,6 +321,16 @@ if (-not $Publish) {
   Invoke-Checked -Label "构建前端" -WorkDir $RepoRoot -Command "pnpm" -Arguments @("build")
 }
 
+# ---------- 3.5 划词翻译内置凭据（只从进程环境继承，不落仓库、不打印值） ----------
+# build.rs 用 option_env! 读取，必须在守卫步骤（编译 Rust）之前就已存在于进程环境。
+# 调用方在 PowerShell 会话里自行设置 $env:QIQI_BAIDU_APPID / $env:QIQI_BAIDU_SECRET；
+# 缺失时不阻断构建，内置翻译通道降级为「未配置」，但此包不可作为正式发布包。
+$translateCredNames = @("QIQI_BAIDU_APPID", "QIQI_BAIDU_SECRET")
+$missingTranslateCreds = @($translateCredNames | Where-Object { -not (Test-Path "Env:$_") })
+if ($missingTranslateCreds.Count -gt 0) {
+  Write-Host "    提示：未注入 $($missingTranslateCreds -join ', ')，内置翻译通道将降级为未配置；正式发布前请配置环境变量或 CI secrets。" -ForegroundColor Yellow
+}
+
 # ---------- 4. 发布数据守卫 ----------
 Write-Step "3/6 发布数据守卫"
 if ($SkipGuards) {

@@ -223,3 +223,83 @@ pub struct UpdatePetPayload {
     pub active_renderer: Option<String>,
     pub renderer_config: Option<serde_json::Value>,
 }
+
+// ---------- 全局划词翻译（子计划：悬浮工具条与译文浮窗） ----------
+
+/// 划词翻译配置对外视图（内置凭据与自定义 Key 均**不明文回传**）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateSettingsDto {
+    pub enabled: bool,
+    pub target_lang: String,
+    pub provider: String,
+    pub has_builtin_credential: bool,
+    pub has_custom_key: bool,
+    /// 自定义 Key 末 4 位指纹（无 Key 时为 None）。
+    pub custom_key_fingerprint: Option<String>,
+}
+
+/// 保存划词翻译配置入参（凭据字段缺省 = 不改动存量；空串 = 清空）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveTranslateSettingsPayload {
+    pub enabled: bool,
+    pub target_lang: String,
+    pub provider: String,
+    pub custom_api_key: Option<String>,
+    pub custom_app_id: Option<String>,
+}
+
+/// 选区屏幕矩形（逻辑像素；多显示器 / DPI 换算在 Rust 侧完成）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectionRectDto {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// 取词结果（用户点击小图标后返回）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturedSelectionDto {
+    pub selection_key: String,
+    pub text: String,
+    pub rect: SelectionRectDto,
+    /// 取词路径：`uia` 或 `clipboard`。
+    pub via: String,
+}
+
+/// 译文结果（浮窗展示 + 重新翻译复用）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateResultDto {
+    pub result_id: String,
+    pub source_text: String,
+    pub translated_text: String,
+    pub source_lang: String,
+    pub target_lang: String,
+    pub provider: String,
+    pub is_builtin: bool,
+    pub quota_exhausted: bool,
+}
+
+/// `translate:selection:show` 事件负载。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateSelectionPayload {
+    pub selection_key: String,
+    pub rect: SelectionRectDto,
+    pub cursor_x: i32,
+    pub cursor_y: i32,
+}
+
+/// `translate:error` 事件负载（不含 Rust 中文 message，前端按 `kind` 本地化）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslateErrorPayload {
+    pub result_id: String,
+    pub kind: String,
+    pub retryable: bool,
+}

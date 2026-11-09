@@ -54,9 +54,14 @@ jobs:
       - name: Verify release data (static guard)
         run: pnpm verify:release-data
 
-      # 发布数据防线 2/2：干净空库跑完 M1–M9，断言仅含系统基础数据。
+      # 发布数据防线 2/2：干净空库跑完 M1–M11，断言仅含系统基础数据。
+      # 该步骤会编译 qiqi_lib（触发 build.rs 读取编译期凭据），故与打包步骤注入同一组 secrets，
+      # 保证守卫看到的基线与实际发布产物一致；缺失时 option_env! 降级为「内置通道未配置」。
       - name: Verify clean-install data baseline
         working-directory: src-tauri
+        env:
+          QIQI_BAIDU_APPID: ${{ secrets.QIQI_BAIDU_APPID }}
+          QIQI_BAIDU_SECRET: ${{ secrets.QIQI_BAIDU_SECRET }}
         run: cargo test --test release_data_guard
 
       - name: Build and publish Tauri app
@@ -64,6 +69,9 @@ jobs:
         env:
           # 自动发布 Release 所需的令牌（仓库自带，无需手动配置 secret）。
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 划词翻译内置凭据：仅存在于 Actions secrets，明文不进仓库与前端产物。
+          QIQI_BAIDU_APPID: ${{ secrets.QIQI_BAIDU_APPID }}
+          QIQI_BAIDU_SECRET: ${{ secrets.QIQI_BAIDU_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Qiqi ${{ github.ref_name }}"

@@ -159,6 +159,7 @@
 | `app_settings` | 2 | 系统基础：type=1 空三档；type=2 勿扰 + `frequency=normal` |
 | `default_model_settings` | 2 | 系统基础：智谱 / 硅基流动内置额度模型 |
 | `search_settings` | 1 | 系统基础：`tavily` / 未启用 / 空 Key |
+| `translate_settings` | 1 | 系统基础：`baidu` / `auto` / 默认开启 / 空自定义 Key（内置凭据为编译期注入） |
 | `messages` | 0 | 运行时对话 |
 | `summaries` | 0 | 运行时摘要 |
 | `facts` | 0 | 运行时蒸馏事实 |
@@ -169,9 +170,9 @@
 | `quota_usage` | 0 | 运行时用量明细 |
 | `quota_usage_monthly` | 0 | 运行时月度全局汇总 |
 | `quota_usage_platform_monthly` | 0 | 运行时按平台月度汇总（M10 新增，干净库无数据） |
-| `translate_settings` | 0 | 运行时配置：M11 只建表；播种落地后应登记为 1 行 |
 
-合计 15 张表、**6 行系统基础数据**。任何运行时表出现非 0 行，即视为
+合计 15 张表、**7 行系统基础数据**（M11 的 `translate_settings` 由 Rust 首次启动幂等播种，
+不在迁移 SQL 内写种子）。任何标注为 0 行的运行时表出现非 0 行，即视为
 测试 / 临时数据混入，发布必须阻断。
 
 **禁止出现在发布构建中的标记**（守卫会扫描迁移 SQL 与 `dist/`）：

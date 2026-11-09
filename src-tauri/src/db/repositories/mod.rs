@@ -17,6 +17,7 @@ pub mod pet_states;
 pub mod quota_usage;
 pub mod search_settings;
 pub mod summaries;
+pub mod translate_settings;
 pub mod vec_memory;
 
 use crate::error::AppError;

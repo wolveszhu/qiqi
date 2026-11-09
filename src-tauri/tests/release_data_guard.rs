@@ -29,6 +29,8 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
     ("app_settings", "SELECT COUNT(*) FROM app_settings", 2),
     ("default_model_settings", "SELECT COUNT(*) FROM default_model_settings", 2),
     ("search_settings", "SELECT COUNT(*) FROM search_settings", 1),
+    // M11 只建表；单行与内置凭据由 Rust 首次启动幂等播种，故干净库有 1 行。
+    ("translate_settings", "SELECT COUNT(*) FROM translate_settings", 1),
     // ---- 运行时数据（必须为空）----
     ("messages", "SELECT COUNT(*) FROM messages", 0),
     ("summaries", "SELECT COUNT(*) FROM summaries", 0),
@@ -40,8 +42,6 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
     ("quota_usage", "SELECT COUNT(*) FROM quota_usage", 0),
     ("quota_usage_monthly", "SELECT COUNT(*) FROM quota_usage_monthly", 0),
     ("quota_usage_platform_monthly", "SELECT COUNT(*) FROM quota_usage_platform_monthly", 0),
-    // M11：划词翻译配置表只建表、不写种子；运行时播种落地后此期望值改为 1。
-    ("translate_settings", "SELECT COUNT(*) FROM translate_settings", 0),
 ];
 
 /// 发布构建中禁止出现的测试 / 临时数据标记（与 README §7.2 一致）。
@@ -161,6 +161,28 @@ fn baseline_values_are_production_defaults() {
     assert_eq!(provider, "tavily");
     assert!(key.is_empty(), "首发不得预置搜索 API Key");
     assert_eq!(enabled, 0, "联网搜索默认关闭");
+
+    // 划词翻译：M11 只建表 + Rust 播种；自定义 Key 不得预置。
+    // 内置凭据列可能是编译期注入值，故不断言其内容、也不回显到错误信息。
+    let (tr_provider, tr_lang, tr_enabled, tr_key, tr_app_id): (
+        String,
+        String,
+        i64,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT provider, target_lang, enabled, custom_api_key, custom_app_id \
+             FROM translate_settings WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .expect("读 translate_settings");
+    assert_eq!(tr_provider, "baidu", "内置零配置通道应为百度翻译");
+    assert_eq!(tr_lang, "auto", "首发应为中英自动互译");
+    assert_eq!(tr_enabled, 1, "划词翻译默认开启");
+    assert!(tr_key.is_empty(), "首发不得预置自定义翻译 Key");
+    assert!(tr_app_id.is_empty(), "首发不得预置自定义 APPID");
 }
 
 #[test]
@@ -185,5 +207,23 @@ fn baseline_rows_contain_no_test_markers() {
     for (a, b) in texts {
         assert_clean("基础数据列 A", &a);
         assert_clean("基础数据列 B", &b);
+    }
+
+    // 划词翻译配置含凭据列：单独检查，断言信息**不得回显列值**（避免凭据泄漏）。
+    let merged: String = conn
+        .query_row(
+            "SELECT COALESCE(provider,'') || COALESCE(custom_api_key,'') || \
+                    COALESCE(custom_app_id,'') || COALESCE(builtin_app_id,'') || \
+                    COALESCE(builtin_secret,'') \
+             FROM translate_settings WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("读 translate_settings 文本列");
+    for marker in FORBIDDEN_MARKERS {
+        assert!(
+            !merged.contains(marker),
+            "translate_settings 含禁止测试标记 `{marker}`（列值不回显）"
+        );
     }
 }

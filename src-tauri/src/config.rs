@@ -112,6 +112,16 @@ pub const SEARCH_TIMEOUT_SECS: u64 = 30;
 /// 默认搜索服务商（用户可在设置切换）。
 pub const SEARCH_DEFAULT_PROVIDER: &str = "tavily";
 
+// ---------- 全局划词翻译常量 ----------
+
+/// 内置百度翻译 APPID（构建期由 `build.rs` 从环境变量注入；未注入为 None）。
+///
+/// 明文只存在于受控构建环境与 SQLCipher 库，禁止写入仓库、日志、错误信息或前端产物。
+/// 用 `option_env!` 而非 `env!`：本地未配置环境变量时仍可编译，内置通道降级为「未配置」。
+pub const BAIDU_TRANSLATE_APPID: Option<&str> = option_env!("QIQI_BAIDU_APPID");
+/// 内置百度翻译密钥（同上，与 APPID 成对注入）。
+pub const BAIDU_TRANSLATE_SECRET: Option<&str> = option_env!("QIQI_BAIDU_SECRET");
+
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
 ///
 /// 注意：此处**不含宠物名**——名字由 `pet_states.pet_name` 动态注入

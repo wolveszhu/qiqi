@@ -99,19 +99,31 @@ fn apply_migrations(conn: &mut Connection, db_path: &Path) -> Result<(), AppErro
     let target = migrations::TARGET_VERSION;
 
     match current.cmp(&target) {
-        std::cmp::Ordering::Equal => Ok(()),
-        std::cmp::Ordering::Greater => Err(AppError::Config(format!(
-            "数据库版本 {current} 高于应用支持的 {target}，请升级应用"
-        ))),
+        std::cmp::Ordering::Equal => {},
+        std::cmp::Ordering::Greater => {
+            return Err(AppError::Config(format!(
+                "数据库版本 {current} 高于应用支持的 {target}，请升级应用"
+            )));
+        },
         // 空库：直接迁移（无备份——无数据可保）
-        std::cmp::Ordering::Less if current == 0 => chain.to_latest(conn).map_err(AppError::from),
+        std::cmp::Ordering::Less if current == 0 => {
+            chain.to_latest(conn).map_err(AppError::from)?;
+        },
         // 前向迁移：先备份（rule.md §5）与库同目录的 pet.db.bak
         std::cmp::Ordering::Less => {
             let backup = db_path.with_extension("db.bak");
             std::fs::copy(db_path, &backup).map_err(|e| AppError::Io(e.to_string()))?;
-            chain.to_latest(conn).map_err(AppError::from)
+            chain.to_latest(conn).map_err(AppError::from)?;
         },
     }
+
+    // 划词翻译内置凭据播种：放在迁移成功后的共同路径，使 init（生产）与
+    // init_with_key（发布守卫 / 单测旁路）行为一致，避免守卫看不到新行。
+    crate::db::repositories::translate_settings::seed_builtin(
+        conn,
+        crate::config::BAIDU_TRANSLATE_APPID,
+        crate::config::BAIDU_TRANSLATE_SECRET,
+    )
 }
 
 /// Windows 凭据管理器取/建 32 字节 hex 密钥。
