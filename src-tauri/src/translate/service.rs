@@ -119,8 +119,12 @@ fn prepare(conn: &Connection, text: &str, override_lang: Option<&str>) -> Result
         custom_repo::list_usable(conn)?.into_iter().next()
     {
         (custom.provider, custom.app_id, custom.api_key, false, custom.name)
+    } else if !row.custom_api_key.is_empty() {
+        // 兼容旧版单条自定义配置：用户填过 Key 时仍优先于内置百度。
+        let provider_id = row.provider.clone();
+        (provider_id.clone(), row.custom_app_id, row.custom_api_key, false, provider_id)
     } else {
-        // 无可用自填服务商 → 内置百度（M12 种子），或兼容 translate_settings 旧的自定义列。
+        // 内置百度（M12 种子）；env 未注入且种子为空时回落到空凭据并给配置错误。
         let has_builtin = row.has_builtin_credential();
         let provider_id = row.provider;
         let (app_id, secret, is_builtin, service_name) = if provider_id == "baidu" && has_builtin {
@@ -361,6 +365,18 @@ mod tests {
         assert_eq!(plan.service_name, "我的 DeepL");
         assert_eq!(plan.secret, "key-1");
         assert!(!plan.is_builtin, "自填服务商不计入内置额度");
+    }
+
+    #[test]
+    fn prepare_prefers_legacy_custom_column_over_builtin() {
+        let (_dir, conn) = fresh_db();
+        // M12 已注入内置凭据，但旧设置里用户填过 Key 时仍应优先，避免升级后配置失效。
+        repo::save(&conn, true, "auto", "deepl", Some("legacy-key"), None)
+            .expect("保存旧版自定义配置");
+        let plan = prepare(&conn, "Hello", None).expect("旧配置可用");
+        assert_eq!(plan.secret, "legacy-key");
+        assert_eq!(plan.provider_id, "deepl");
+        assert!(!plan.is_builtin);
     }
 
     #[test]
