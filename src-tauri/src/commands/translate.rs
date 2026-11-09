@@ -1,0 +1,101 @@
+//! 划词翻译命令薄层（参数校验 + 转发领域模块）。
+//!
+//! 事件 `translate:result` / `translate:error` 由命令层 emit（与 chat 组现码同风格）；
+//! 错误一律 `AppError` 传播，前端按 `kind` 用 `t()` 本地化兜底，DTO 不含任何明文 Key。
+
+use tauri::{AppHandle, Emitter, State};
+
+use crate::db::models::{
+    SaveTranslateSettingsPayload, TranslateErrorPayload, TranslateResultDto, TranslateSettingsDto,
+};
+use crate::error::AppError;
+use crate::state::AppState;
+use crate::translate::service;
+
+fn db_lock_err<T: std::fmt::Display>(e: T) -> AppError {
+    AppError::Db(format!("获取数据库连接失败: {e}"))
+}
+
+/// AppError 的 kind 字符串（与前端 `AppErrorKind` 小写枚举一致）。
+fn error_kind(e: &AppError) -> &'static str {
+    match e {
+        AppError::Db(_) => "db",
+        AppError::Llm(_) => "llm",
+        AppError::Window(_) => "window",
+        AppError::Probe(_) => "probe",
+        AppError::Io(_) => "io",
+        AppError::Config(_) => "config",
+    }
+}
+
+/// 读取划词翻译配置（Key 脱敏回传）。
+#[tauri::command]
+pub fn translate_settings_get(
+    state: State<'_, AppState>,
+) -> Result<TranslateSettingsDto, AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    service::get_settings(&conn)
+}
+
+/// 保存划词翻译配置（Key 缺省 = 不改动；空串 = 清空）。
+#[tauri::command]
+pub fn translate_settings_save(
+    payload: SaveTranslateSettingsPayload,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    service::save_settings(&conn, payload)
+}
+
+/// 翻译选中文本；成功后 emit `translate:result`，失败 emit `translate:error` 并返回 Err。
+#[tauri::command]
+pub async fn translate_execute(
+    text: String,
+    target_lang: Option<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<TranslateResultDto, AppError> {
+    match service::execute(&state, &text, target_lang.as_deref()).await {
+        Ok(dto) => {
+            let _ = app.emit("translate:result", &dto);
+            Ok(dto)
+        },
+        Err(e) => {
+            let _ = app.emit(
+                "translate:error",
+                TranslateErrorPayload {
+                    result_id: String::new(),
+                    kind: error_kind(&e).to_string(),
+                    retryable: true,
+                },
+            );
+            Err(e)
+        },
+    }
+}
+
+/// 重新翻译（同原文 + 当前 provider）；每次真实请求各记一条内置额度。
+#[tauri::command]
+pub async fn translate_retry(
+    result_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<TranslateResultDto, AppError> {
+    match service::retry(&state, &result_id).await {
+        Ok(dto) => {
+            let _ = app.emit("translate:result", &dto);
+            Ok(dto)
+        },
+        Err(e) => {
+            let _ = app.emit(
+                "translate:error",
+                TranslateErrorPayload {
+                    result_id,
+                    kind: error_kind(&e).to_string(),
+                    retryable: true,
+                },
+            );
+            Err(e)
+        },
+    }
+}

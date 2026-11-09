@@ -122,6 +122,19 @@ pub const BAIDU_TRANSLATE_APPID: Option<&str> = option_env!("QIQI_BAIDU_APPID");
 /// 内置百度翻译密钥（同上，与 APPID 成对注入）。
 pub const BAIDU_TRANSLATE_SECRET: Option<&str> = option_env!("QIQI_BAIDU_SECRET");
 
+/// 四个翻译服务的官方 endpoint（接入文档核对后集中在此，禁止散落到 preset）。
+pub const BAIDU_TRANSLATE_URL: &str = "https://fanyi-api.baidu.com/api/trans/vip/translate";
+pub const DEEPL_TRANSLATE_PRO_URL: &str = "https://api.deepl.com/v2/translate";
+pub const DEEPL_TRANSLATE_FREE_URL: &str = "https://api-free.deepl.com/v2/translate";
+pub const YOUDAO_TRANSLATE_URL: &str = "https://openapi.youdao.com/api";
+pub const GOOGLE_TRANSLATE_URL: &str = "https://translation.googleapis.com/language/translate/v2";
+
+/// 单次翻译原文上限（百度官方建议 ≤2000 字符，按字符计费）。
+pub const TRANSLATE_MAX_CHARS: usize = 2_000;
+/// 翻译 HTTP 连接超时 / 总超时（秒）。
+pub const TRANSLATE_CONNECT_TIMEOUT_SECS: u64 = 10;
+pub const TRANSLATE_TIMEOUT_SECS: u64 = 30;
+
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
 ///
 /// 注意：此处**不含宠物名**——名字由 `pet_states.pet_name` 动态注入

@@ -16,4 +16,5 @@ pub mod probe;
 pub mod quota;
 pub mod search_settings;
 pub mod settings;
+pub mod translate;
 pub mod window;

@@ -22,6 +22,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod state;
+pub mod translate;
 
 #[cfg(test)]
 mod test_util;
@@ -197,6 +198,10 @@ pub fn run() {
             commands::probe::probe_get_snapshot,
             commands::probe::proactive_generate,
             commands::update::check_update,
+            commands::translate::translate_settings_get,
+            commands::translate::translate_settings_save,
+            commands::translate::translate_execute,
+            commands::translate::translate_retry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,6 @@
 //! 内置额度记账（埋点单一出口；方案见 `docs/billing/内置体验额度方案.md`）。
 //!
-//! 三个消费点（chat 主对话 / probe 主动话术 / distill+diary 后台任务）统一经本模块
+//! 消费点（chat 主对话 / probe 主动话术 / distill+diary 后台任务 / translate 划词翻译内置通道）统一经本模块
 //! 记账，口径不漂移：
 //! - **仅内置额度段**（tier=builtin）落明细——仓储层 `should_charge` 把关，自定义 BYOK 不落库；
 //! - token 来源：接口 `usage` 优先；缺失时按字符数端侧估算（token_source=estimated）；

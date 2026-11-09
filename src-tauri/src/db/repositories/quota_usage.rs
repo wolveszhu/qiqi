@@ -38,7 +38,7 @@ pub fn estimate_tokens(chars: usize) -> i64 {
 pub struct QuotaUsageInput<'a> {
     /// 本地日期 `YYYY-MM-DD`（决定归属周期）。
     pub date: &'a str,
-    /// 场景：chat / proactive / distill / diary。
+    /// 场景：chat / proactive / distill / diary / translate（划词翻译内置通道）。
     pub scene: &'a str,
     /// 命中链段：builtin（记账）/ custom（不落库）。
     pub tier: &'a str,
