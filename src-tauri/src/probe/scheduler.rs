@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::cursor;
 use super::foreground;
 use super::idle;
+use super::selection;
 use crate::config::{FOREGROUND_PROBE_EVERY_N, IDLE_THRESHOLD_MS, PROBE_INTERVAL_MS};
 use crate::state::AppState;
 
@@ -120,6 +121,9 @@ pub fn start_cursor_probe(app: AppHandle) {
                     }
                 }
             }
+
+            // 4) 划词手势：只在同一 100ms 轮询里检查置位并 emit，不新增轮询线程。
+            selection::poll_selection(&app);
 
             std::thread::sleep(Duration::from_millis(PROBE_INTERVAL_MS));
         }

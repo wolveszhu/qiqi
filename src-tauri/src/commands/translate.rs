@@ -6,9 +6,11 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::models::{
-    SaveTranslateSettingsPayload, TranslateErrorPayload, TranslateResultDto, TranslateSettingsDto,
+    CapturedSelectionDto, SaveTranslateSettingsPayload, TranslateErrorPayload, TranslateResultDto,
+    TranslateSettingsDto,
 };
 use crate::error::AppError;
+use crate::probe::selection;
 use crate::state::AppState;
 use crate::translate::service;
 
@@ -45,6 +47,20 @@ pub fn translate_settings_save(
 ) -> Result<(), AppError> {
     let conn = state.db.lock().map_err(db_lock_err)?;
     service::save_settings(&conn, payload)
+}
+
+/// 用户点击小图标后取词（UIA 待接入；当前为剪贴板法，备份后恢复）。
+#[tauri::command]
+pub fn translate_capture_selection(
+    selection_key: String,
+) -> Result<CapturedSelectionDto, AppError> {
+    selection::capture_selection(&selection_key)
+}
+
+/// 复制译文到系统剪贴板（用户主动点击，Rust 侧写入）。
+#[tauri::command]
+pub fn translate_copy_result(text: String) -> Result<(), AppError> {
+    selection::write_clipboard_text(&text)
 }
 
 /// 翻译选中文本；成功后 emit `translate:result`，失败 emit `translate:error` 并返回 Err。

@@ -99,6 +99,8 @@ pub fn run() {
             window::tray::build_tray(app, &locale)?;
             let handle = app.handle().clone();
             probe::scheduler::start_cursor_probe(handle.clone());
+            // 划词翻译：全局鼠标钩子（自带消息循环），事件仍由 scheduler 的 100ms 轮询 emit。
+            crate::probe::selection::start_selection_hook();
             start_click_through_sync(handle.clone());
 
             // [C5] 启动衰减结算：异步、失败仅 log 不阻断窗口（幂等）
@@ -202,6 +204,8 @@ pub fn run() {
             commands::translate::translate_settings_save,
             commands::translate::translate_execute,
             commands::translate::translate_retry,
+            commands::translate::translate_capture_selection,
+            commands::translate::translate_copy_result,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -135,6 +135,16 @@ pub const TRANSLATE_MAX_CHARS: usize = 2_000;
 pub const TRANSLATE_CONNECT_TIMEOUT_SECS: u64 = 10;
 pub const TRANSLATE_TIMEOUT_SECS: u64 = 30;
 
+/// 划词手势判定：最小位移（像素）、最短/最长按压时长（毫秒）。
+pub const SELECTION_MIN_DRAG_PX: i64 = 8;
+pub const SELECTION_MIN_DRAG_MS: i64 = 60;
+pub const SELECTION_MAX_DRAG_MS: i64 = 8_000;
+/// 同一位置选区事件的去重窗口（毫秒）。
+pub const SELECTION_DEDUPE_MS: i64 = 1_500;
+/// 模拟复制后等待剪贴板更新的轮询次数与间隔。
+pub const SELECTION_CLIPBOARD_TRIES: u32 = 10;
+pub const SELECTION_CLIPBOARD_WAIT_MS: u64 = 50;
+
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
 ///
 /// 注意：此处**不含宠物名**——名字由 `pet_states.pet_name` 动态注入
