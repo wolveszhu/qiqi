@@ -134,6 +134,8 @@ const UPDATE_ALLOW = new Set([
   "quota_usage",
   "quota_usage_monthly",
   "translate_settings",
+  // M14：内置翻译兜底上限对齐每家每月 5,000（全表对齐同一常量，幂等）。
+  "builtin_translate_providers",
 ]);
 const migrationsDir = abs("src-tauri", "src", "db", "migrations");
 const sqlFiles = readdirSync(migrationsDir).filter((name) => name.endsWith(".sql"));

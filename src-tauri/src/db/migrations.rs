@@ -1,4 +1,4 @@
-//! 有序迁移链 M1–M13（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
+//! 有序迁移链 M1–M14（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
 //!
 //! 链全表与改表操作路径见同目录 `README.md` §3–§4。
 //! 铁律：任何结构变更都**追加新迁移**，禁止改历史 SQL；每条迁移独立事务、失败回滚；
@@ -17,13 +17,15 @@ use crate::config::EMBEDDING_DIM;
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1（操作路径见 `README.md` §4.1）；
 /// `connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 13;
+pub const TARGET_VERSION: usize = 15;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered → M4 dnd/频率 →
 /// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 →
 /// M9 搜索配置 → M10 额度平台维度与存量回填 → M11 划词翻译配置表 →
 /// M12 内置翻译凭据种子 + 用户自填多服务商表 →
-/// M13 内置翻译服务商表（百度 + 讯飞凭据与各自月度上限））。
+/// M13 内置翻译服务商表（百度 + 讯飞凭据与各自月度上限）→
+/// M14 兜底上限对齐每家每月 5,000 →
+/// M15 custom_avatars 自定义导入形象表）。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -76,6 +78,10 @@ pub fn chain() -> Migrations<'static> {
         M::up(include_str!("migrations/M12__translate_providers.sql")),
         // M13：内置翻译服务商表 + 百度 / 讯飞凭据种子 + 各自月度上限（协同选路的数据源）。
         M::up(include_str!("migrations/M13__builtin_translate_providers.sql")),
+        // M14：兜底上限对齐每家每月 5,000（存量库与全新库统一口径）。
+        M::up(include_str!("migrations/M14__builtin_translate_cap_5000.sql")),
+        // M15：custom_avatars 自定义导入形象表（仅建表，无种子）。
+        M::up(include_str!("migrations/M15__custom_avatars.sql")),
     ])
 }
 
@@ -202,6 +208,38 @@ mod tests {
         assert_eq!(count, 2, "重复迁移不新增行");
         assert_eq!(granted, 1234, "不得覆盖用户设置的额度");
         assert_eq!(can_use, 2, "不得覆盖用户启停");
+    }
+
+    #[test]
+    fn m14_aligns_builtin_monthly_caps_to_5000() {
+        crate::db::connection::register_vec_extension().expect("vec 注册");
+        let mut conn = rusqlite::Connection::open_in_memory().expect("内存库");
+        chain().to_version(&mut conn, 13).expect("迁移到 M13");
+        let before: i64 = conn
+            .query_row("SELECT MIN(monthly_granted) FROM builtin_translate_providers", [], |row| {
+                row.get(0)
+            })
+            .expect("读 M13 上限");
+        assert_eq!(before, 50_000, "M13 种子为 50,000");
+
+        chain().to_latest(&mut conn).expect("迁移到 M14");
+        let (min, max): (i64, i64) = conn
+            .query_row(
+                "SELECT MIN(monthly_granted), MAX(monthly_granted) FROM builtin_translate_providers",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("读对齐后上限");
+        assert_eq!((min, max), (5_000, 5_000), "M14 把两家兜底上限对齐到每月 5,000");
+
+        // 幂等：重复执行迁移结果不变（全表对齐同一常量，天然幂等）。
+        chain().to_latest(&mut conn).expect("重复迁移");
+        let again: i64 = conn
+            .query_row("SELECT MIN(monthly_granted) FROM builtin_translate_providers", [], |row| {
+                row.get(0)
+            })
+            .expect("重复读");
+        assert_eq!(again, 5_000);
     }
 
     #[test]

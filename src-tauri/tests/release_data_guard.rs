@@ -50,7 +50,7 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
 /// 发布构建中禁止出现的测试 / 临时数据标记（与 README §7.2 一致）。
 const FORBIDDEN_MARKERS: &[&str] = &["sk-old", "old/v1", "TEST_", "test-fixture", "mock-data"];
 
-/// 新建临时库并跑完 M1–M13，等价于用户首次启动。
+/// 新建临时库并跑完 M1–M14，等价于用户首次启动。
 fn fresh_db() -> (tempfile::TempDir, Connection) {
     register_vec_extension().expect("vec 注册");
     let dir = tempfile::tempdir().expect("临时目录");
@@ -212,8 +212,8 @@ fn baseline_values_are_production_defaults() {
     assert_eq!(providers[0].0, "baidu");
     assert_eq!(providers[1].0, "xfyun");
     assert!(
-        providers.iter().all(|p| !p.1.is_empty() && !p.2.is_empty() && p.4 > 0),
-        "两家 APPID / 签名密钥 / 月度上限均须就绪"
+        providers.iter().all(|p| !p.1.is_empty() && !p.2.is_empty() && p.4 == 5_000),
+        "两家 APPID / 签名密钥须就绪，兜底上限应为每月 5,000（M14 对齐）"
     );
     assert!(!providers[1].3.is_empty(), "讯飞 APIKey 不得缺失");
 }

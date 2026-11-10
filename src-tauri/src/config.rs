@@ -133,9 +133,9 @@ pub const XF_TRANSLATE_URL: &str = "https://itrans.xf-yun.com/v1/its";
 pub const XF_TRANSLATE_HOST: &str = "itrans.xf-yun.com";
 pub const XF_TRANSLATE_REQUEST_LINE: &str = "POST /v1/its HTTP/1.1";
 
-/// 每家内置翻译服务的月度额度上限（credits，由 M13 种子在底层固定，不对外暴露配置入口）。
-/// 两家各 50,000 = 全局 `QUOTA_MONTHLY_CREDITS`，仅作安全兜底；防单家过量靠按用量自动均衡。
-pub const BUILTIN_TRANSLATE_MONTHLY_GRANTED: i64 = 50_000;
+/// 每家内置翻译服务的月度额度上限（credits，由 M13 种子 + M14 对齐在底层固定，不对外暴露配置入口）。
+/// 两家各 5,000，仅作安全兜底；防单家过量靠按用量自动均衡，达到上限即提示用户添加自定义翻译服务商。
+pub const BUILTIN_TRANSLATE_MONTHLY_GRANTED: i64 = 5_000;
 
 /// 单次翻译原文上限（百度官方建议 ≤2000 字符；讯飞上限 5000，取更保守值）。
 pub const TRANSLATE_MAX_CHARS: usize = 2_000;
