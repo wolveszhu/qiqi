@@ -49,7 +49,7 @@ export default {
       loading: "翻译中…",
       builtin: "内置",
       custom: "自定义",
-      quotaExhausted: "内置额度已用尽，请切换自定义翻译服务",
+      quotaExhausted: "两家内置服务额度均已用尽，可提高月度上限或改用自定义服务",
     },
     panel: {
       title: "划词翻译",
@@ -119,6 +119,10 @@ export default {
       configDisabled: "划词翻译已在设置中关闭",
       configNoCredential:
         "没有可用凭据：请注入内置凭据，或在设置中填写自定义服务的密钥与应用 ID",
+      builtinUnavailable:
+        "两家内置翻译服务都已停用或凭据缺失，请在「设置 → 划词翻译」中启用其一",
+      builtinExhausted:
+        "两家内置翻译服务本月额度均已用尽，可提高月度上限或添加自定义服务商",
       unknown: "发生未知错误，请重试",
     },
     copied: "译文已复制",

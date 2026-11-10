@@ -59,7 +59,8 @@ export default {
       loading: "Translating…",
       builtin: "Built-in",
       custom: "Custom",
-      quotaExhausted: "Built-in quota exhausted; switch to a custom translation service",
+      quotaExhausted:
+        "Both built-in services have reached their caps. Raise a cap or use a custom service.",
     },
     panel: {
       title: "Text Translation",
@@ -131,6 +132,10 @@ export default {
       configDisabled: "Text translation is turned off in settings.",
       configNoCredential:
         "No credentials available. Inject the built-in credentials, or enter a custom API key and app ID in settings.",
+      builtinUnavailable:
+        "Both built-in translation services are disabled or missing credentials. Enable one in Settings → Text Translation.",
+      builtinExhausted:
+        "Both built-in services have reached their monthly caps. Raise a cap or add a custom service.",
       unknown: "An unknown error occurred. Please try again.",
     },
     copied: "Translation copied",

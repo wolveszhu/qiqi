@@ -20,6 +20,7 @@ import {
   executeTranslate,
   getTranslateSettings,
   hideTranslatePopup,
+  listBuiltinTranslateProviders,
   retryTranslate,
   showTranslatePopup,
 } from "../../api/translate";
@@ -61,13 +62,22 @@ function localizedError(e: unknown): string {
 }
 
 /**
- * 配置类错误的进一步诊断：读一次脱敏配置快照，区分「总开关关闭」与「没有凭据」，
- * 让提示可行动；查询失败或其余场景（额度 / 语种 / 取词）仍走通用本地化文案。
+ * 配置类错误的进一步诊断：读脱敏配置 + 内置服务商状态，区分「总开关关闭」、
+ * 「两家都停用/凭据缺失」、「两家都达月度上限」，让提示可行动。
+ * 取词失败已归为 probe，不会走到这里；查询失败仍回落到通用文案。
  */
 async function configHint(): Promise<string> {
   try {
-    const settings = await getTranslateSettings();
+    const [settings, builtins] = await Promise.all([
+      getTranslateSettings(),
+      listBuiltinTranslateProviders(),
+    ]);
     if (!settings.enabled) return t("translate.error.configDisabled");
+    const usable = builtins.filter((p) => p.enabled && p.hasCredential);
+    if (usable.length === 0) return t("translate.error.builtinUnavailable");
+    if (usable.every((p) => p.used >= p.monthlyGranted)) {
+      return t("translate.error.builtinExhausted");
+    }
     if (!settings.hasBuiltinCredential && !settings.hasCustomKey) {
       return t("translate.error.configNoCredential");
     }
