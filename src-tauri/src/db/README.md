@@ -46,6 +46,7 @@
 | `translate_settings` | 划词翻译配置，单行 `id=1`（M11 建表、M12 播内置凭据） | M11 + M12 | `translate_settings.rs` | — |
 | `custom_translate_providers` | 用户自填的多个翻译服务商（自填优先） | M12 | `custom_translate_providers.rs` | `CustomTranslateProviderRow`（就近） |
 | `builtin_translate_providers` | 内置翻译服务商（百度 + 讯飞）凭据、启停与各自月度上限 | M13 | `builtin_translate_providers.rs` | `BuiltinProviderRow`（就近） |
+| `custom_avatars` | 用户导入的自定义形象（多实例，与内置猫狗并列；只存相对路径） | M15 | `custom_avatars.rs` | `CustomAvatarRow`（就近） |
 
 说明：
 
@@ -68,7 +69,7 @@
   `models/rows.rs`，避免经 `pub use` 重导出扩散到全 crate。
 - 无独立 Row 的表由仓储直接投影为 DTO 或使用局部类型。
 
-## 3. 迁移链（M1–M14）
+## 3. 迁移链（M1–M15）
 
 | 版本 | 文件 / 来源 | 类型 | 内容 |
 | :--- | :--- | :--- | :--- |
@@ -86,12 +87,13 @@
 | M12 | `M12__translate_providers.sql` | 种子 + DDL | 内置百度翻译凭据幂等种子、用户自填多服务商表 |
 | M13 | `M13__builtin_translate_providers.sql` | DDL + 种子 | 内置翻译服务商表、百度 / 讯飞凭据与各自月度上限 |
 | M14 | `M14__builtin_translate_cap_5000.sql` | 数据迁移 | 兜底上限对齐每家每月 5,000（存量库与全新库统一口径） |
+| M15 | `M15__custom_avatars.sql` | DDL | 自定义导入形象表（仅建表，无种子，用户自导） |
 
 **M2 没有 SQL 文件是有意设计，不是遗漏**：vec0 的 `float[dim]` 必须与
 `config::EMBEDDING_DIM` 单点一致，而 `M::up` 只接受 `&'static str`，故在
 `chain()` 内用 `format!` 渲染后 `Box::leak`。请勿补一个静态 M2 文件。
 
-`TARGET_VERSION = 14`（= 链上迁移条数），由 `connection::apply_migrations` 用于
+`TARGET_VERSION = 15`（= 链上迁移条数），由 `connection::apply_migrations` 用于
 版本三分支：相等跳过 / 大于失败关闭 / 小于（且有数据）先备份 `pet.db.bak` 再迁移。
 
 ## 4. 新增或修改数据表的操作路径
@@ -157,7 +159,7 @@
 
 安装包**不含任何 `.db` 文件**：`tauri.conf.json` 未配置 `bundle.resources`，
 `build.rs` 无拷贝逻辑，`lib.rs` 在 `app_data_dir()/pet.db` 首次启动现场建库。
-种子以 `include_str!` 编译进二进制，由迁移链 M1–M14 写入。
+种子以 `include_str!` 编译进二进制，由迁移链 M1–M15 写入。
 
 因此治理对象是**迁移 SQL 与构建输入**，不是磁盘上的库文件；"自动排除测试数据"
 落实为「构建期扫描 + 运行时基线断言 + CI 阻断」，而不是打包时清理 `.db`。
@@ -176,6 +178,7 @@
 | `search_settings` | 1 | 系统基础：`tavily` / 未启用 / 空 Key |
 | `translate_settings` | 1 | 系统基础：`baidu` / `auto` / 默认开启 / 空自定义 Key（内置凭据由 M12 种子写入） |
 | `builtin_translate_providers` | 2 | 系统基础：百度 / 讯飞内置凭据 + 兜底上限每月 5,000（M13 种子、M14 对齐） |
+| `custom_avatars` | 0 | 用户自配，首发不得预置（M15 仅建表，无种子） |
 | `messages` | 0 | 运行时对话 |
 | `summaries` | 0 | 运行时摘要 |
 | `facts` | 0 | 运行时蒸馏事实 |
@@ -203,7 +206,7 @@
 | :--- | :--- | :--- | :--- |
 | 1 定义 | 本文件 §7.2 | 人工维护 | 基线的单一真源，改表时同步 |
 | 2 静态守卫 | `scripts/verify-release-data.mjs` | `pnpm verify:release-data` | 校验 `bundle.resources` 为空、扫描源码/`dist` 无数据文件；`dist` 命中自动删除并报告，源码命中直接失败；扫描迁移 SQL 无测试标记、INSERT 白名单 |
-| 3 运行时守卫 | `src-tauri/tests/release_data_guard.rs` | `cargo test --test release_data_guard` | 干净空库跑完 M1–M14，断言表集合、逐表行数、关键默认值与无测试串 |
+| 3 运行时守卫 | `src-tauri/tests/release_data_guard.rs` | `cargo test --test release_data_guard` | 干净空库跑完 M1–M15，断言表集合、逐表行数、关键默认值与无测试串 |
 | 4 CI 阻断 | `.github/workflows/release.yml` | 打 `v*` tag | 在 `tauri-action` **之前**依次跑 2、3，任一失败即中止、不产出 Release |
 
 新增迁移若改变行数或表集合，必须同步改 §7.2 与 `release_data_guard.rs`
