@@ -1,4 +1,4 @@
-//! 翻译服务商抽象与四个 preset 实现（百度 / DeepL / 有道 / Google）。
+//! 翻译服务商抽象与五个 preset 实现（百度 / 讯飞 / DeepL / 有道 / Google）。
 //!
 //! 第三方接口要点均核对自官方接入文档后写入（baseline §G）：
 //! - 百度：`POST fanyi-api.baidu.com/api/trans/vip/translate` 表单 q/from/to/appid/salt/sign，
@@ -8,7 +8,11 @@
 //! - 有道：`POST openapi.youdao.com/api` 表单 q/from/to/appKey/salt/sign/signType=v3/curtime，
 //!   `sign = sha256(appKey + input + salt + curtime + 应用密钥)`，返回 `translation[]` / `errorCode`；
 //! - Google：`POST translation.googleapis.com/language/translate/v2?key=`，JSON q/source/target/format，
-//!   返回 `data.translations[].translatedText`。
+//!   返回 `data.translations[].translatedText`；
+//! - 讯飞机器翻译（新）：`POST itrans.xf-yun.com/v1/its`，URL query 带 `host/date/authorization`，
+//!   签名为 `base64(HMAC-SHA256(APISecret, "host: ..\ndate: ..\nPOST /v1/its HTTP/1.1"))`，
+//!   请求体 `payload.input_data.text` 为原文 base64，响应 `payload.result.text` 为 base64(JSON)，
+//!   取 `trans_result.dst`；中文语种代码是 `cn` 而非 `zh`。
 //!
 //! 红线：错误只带 HTTP 状态或官方错误码，**不回显响应体 / Key / 原文 / 译文**；
 //! `reqwest::Error` 不得用 `?` 直接转换——其 Display 可能带含 Key 的 URL。
@@ -16,6 +20,9 @@
 use std::sync::OnceLock;
 
 use async_trait::async_trait;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
+use hmac::{Hmac, Mac};
 use md5::{Digest as _, Md5};
 use serde_json::Value;
 use sha2::Sha256;
@@ -70,10 +77,18 @@ impl Lang {
         }
     }
 
+    /// 讯飞机器翻译（新）语言代码：中文是 `cn`，英文是 `en`。
+    pub fn xfyun_code(self) -> &'static str {
+        match self {
+            Lang::Zh => "cn",
+            Lang::En => "en",
+        }
+    }
+
     /// 解析服务商返回的检测语种；仅接受中英常见别名，其它语言返回 None（本版不支持）。
     pub fn parse(raw: &str) -> Option<Lang> {
         match raw.to_ascii_lowercase().as_str() {
-            "zh" | "zh-cn" | "zh-chs" | "zh-hans" | "chi" => Some(Lang::Zh),
+            "zh" | "cn" | "zh-cn" | "zh-chs" | "zh-hans" | "chi" => Some(Lang::Zh),
             "en" | "en-us" | "en-gb" => Some(Lang::En),
             _ => None,
         }
@@ -86,10 +101,12 @@ pub struct TranslateRequest<'a> {
     pub text: &'a str,
     pub source: Lang,
     pub target: Lang,
-    /// 百度 / 有道的应用 ID；DeepL / Google 传空串（只用 `secret`）。
+    /// 百度 / 有道 / 讯飞的应用 ID；DeepL / Google 传空串（只用 `secret`）。
     pub app_id: &'a str,
-    /// 密钥 / API Key。
+    /// 签名密钥：百度密钥 / 有道应用密钥 / 讯飞 APISecret；DeepL / Google 的 API Key。
     pub secret: &'a str,
+    /// 仅讯飞需要的 APIKey（参与 `authorization_origin`）；其余服务商传空串。
+    pub api_key: &'a str,
 }
 
 /// 服务商返回（检测语种可选，用于纠正自动互译的源语言判定）。
@@ -263,6 +280,120 @@ impl TranslateProvider for BaiduProvider {
             translated_text,
             detected_source: body.get("from").and_then(Value::as_str).and_then(Lang::parse),
         })
+    }
+}
+
+// ---------- 内置零配置通道：讯飞机器翻译（新） ----------
+
+/// RFC1123 GMT 时间戳（服务端允许 ±300 秒时钟偏移）。
+fn rfc1123_gmt_now() -> String {
+    chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+}
+
+/// 生成讯飞 `authorization` query 参数：`base64(authorization_origin)`。
+///
+/// 官方文档口径：`signature_origin = "host: {host}\ndate: {date}\n{request-line}"`，
+/// 以 APISecret 为密钥做 HMAC-SHA256 后 base64 得 `signature`；再拼
+/// `authorization_origin`（含 APIKey）整体 base64。
+fn xf_authorization(
+    date: &str,
+    host: &str,
+    api_key: &str,
+    api_secret: &str,
+) -> Result<String, AppError> {
+    let origin =
+        format!("host: {host}\ndate: {date}\n{}", crate::config::XF_TRANSLATE_REQUEST_LINE);
+    let mut mac = Hmac::<Sha256>::new_from_slice(api_secret.as_bytes())
+        .map_err(|_| AppError::Config("讯飞签名密钥无效".into()))?;
+    mac.update(origin.as_bytes());
+    let signature = B64.encode(mac.finalize().into_bytes());
+    let authorization_origin = format!(
+        "api_key=\"{api_key}\",algorithm=\"hmac-sha256\",headers=\"host date request-line\",signature=\"{signature}\""
+    );
+    Ok(B64.encode(authorization_origin.as_bytes()))
+}
+
+/// 讯飞机器翻译（新）API（内置凭据，计入内置额度）。
+pub struct XunfeiProvider;
+
+#[async_trait]
+impl TranslateProvider for XunfeiProvider {
+    fn id(&self) -> &'static str {
+        "xfyun"
+    }
+
+    fn is_builtin(&self) -> bool {
+        true
+    }
+
+    async fn translate(
+        &self,
+        http: &reqwest::Client,
+        req: TranslateRequest<'_>,
+    ) -> Result<TranslationOutcome, AppError> {
+        let host = crate::config::XF_TRANSLATE_HOST;
+        let date = rfc1123_gmt_now();
+        let authorization = xf_authorization(&date, host, req.api_key, req.secret)?;
+        let body = serde_json::json!({
+            "header": { "app_id": req.app_id, "status": 3 },
+            "parameter": {
+                "its": {
+                    "from": req.source.xfyun_code(),
+                    "to": req.target.xfyun_code(),
+                    "result": {}
+                }
+            },
+            "payload": {
+                "input_data": {
+                    "encoding": "utf8",
+                    "status": 3,
+                    "text": B64.encode(req.text.as_bytes())
+                }
+            }
+        });
+        // 鉴权参数全走 query；reqwest 负责 URL 编码（date 含空格与逗号）。
+        let resp = http
+            .post(crate::config::XF_TRANSLATE_URL)
+            .query(&[
+                ("authorization", authorization.as_str()),
+                ("host", host),
+                ("date", date.as_str()),
+            ])
+            .json(&body)
+            .send()
+            .await
+            .map_err(network_error)?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(status_error("讯飞翻译", status));
+        }
+        let body: Value = resp.json().await.map_err(network_error)?;
+        let code =
+            body.get("header").and_then(|h| h.get("code")).and_then(Value::as_i64).unwrap_or(-1);
+        if code != 0 {
+            return Err(AppError::Llm(format!("讯飞翻译错误码 {code}")));
+        }
+        let encoded = body
+            .get("payload")
+            .and_then(|p| p.get("result"))
+            .and_then(|r| r.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let decoded =
+            B64.decode(encoded).map_err(|_| AppError::Llm("讯飞翻译响应解码失败".into()))?;
+        let inner: Value = serde_json::from_slice(&decoded)
+            .map_err(|_| AppError::Llm("讯飞翻译响应解析失败".into()))?;
+        let translated_text = inner
+            .get("trans_result")
+            .and_then(|t| t.get("dst"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if translated_text.is_empty() {
+            return Err(AppError::Llm("讯飞翻译返回空结果".into()));
+        }
+        let detected_source = inner.get("from").and_then(Value::as_str).and_then(Lang::parse);
+        Ok(TranslationOutcome { translated_text, detected_source })
     }
 }
 
@@ -441,6 +572,7 @@ impl TranslateProvider for GoogleProvider {
 pub fn provider_for(id: &str) -> Result<Box<dyn TranslateProvider>, AppError> {
     match id {
         "baidu" => Ok(Box::new(BaiduProvider)),
+        "xfyun" => Ok(Box::new(XunfeiProvider)),
         "deepl" => Ok(Box::new(DeeplProvider)),
         "youdao" => Ok(Box::new(YoudaoProvider)),
         "google" => Ok(Box::new(GoogleProvider)),
@@ -475,10 +607,38 @@ mod tests {
     #[test]
     fn lang_parse_accepts_zh_en_aliases_only() {
         assert_eq!(Lang::parse("zh-CHS"), Some(Lang::Zh));
+        assert_eq!(Lang::parse("cn"), Some(Lang::Zh), "讯飞中文代码是 cn");
         assert_eq!(Lang::parse("EN-US"), Some(Lang::En));
         assert_eq!(Lang::parse("ja"), None);
         assert_eq!(Lang::Zh.opposite(), Lang::En);
         assert_eq!(Lang::En.opposite(), Lang::Zh);
+        assert_eq!(Lang::Zh.xfyun_code(), "cn");
+        assert_eq!(Lang::En.xfyun_code(), "en");
+    }
+
+    #[test]
+    fn xf_authorization_is_deterministic_and_well_formed() {
+        let date = "Thu, 18 Nov 2021 03:05:18 GMT";
+        let host = crate::config::XF_TRANSLATE_HOST;
+        let a = xf_authorization(date, host, "apikey-1", "apisecret-1").expect("签名");
+        assert_eq!(a, xf_authorization(date, host, "apikey-1", "apisecret-1").expect("同参一致"));
+        assert_ne!(a, xf_authorization(date, host, "apikey-1", "apisecret-2").expect("换密钥变化"));
+        let origin =
+            String::from_utf8(B64.decode(&a).expect("authorization 为 base64")).expect("UTF-8");
+        assert!(origin.contains("api_key=\"apikey-1\""));
+        assert!(origin.contains("algorithm=\"hmac-sha256\""));
+        assert!(origin.contains("headers=\"host date request-line\""));
+        let signature =
+            origin.split("signature=\"").nth(1).and_then(|s| s.strip_suffix('"')).unwrap_or("");
+        assert_eq!(signature.len(), 44, "HMAC-SHA256 的 base64 长度为 44");
+    }
+
+    #[test]
+    fn xf_rfc1123_date_is_gmt_formatted() {
+        let date = rfc1123_gmt_now();
+        assert!(date.ends_with(" GMT"), "必须 GMT 结尾: {date}");
+        assert!(date.contains(", "), "RFC1123 需含星期与逗号: {date}");
+        assert_eq!(date.len(), 29, "形如 Thu, 18 Nov 2021 03:05:18 GMT");
     }
 
     #[test]
@@ -486,6 +646,8 @@ mod tests {
         assert!(provider_for("bing").is_err());
         assert_eq!(provider_for("baidu").expect("百度").id(), "baidu");
         assert!(provider_for("baidu").expect("百度").is_builtin());
+        assert_eq!(provider_for("xfyun").expect("讯飞").id(), "xfyun");
+        assert!(provider_for("xfyun").expect("讯飞").is_builtin());
         assert!(!provider_for("deepl").expect("DeepL").is_builtin());
     }
 }

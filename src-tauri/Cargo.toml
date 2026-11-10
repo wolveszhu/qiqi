@@ -34,9 +34,10 @@ tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 futures-util = "0.3"
 async-trait = "0.1"
-# 划词翻译签名：百度 MD5 / 有道 SHA256（RustCrypto 纯 Rust，版本核实自 crates.io）
+# 划词翻译签名：百度 MD5 / 有道 SHA256 / 讯飞 HMAC-SHA256（RustCrypto 纯 Rust）
 md-5 = "0.10"
 sha2 = "0.10"
+hmac = "0.12"
 arboard = "3" # 划词翻译：剪贴板备份/恢复与译文复制（纯 Rust，内部走 Win32 剪贴板 API）
 chrono = { version = "0.4", features = ["clock"] }  # C5 衰减结算的本地日期/天数差
 

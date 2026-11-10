@@ -122,14 +122,22 @@ pub const BAIDU_TRANSLATE_APPID: Option<&str> = option_env!("QIQI_BAIDU_APPID");
 /// 内置百度翻译密钥（同上，与 APPID 成对注入）。
 pub const BAIDU_TRANSLATE_SECRET: Option<&str> = option_env!("QIQI_BAIDU_SECRET");
 
-/// 四个翻译服务的官方 endpoint（接入文档核对后集中在此，禁止散落到 preset）。
+/// 五个翻译服务的官方 endpoint（接入文档核对后集中在此，禁止散落到 preset）。
 pub const BAIDU_TRANSLATE_URL: &str = "https://fanyi-api.baidu.com/api/trans/vip/translate";
 pub const DEEPL_TRANSLATE_PRO_URL: &str = "https://api.deepl.com/v2/translate";
 pub const DEEPL_TRANSLATE_FREE_URL: &str = "https://api-free.deepl.com/v2/translate";
 pub const YOUDAO_TRANSLATE_URL: &str = "https://openapi.youdao.com/api";
 pub const GOOGLE_TRANSLATE_URL: &str = "https://translation.googleapis.com/language/translate/v2";
+/// 讯飞机器翻译（新）：`POST /v1/its`，鉴权参数走 URL query。
+pub const XF_TRANSLATE_URL: &str = "https://itrans.xf-yun.com/v1/its";
+pub const XF_TRANSLATE_HOST: &str = "itrans.xf-yun.com";
+pub const XF_TRANSLATE_REQUEST_LINE: &str = "POST /v1/its HTTP/1.1";
 
-/// 单次翻译原文上限（百度官方建议 ≤2000 字符，按字符计费）。
+/// 每家内置翻译服务的默认月度额度上限（credits，可在设置页修改）。
+/// 两家各 50,000 = 全局 `QUOTA_MONTHLY_CREDITS`，避免某一家的免费额度被单方耗尽。
+pub const BUILTIN_TRANSLATE_MONTHLY_GRANTED: i64 = 50_000;
+
+/// 单次翻译原文上限（百度官方建议 ≤2000 字符；讯飞上限 5000，取更保守值）。
 pub const TRANSLATE_MAX_CHARS: usize = 2_000;
 /// 翻译 HTTP 连接超时 / 总超时（秒）。
 pub const TRANSLATE_CONNECT_TIMEOUT_SECS: u64 = 10;
