@@ -11,6 +11,7 @@ import { onMounted, onUnmounted, reactive, watch } from "vue";
 import { getState } from "../api/pet";
 import { setHitRegion } from "../api/window";
 import { createRenderer } from "../renderer/factory";
+import { loadCustomAvatars } from "../renderer/customAvatarRegistry";
 import type { IPetRenderer } from "../renderer/IPetRenderer";
 import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
 import type { HitRegion } from "../api/types";
@@ -152,6 +153,12 @@ export function usePetRenderer(): UsePetRendererApi {
     if (!container) return;
     // 先拉回**持久化的**形象 id 再建渲染器：store 初始值是 `code_cat`，
     // 若直接建，用户存的是狗也会先画猫、再靠下面的 watch 跳变（重启后表现为"显示成猫"）。
+    // 自定义形象（custom:<uuid>）需先填充注册表，否则 createRenderer 找不到配置会回落猫。
+    try {
+      await loadCustomAvatars();
+    } catch (e: unknown) {
+      console.warn("[pet] 自定义形象注册表加载失败（仅内置形象可用）", e);
+    }
     try {
       applyPetState(await getState());
     } catch (e: unknown) {

@@ -11,22 +11,31 @@
 import type { IPetRenderer } from "./IPetRenderer";
 import { CodeCatRenderer } from "./CodeCatRenderer";
 import { CodeDogRenderer } from "./CodeDogRenderer";
+import { CustomSpriteRenderer } from "./CustomSpriteRenderer";
+import { getCustomConfig, uuidFromFullId } from "./customAvatarRegistry";
 
 type RendererFactory = () => IPetRenderer;
 
 const registry = new Map<string, RendererFactory>([
   ["code_cat", () => new CodeCatRenderer()],
   ["code_dog", () => new CodeDogRenderer()],
-  // TODO(Phase3): ["custom_sprite", () => new CustomSpriteRenderer()]
 ]);
 
 /** 按 active_renderer 创建实例；未知值回落 code_cat（容错，不抛）。 */
 export function createRenderer(activeRenderer: string): IPetRenderer {
-  const factory = registry.get(activeRenderer) ?? registry.get("code_cat");
-  if (!factory) {
+  const factory = registry.get(activeRenderer);
+  if (factory) return factory();
+  // 自定义形象：custom:<uuid> → 取注册表配置构造精灵渲染器
+  const uuid = uuidFromFullId(activeRenderer);
+  if (uuid) {
+    const cfg = getCustomConfig(uuid);
+    if (cfg) return new CustomSpriteRenderer(cfg);
+  }
+  const fallback = registry.get("code_cat");
+  if (!fallback) {
     throw new Error(`渲染器注册表缺少 code_cat 基线: ${activeRenderer}`);
   }
-  return factory();
+  return fallback();
 }
 
 /** 已注册的渲染器 id 列表（D2 AvatarPanel 展示/禁用态用）。 */
