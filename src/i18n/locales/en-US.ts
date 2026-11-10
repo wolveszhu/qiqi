@@ -60,7 +60,7 @@ export default {
       builtin: "Built-in",
       custom: "Custom",
       quotaExhausted:
-        "Both built-in services have reached their monthly caps. Use a custom service or try again next month.",
+        "Built-in monthly quota is partly used up (5,000 per service). Requests are being served by the other service; consider adding a custom translation service for long-term use.",
     },
     panel: {
       title: "Text Translation",
@@ -123,7 +123,7 @@ export default {
       builtinUnavailable:
         "Both built-in translation services are currently unavailable (missing credentials or disabled). Try again later or add a custom service.",
       builtinExhausted:
-        "Both built-in services have reached their monthly caps. Add a custom service or try again next month.",
+        "Both built-in services have reached their monthly caps (5,000 each). Add a custom translation service or try again next month.",
       unknown: "An unknown error occurred. Please try again.",
     },
     copied: "Translation copied",

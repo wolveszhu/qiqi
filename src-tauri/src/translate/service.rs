@@ -143,21 +143,19 @@ fn builtin_candidates(conn: &Connection) -> Result<Vec<Candidate>, AppError> {
     Ok(ranked.into_iter().map(|(_, _, candidate)| candidate).collect())
 }
 
-/// 所有可用内置服务商是否都已达到各自上限（用于结果里的 `quotaExhausted` 提示）。
-fn builtin_all_exhausted(conn: &Connection) -> Result<bool, AppError> {
+/// 是否已有可用内置服务商达到兜底上限（用于结果里的 `quotaExhausted` 提示）。
+///
+/// 任一家达到每月 5,000 即返回 true：该家已退出候选、由另一家自动接手，
+/// 此时在译文弹窗提示用户添加自定义翻译服务商，避免额度耗尽后才被动报错。
+fn builtin_any_exhausted(conn: &Connection) -> Result<bool, AppError> {
     let period = current_period();
-    let usable: Vec<_> =
-        builtin_repo::list_all(conn)?.into_iter().filter(|r| r.is_usable()).collect();
-    if usable.is_empty() {
-        return Ok(true);
-    }
-    for row in usable {
+    for row in builtin_repo::list_all(conn)?.into_iter().filter(|r| r.is_usable()) {
         let (used, _) = quota_usage::platform_used(conn, &period, &row.name)?;
-        if used < row.monthly_granted {
-            return Ok(false);
+        if used >= row.monthly_granted {
+            return Ok(true);
         }
     }
-    Ok(true)
+    Ok(false)
 }
 
 fn new_result_id() -> String {
@@ -297,7 +295,7 @@ fn finalize(
         provider: candidate.provider_id.clone(),
         service_name: candidate.service_name.clone(),
         is_builtin: plan.is_builtin,
-        quota_exhausted: if plan.is_builtin { builtin_all_exhausted(conn)? } else { false },
+        quota_exhausted: if plan.is_builtin { builtin_any_exhausted(conn)? } else { false },
     })
 }
 
@@ -487,8 +485,10 @@ mod tests {
         let plan = prepare(&conn, "Hello", None).expect("另一家仍可用");
         assert_eq!(plan.candidates.len(), 1, "超额的一家被剔除");
         assert_eq!(plan.candidates[0].provider_id, "xfyun");
+        // 任一家达到上限即触发提示（quotaExhausted），引导用户添加自定义服务商。
+        assert!(builtin_any_exhausted(&conn).expect("超额提示判定"));
 
-        // 两家都到上限 → 全尽并拒绝。
+        // 两家都到上限 → 拒绝。
         conn.execute(
             "UPDATE builtin_translate_providers SET monthly_granted = 1 WHERE provider_id = 'xfyun'",
             [],
@@ -504,7 +504,6 @@ mod tests {
             None,
         )
         .expect("记账");
-        assert!(builtin_all_exhausted(&conn).expect("全尽判定"));
         assert!(prepare(&conn, "Hello", None).is_err(), "两家都用尽应拒绝");
     }
 
