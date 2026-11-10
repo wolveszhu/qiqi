@@ -350,11 +350,4 @@ pub struct BuiltinTranslateProviderDto {
     pub credential_fingerprint: Option<String>,
 }
 
-/// 保存内置服务商配置入参（只改启停与月度上限，凭据只读）。
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SaveBuiltinTranslateProviderPayload {
-    pub id: i64,
-    pub enabled: bool,
-    pub monthly_granted: i64,
-}
+// 内置服务商配置（启停 / 月度上限）由 M13 种子在底层固定，不提供写入入参。

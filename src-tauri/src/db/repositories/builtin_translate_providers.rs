@@ -42,14 +42,14 @@ impl BuiltinProviderRow {
         self.enabled && self.has_credentials()
     }
 
-    /// 凭据末 4 位指纹（设置页脱敏展示；凭据均为 ASCII）。
+    /// 凭据末 4 位指纹（只读诊断视图脱敏展示；凭据均为 ASCII）。
     pub fn credential_fingerprint(&self) -> Option<String> {
         let key = if self.api_key.is_empty() { &self.api_secret } else { &self.api_key };
         if key.len() >= 4 { Some(key[key.len() - 4..].to_string()) } else { None }
     }
 }
 
-/// 按 sort_order 读取全部内置服务商（含停用行，供设置页展示）。
+/// 按 sort_order 读取全部内置服务商（含停用行，供选路与只读诊断）。
 pub fn list_all(conn: &Connection) -> Result<Vec<BuiltinProviderRow>, AppError> {
     let mut stmt = conn
         .prepare(
@@ -95,7 +95,9 @@ pub fn update_credentials(
     Ok(())
 }
 
-/// 设置页保存启停与月度上限（凭据列只读，不受影响）。
+/// 底层调整启停与月度上限（凭据列只读，不受影响）。
+///
+/// 不通过 IPC 暴露：内置两家的配置由 M13 种子固定，前端只做按用量自动均衡。
 pub fn update_config(
     conn: &Connection,
     id: i64,

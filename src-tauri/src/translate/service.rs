@@ -340,8 +340,9 @@ pub async fn retry(state: &AppState, result_id: &str) -> Result<TranslateResultD
 /// 读取配置（Key 脱敏：只回 `hasCustomKey` + 末 4 位指纹）。
 pub fn get_settings(conn: &Connection) -> Result<TranslateSettingsDto, AppError> {
     let row = repo::get(conn)?;
-    // 先取借用型字段，避免 String 字段移动后再借用 row（与 search_settings 同口径）。
-    let has_builtin = row.has_builtin_credential();
+    // 内置凭据真源是 M13 的 builtin_translate_providers，不用 translate_settings
+    // 的 M12 历史列：后者被清空 / 轮换时设置页会误报「内置服务未配置」。
+    let has_builtin = builtin_repo::list_all(conn)?.iter().any(|r| r.is_usable());
     let has_custom = row.has_custom_key();
     let fingerprint = key_fingerprint(&row.custom_api_key);
     Ok(TranslateSettingsDto {
@@ -400,6 +401,16 @@ mod tests {
         assert_eq!(validate_text("  hi  ").expect("去空白"), "hi");
         assert!(validate_text("   ").is_err());
         assert!(validate_text(&"a".repeat(crate::config::TRANSLATE_MAX_CHARS + 1)).is_err());
+    }
+
+    #[test]
+    fn get_settings_reports_builtin_availability_from_m13() {
+        let (_dir, conn) = fresh_db();
+        assert!(get_settings(&conn).expect("读取").has_builtin_credential);
+        conn.execute("UPDATE builtin_translate_providers SET is_can_use = 2", [])
+            .expect("全部停用");
+        // M12 历史列仍有凭据，但对外视图应反映 M13 的真实可用状态。
+        assert!(!get_settings(&conn).expect("读取").has_builtin_credential);
     }
 
     #[test]

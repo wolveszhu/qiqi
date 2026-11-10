@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::db::models::{
     BuiltinTranslateProviderDto, CapturedSelectionDto, CustomTranslateProviderDto,
-    SaveBuiltinTranslateProviderPayload, SaveCustomTranslateProviderPayload,
-    SaveTranslateSettingsPayload, TranslateErrorPayload, TranslateResultDto, TranslateSettingsDto,
+    SaveCustomTranslateProviderPayload, SaveTranslateSettingsPayload, TranslateErrorPayload,
+    TranslateResultDto, TranslateSettingsDto,
 };
 use crate::db::repositories::{
     builtin_translate_providers as builtin_repo, custom_translate_providers as custom_repo,
@@ -259,7 +259,7 @@ pub fn translate_move_custom_provider(
     custom_repo::move_by_one(&conn, id, up).map(|_| ())
 }
 
-// ---------- 内置服务商（百度 + 讯飞）：用量视图与独立额度配置 ----------
+// ---------- 内置服务商（百度 + 讯飞）：只读用量视图（供错误诊断） ----------
 
 /// inner：组装脱敏视图；用量取当月按平台汇总，凭据只回 `has` + 末 4 位指纹。
 fn list_builtin_inner(conn: &Connection) -> Result<Vec<BuiltinTranslateProviderDto>, AppError> {
@@ -285,23 +285,13 @@ fn list_builtin_inner(conn: &Connection) -> Result<Vec<BuiltinTranslateProviderD
     Ok(out)
 }
 
-/// 读取两家内置服务商的当月用量与各自额度上限（凭据脱敏）。
+/// 读取两家内置服务商的当月用量（凭据脱敏；只读，不暴露启停 / 上限写入口）。
 #[tauri::command]
 pub fn translate_list_builtin_providers(
     state: State<'_, AppState>,
 ) -> Result<Vec<BuiltinTranslateProviderDto>, AppError> {
     let conn = state.db.lock().map_err(db_lock_err)?;
     list_builtin_inner(&conn)
-}
-
-/// 保存某家内置服务商的启停与月度上限（凭据只读）。
-#[tauri::command]
-pub fn translate_save_builtin_provider(
-    payload: SaveBuiltinTranslateProviderPayload,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    let conn = state.db.lock().map_err(db_lock_err)?;
-    builtin_repo::update_config(&conn, payload.id, payload.enabled, payload.monthly_granted)
 }
 
 #[cfg(test)]
@@ -386,18 +376,5 @@ mod tests {
         ] {
             assert!(!json.contains(secret), "DTO 不得含明文凭据");
         }
-    }
-
-    #[test]
-    fn save_builtin_updates_quota_and_enablement() {
-        let (_dir, conn) = fresh_db();
-        let before = list_builtin_inner(&conn).expect("列表");
-        let id = before[0].id;
-        builtin_repo::update_config(&conn, id, false, 4321).expect("保存");
-        let after = list_builtin_inner(&conn).expect("读回");
-        let row = after.iter().find(|p| p.id == id).expect("目标行");
-        assert!(!row.enabled);
-        assert_eq!(row.monthly_granted, 4321);
-        assert!(row.has_credential, "凭据不受影响");
     }
 }
