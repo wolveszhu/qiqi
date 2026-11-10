@@ -180,6 +180,27 @@ pub fn platform_breakdown(
     rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
+/// 读指定平台在当月已用量与请求数（无记录返回 `(0, 0)`）。
+///
+/// 内置翻译服务按 `platform` 隔离：只有该服务商的翻译请求会写这一行，
+/// 因此可直接作为「按当月用量选最少的一家」与「各家独立上限」的判据。
+pub fn platform_used(
+    conn: &Connection,
+    period_key: &str,
+    platform: &str,
+) -> Result<(i64, i64), AppError> {
+    match conn.query_row(
+        "SELECT used, requests FROM quota_usage_platform_monthly \
+         WHERE period_key = ?1 AND platform = ?2",
+        params![period_key, platform],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ) {
+        Ok(pair) => Ok(pair),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok((0, 0)),
+        Err(e) => Err(AppError::from(e)),
+    }
+}
+
 /// 读月度明细（倒序；limit 用于限制条数）。
 ///
 /// 存储口径与全应用一致：`created_at` 为 UTC（`CURRENT_TIMESTAMP`），此处经
@@ -344,6 +365,27 @@ mod tests {
         // 明细带出平台名
         let detail = recent(&conn, "2026-10", 10).expect("读明细");
         assert!(detail.iter().any(|r| r.platform == "硅基流动"));
+    }
+
+    #[test]
+    fn platform_used_is_isolated_and_zero_when_absent() {
+        let (_dir, conn) = fresh_db();
+        assert_eq!(platform_used(&conn, "2026-10", "百度翻译").expect("空月"), (0, 0));
+        let mut baidu = input("2026-10-25", "translate", "builtin", 100, 50, true, None);
+        baidu.platform = "百度翻译";
+        record(&conn, &baidu).expect("百度记账");
+        let mut other = input("2026-10-25", "translate", "builtin", 10, 0, true, None);
+        other.platform = "讯飞翻译";
+        record(&conn, &other).expect("讯飞记账");
+        assert_eq!(
+            platform_used(&conn, "2026-10", "百度翻译").expect("百度"),
+            (credits_of(100, 50), 1)
+        );
+        assert_eq!(
+            platform_used(&conn, "2026-10", "讯飞翻译").expect("讯飞"),
+            (credits_of(10, 0), 1)
+        );
+        assert_eq!(platform_used(&conn, "2026-11", "百度翻译").expect("跨月"), (0, 0));
     }
 
     #[test]

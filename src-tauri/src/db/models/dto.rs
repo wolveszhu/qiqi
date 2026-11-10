@@ -332,3 +332,29 @@ pub struct SaveCustomTranslateProviderPayload {
     pub api_key: Option<String>,
     pub enabled: Option<bool>,
 }
+
+/// 内置翻译服务商对外视图（凭据**不明文回传**；含当月用量与各自上限）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinTranslateProviderDto {
+    pub id: i64,
+    pub provider_id: String,
+    /// 展示名，同时是额度记账的 platform 键。
+    pub name: String,
+    pub enabled: bool,
+    pub monthly_granted: i64,
+    pub used: i64,
+    pub requests: i64,
+    pub has_credential: bool,
+    /// 凭据末 4 位指纹（无凭据时为 None）。
+    pub credential_fingerprint: Option<String>,
+}
+
+/// 保存内置服务商配置入参（只改启停与月度上限，凭据只读）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveBuiltinTranslateProviderPayload {
+    pub id: i64,
+    pub enabled: bool,
+    pub monthly_granted: i64,
+}

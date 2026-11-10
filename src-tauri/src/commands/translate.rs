@@ -7,10 +7,14 @@ use rusqlite::Connection;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::models::{
-    CapturedSelectionDto, CustomTranslateProviderDto, SaveCustomTranslateProviderPayload,
+    BuiltinTranslateProviderDto, CapturedSelectionDto, CustomTranslateProviderDto,
+    SaveBuiltinTranslateProviderPayload, SaveCustomTranslateProviderPayload,
     SaveTranslateSettingsPayload, TranslateErrorPayload, TranslateResultDto, TranslateSettingsDto,
 };
-use crate::db::repositories::custom_translate_providers as custom_repo;
+use crate::db::repositories::{
+    builtin_translate_providers as builtin_repo, custom_translate_providers as custom_repo,
+    quota_usage,
+};
 use crate::error::AppError;
 use crate::probe::selection;
 use crate::state::AppState;
@@ -179,6 +183,10 @@ fn save_custom_inner(
     if name.is_empty() {
         return Err(AppError::Config("服务商名称不能为空".into()));
     }
+    // 讯飞是内置专属通道（需三项凭据），自填表只有两列，显式拒绝以免产生不可用配置。
+    if payload.provider == "xfyun" {
+        return Err(AppError::Config("讯飞翻译为内置服务，无需自填凭据".into()));
+    }
     let _ = crate::translate::provider::provider_for(&payload.provider)?;
     // APPID 缺省 = 不改动存量（编辑时前端只拿到 hasAppId，拿不到明文）。
     let app_id = match payload.app_id {
@@ -251,6 +259,51 @@ pub fn translate_move_custom_provider(
     custom_repo::move_by_one(&conn, id, up).map(|_| ())
 }
 
+// ---------- 内置服务商（百度 + 讯飞）：用量视图与独立额度配置 ----------
+
+/// inner：组装脱敏视图；用量取当月按平台汇总，凭据只回 `has` + 末 4 位指纹。
+fn list_builtin_inner(conn: &Connection) -> Result<Vec<BuiltinTranslateProviderDto>, AppError> {
+    let period = chrono::Local::now().format("%Y-%m").to_string();
+    let mut out = Vec::new();
+    for row in builtin_repo::list_all(conn)? {
+        let (used, requests) = quota_usage::platform_used(conn, &period, &row.name)?;
+        // 先取借用型字段，再移动 String（避免部分移动后借用 row）。
+        let has_credential = row.has_credentials();
+        let credential_fingerprint = row.credential_fingerprint();
+        out.push(BuiltinTranslateProviderDto {
+            id: row.id,
+            provider_id: row.provider_id,
+            name: row.name,
+            enabled: row.enabled,
+            monthly_granted: row.monthly_granted,
+            used,
+            requests,
+            has_credential,
+            credential_fingerprint,
+        });
+    }
+    Ok(out)
+}
+
+/// 读取两家内置服务商的当月用量与各自额度上限（凭据脱敏）。
+#[tauri::command]
+pub fn translate_list_builtin_providers(
+    state: State<'_, AppState>,
+) -> Result<Vec<BuiltinTranslateProviderDto>, AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    list_builtin_inner(&conn)
+}
+
+/// 保存某家内置服务商的启停与月度上限（凭据只读）。
+#[tauri::command]
+pub fn translate_save_builtin_provider(
+    payload: SaveBuiltinTranslateProviderPayload,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let conn = state.db.lock().map_err(db_lock_err)?;
+    builtin_repo::update_config(&conn, payload.id, payload.enabled, payload.monthly_granted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +363,41 @@ mod tests {
         let (_dir, conn) = fresh_db();
         assert!(save_custom_inner(&conn, payload("  ", "deepl", None)).is_err());
         assert!(save_custom_inner(&conn, payload("A", "bing", None)).is_err());
+        assert!(
+            save_custom_inner(&conn, payload("我的讯飞", "xfyun", Some("k"))).is_err(),
+            "讯飞为内置专属，不得自填"
+        );
+    }
+
+    #[test]
+    fn list_builtin_never_leaks_plain_credentials() {
+        let (_dir, conn) = fresh_db();
+        let list = list_builtin_inner(&conn).expect("列表");
+        assert_eq!(list.len(), 2, "百度 + 讯飞");
+        assert!(list.iter().all(|p| p.has_credential));
+        assert!(list.iter().all(|p| p.used == 0), "干净库当月用量为 0");
+        let json = serde_json::to_string(&list).expect("序列化");
+        for secret in [
+            "20261107002714302",
+            "YjDAPNYWWfN7STvnQjky",
+            "c9955e0e",
+            "ZmFjNGJkNDE1M2RlYjk1ZjIwYmVkNDg4",
+            "b8cbf3e6d624f59e38f39b6b321b65f8",
+        ] {
+            assert!(!json.contains(secret), "DTO 不得含明文凭据");
+        }
+    }
+
+    #[test]
+    fn save_builtin_updates_quota_and_enablement() {
+        let (_dir, conn) = fresh_db();
+        let before = list_builtin_inner(&conn).expect("列表");
+        let id = before[0].id;
+        builtin_repo::update_config(&conn, id, false, 4321).expect("保存");
+        let after = list_builtin_inner(&conn).expect("读回");
+        let row = after.iter().find(|p| p.id == id).expect("目标行");
+        assert!(!row.enabled);
+        assert_eq!(row.monthly_granted, 4321);
+        assert!(row.has_credential, "凭据不受影响");
     }
 }
