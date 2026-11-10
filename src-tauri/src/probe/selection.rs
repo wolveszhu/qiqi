@@ -337,7 +337,7 @@ fn simulate_ctrl_c() {
 pub fn capture_selection(selection_key: &str) -> Result<CapturedSelectionDto, AppError> {
     let _guard = capture_lock().lock().map_err(|_| AppError::Probe("取词互斥锁异常".into()))?;
     if is_console_window() {
-        return Err(AppError::Config("当前窗口不支持取词".into()));
+        return Err(AppError::Probe("当前窗口不支持取词".into()));
     }
     restore_foreground();
     let mut clipboard =
@@ -361,7 +361,7 @@ pub fn capture_selection(selection_key: &str) -> Result<CapturedSelectionDto, Ap
     let text = captured
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Config("未能读取选中文本".into()))?;
+        .ok_or_else(|| AppError::Probe("未能读取选中文本".into()))?;
     let rect = selection_rect(
         DOWN_X.load(Ordering::Relaxed) as i32,
         DOWN_Y.load(Ordering::Relaxed) as i32,
