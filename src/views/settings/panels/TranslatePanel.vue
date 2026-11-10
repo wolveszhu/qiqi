@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /**
- * 划词翻译设置面板：内置服务商（用量 / 额度 / 启停）、总开关、译入语言与多个自填服务商。
+ * 划词翻译设置面板：总开关、译入语言与多个自填服务商。
  *
  * 红线：明文 Key / APPID 只经 IPC 单向流向 Rust；读取只回脱敏指纹；
  * 所有 await IPC 都 try/catch 并按 kind 给本地化提示。
- * 布局：内置服务一张卡片，自填服务商一张卡片（列表顺序即优先级），基础设置一张卡片。
+ * 布局：自填服务商一张卡片（列表顺序即优先级）、基础设置一张卡片。
+ * 内置两家（百度 / 讯飞）按当月用量自动均衡、切换与额度兜底全在底层实现，
+ * 本面板不暴露其上限配置或启停开关。
  */
 
 import { computed, onMounted, reactive, ref } from "vue";
@@ -14,15 +16,12 @@ import { normalizeError } from "../../../api/client";
 import {
   deleteCustomTranslateProvider,
   getTranslateSettings,
-  listBuiltinTranslateProviders,
   listCustomTranslateProviders,
   moveCustomTranslateProvider,
-  saveBuiltinTranslateProvider,
   saveCustomTranslateProvider,
   saveTranslateSettings,
 } from "../../../api/translate";
 import type {
-  BuiltinTranslateProvider,
   CustomTranslateProvider,
   TranslateProviderId,
   TranslateTargetLang,
@@ -40,9 +39,6 @@ const enabled = ref(true);
 const targetLang = ref<TranslateTargetLang>("auto");
 const hasBuiltin = ref(false);
 const saving = ref(false);
-
-const builtins = ref<BuiltinTranslateProvider[]>([]);
-const quotaDrafts = reactive<Record<number, string>>({});
 
 const customs = ref<CustomTranslateProvider[]>([]);
 const editorOpen = ref(false);
@@ -82,66 +78,6 @@ function localizedError(e: unknown): string {
 
 function providerLabel(id: TranslateProviderId): string {
   return providerOptions.value.find((o) => o.value === id)?.label ?? id;
-}
-
-/** 当月用量百分比（夹到 100%，额度非正时退化 0）。 */
-function usagePercent(p: BuiltinTranslateProvider): number {
-  if (p.monthlyGranted <= 0) return 0;
-  return Math.min(100, (p.used / p.monthlyGranted) * 100);
-}
-
-/** 内置服务名本地化（后端 name 同时是额度记账键，固定中文）。 */
-function builtinLabel(p: BuiltinTranslateProvider): string {
-  if (p.providerId === "xfyun") return t("translate.panel.builtinXfyun");
-  if (p.providerId === "baidu") return t("translate.panel.builtinBaidu");
-  return p.name;
-}
-
-/** 拉取两家内置服务商的当月用量与额度，初始化额度输入草稿。 */
-async function refreshBuiltins(): Promise<void> {
-  try {
-    builtins.value = await listBuiltinTranslateProviders();
-    for (const p of builtins.value) {
-      quotaDrafts[p.id] = String(p.monthlyGranted);
-    }
-    hasBuiltin.value = builtins.value.some((p) => p.enabled && p.hasCredential);
-  } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
-  }
-}
-
-/** 启停某家内置服务（额度沿用当前值）。 */
-async function toggleBuiltin(p: BuiltinTranslateProvider, value: boolean): Promise<void> {
-  try {
-    await saveBuiltinTranslateProvider({
-      id: p.id,
-      enabled: value,
-      monthlyGranted: p.monthlyGranted,
-    });
-    await refreshBuiltins();
-  } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
-  }
-}
-
-/** 保存某家的月度上限；输入非法时给本地化提示而不发请求。 */
-async function saveBuiltinQuota(p: BuiltinTranslateProvider): Promise<void> {
-  const granted = Number(quotaDrafts[p.id]);
-  if (!Number.isFinite(granted) || granted <= 0) {
-    pushToast(t("translate.error.config"), "error");
-    return;
-  }
-  try {
-    await saveBuiltinTranslateProvider({
-      id: p.id,
-      enabled: p.enabled,
-      monthlyGranted: Math.floor(granted),
-    });
-    await refreshBuiltins();
-    pushToast(t("translate.panel.saved"), "ok");
-  } catch (e: unknown) {
-    pushToast(localizedError(e), "error");
-  }
 }
 
 /** 拉取自填服务商列表（列表顺序即优先级）。 */
@@ -243,10 +179,10 @@ onMounted(async (): Promise<void> => {
     const settings = await getTranslateSettings();
     enabled.value = settings.enabled;
     targetLang.value = settings.targetLang;
+    hasBuiltin.value = settings.hasBuiltinCredential;
   } catch (e: unknown) {
     pushToast(localizedError(e), "error");
   }
-  await refreshBuiltins();
   await refreshCustoms();
 });
 </script>
@@ -255,88 +191,6 @@ onMounted(async (): Promise<void> => {
   <section class="translate-panel">
     <h2 class="translate-panel__title">{{ t("translate.panel.title") }}</h2>
     <p class="translate-panel__desc">{{ t("translate.panel.desc") }}</p>
-
-    <AppCard :title="t('translate.panel.builtinProviders')">
-      <HintBox tone="info">{{ t("translate.panel.builtinHint") }}</HintBox>
-
-      <ul class="builtin-list">
-        <li
-          v-for="p in builtins"
-          :key="p.id"
-          class="builtin-item"
-          :class="{ 'is-off': !p.enabled }"
-        >
-          <div class="builtin-item__head">
-            <div class="builtin-item__title">
-              <span class="builtin-item__name">{{ builtinLabel(p) }}</span>
-              <span
-                v-if="p.used >= p.monthlyGranted"
-                class="builtin-item__badge"
-              >
-                {{ t("translate.panel.builtinExhausted") }}
-              </span>
-            </div>
-            <AppToggle
-              :model-value="p.enabled"
-              :aria-label="t('translate.panel.enableBuiltin')"
-              @update:model-value="(v: boolean) => toggleBuiltin(p, v)"
-            />
-          </div>
-
-          <div class="builtin-item__meter">
-            <span
-              class="builtin-item__fill"
-              :style="{ width: `${usagePercent(p)}%` }"
-            ></span>
-          </div>
-
-          <p class="builtin-item__meta">
-            {{
-              t("translate.panel.monthlyUsed", {
-                used: p.used,
-                granted: p.monthlyGranted,
-                requests: p.requests,
-              })
-            }}
-          </p>
-          <p
-            class="builtin-item__meta"
-            :class="{ 'is-warn': !p.hasCredential }"
-          >
-            {{
-              p.hasCredential
-                ? t("translate.panel.builtinCredential", {
-                    fp: p.credentialFingerprint ?? "",
-                  })
-                : t("translate.panel.builtinCredentialMissing")
-            }}
-          </p>
-
-          <div class="builtin-item__quota">
-            <label
-              class="builtin-item__label"
-              :for="`quota-${p.id}`"
-            >
-              {{ t("translate.panel.monthlyGranted") }}
-            </label>
-            <input
-              :id="`quota-${p.id}`"
-              v-model="quotaDrafts[p.id]"
-              class="builtin-item__input"
-              type="number"
-              min="1"
-              step="1000"
-            />
-            <AppButton
-              variant="ghost"
-              @click="saveBuiltinQuota(p)"
-            >
-              {{ t("translate.panel.saveBuiltin") }}
-            </AppButton>
-          </div>
-        </li>
-      </ul>
-    </AppCard>
 
     <AppCard :title="t('translate.panel.customProviders')">
       <HintBox tone="info">{{ t("translate.panel.customHint") }}</HintBox>
@@ -740,101 +594,5 @@ onMounted(async (): Promise<void> => {
 .custom-editor__actions {
   display: flex;
   gap: 8px;
-}
-
-/* 内置服务商：用量条 + 各自额度编辑 */
-.builtin-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.builtin-item {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--bg-soft);
-  transition: opacity var(--dur-fast) var(--ease-jelly);
-}
-
-.builtin-item.is-off {
-  opacity: 0.55;
-}
-
-.builtin-item__head,
-.builtin-item__title,
-.builtin-item__quota {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.builtin-item__head {
-  justify-content: space-between;
-}
-
-.builtin-item__name {
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.builtin-item__badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--peach);
-  color: var(--ink);
-  font-size: 11px;
-}
-
-.builtin-item__meter {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--line);
-}
-
-.builtin-item__fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--matcha-deep);
-  transition: width var(--dur-fast) var(--ease-jelly);
-}
-
-.builtin-item__meta {
-  margin: 0;
-  color: var(--ink-soft);
-  font-size: 12px;
-}
-
-.builtin-item__meta.is-warn {
-  color: var(--peach);
-}
-
-.builtin-item__quota {
-  flex-wrap: wrap;
-}
-
-.builtin-item__label {
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.builtin-item__input {
-  width: 120px;
-  padding: 6px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--bg-window);
-  color: var(--ink);
-  font-size: 13px;
 }
 </style>

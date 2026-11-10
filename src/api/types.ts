@@ -117,12 +117,7 @@ export interface BuiltinTranslateProvider {
   credentialFingerprint: string | null;
 }
 
-/** 保存内置服务商配置：只改启停与月度上限，凭据只读。 */
-export interface SaveBuiltinTranslateProvider {
-  id: number;
-  enabled: boolean;
-  monthlyGranted: number;
-}
+/** 内置服务商配置由底层固定，前端只读其用量视图，不提供写入入参。 */
 
 /** 三档模型配置档位（主对话 / 记忆沉淀 / 兜底）。 */
 export type LlmTierName = "main" | "memory" | "fallback";

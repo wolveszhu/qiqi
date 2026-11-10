@@ -91,7 +91,7 @@ describe("TranslationPopup", () => {
     const wrapper = mount(TranslationPopup, {
       props: { result: { ...result, quotaExhausted: true } },
     });
-    expect(wrapper.text()).toContain("两家内置服务额度均已用尽");
+    expect(wrapper.text()).toContain("两家内置服务本月用量均已达到上限");
   });
 
   it("英文模式下文案切换", () => {

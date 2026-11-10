@@ -49,7 +49,7 @@ export default {
       loading: "翻译中…",
       builtin: "内置",
       custom: "自定义",
-      quotaExhausted: "两家内置服务额度均已用尽，可提高月度上限或改用自定义服务",
+      quotaExhausted: "两家内置服务本月用量均已达到上限，请改用自定义服务或下月再试",
     },
     panel: {
       title: "划词翻译",
@@ -96,18 +96,6 @@ export default {
       deleteProvider: "删除服务商",
       saveProvider: "保存服务商",
       priority: "优先级 {n}",
-      builtinProviders: "内置翻译服务",
-      builtinHint:
-        "两家按当月用量自动均衡：每次优先用用量较少的一家，某家失败自动切换另一家；可分别设置月度上限与启停。",
-      builtinBaidu: "百度翻译",
-      builtinXfyun: "讯飞翻译",
-      enableBuiltin: "启用该内置服务",
-      monthlyGranted: "月度上限（credits）",
-      monthlyUsed: "本月已用 {used} / {granted} · {requests} 次请求",
-      builtinCredential: "凭据已配置（末 4 位 {fp}）",
-      builtinCredentialMissing: "凭据缺失",
-      saveBuiltin: "保存",
-      builtinExhausted: "已达上限",
     },
     error: {
       db: "数据读取失败，请重试",
@@ -120,9 +108,9 @@ export default {
       configNoCredential:
         "没有可用凭据：请注入内置凭据，或在设置中填写自定义服务的密钥与应用 ID",
       builtinUnavailable:
-        "两家内置翻译服务都已停用或凭据缺失，请在「设置 → 划词翻译」中启用其一",
+        "两家内置翻译服务当前不可用（凭据缺失或被停用），请稍后重试或添加自定义服务商",
       builtinExhausted:
-        "两家内置翻译服务本月额度均已用尽，可提高月度上限或添加自定义服务商",
+        "两家内置翻译服务本月用量均已达到上限，请添加自定义服务商或下月再试",
       unknown: "发生未知错误，请重试",
     },
     copied: "译文已复制",

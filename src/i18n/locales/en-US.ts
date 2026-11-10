@@ -60,7 +60,7 @@ export default {
       builtin: "Built-in",
       custom: "Custom",
       quotaExhausted:
-        "Both built-in services have reached their caps. Raise a cap or use a custom service.",
+        "Both built-in services have reached their monthly caps. Use a custom service or try again next month.",
     },
     panel: {
       title: "Text Translation",
@@ -109,18 +109,6 @@ export default {
       deleteProvider: "Delete service",
       saveProvider: "Save service",
       priority: "Priority {n}",
-      builtinProviders: "Built-in translation services",
-      builtinHint:
-        "The two services are balanced by monthly usage: the one used least goes first, and a failed request automatically falls back to the other. Configure each monthly cap and enable state here.",
-      builtinBaidu: "Baidu Translate",
-      builtinXfyun: "iFlytek Translate",
-      enableBuiltin: "Enable this built-in service",
-      monthlyGranted: "Monthly cap (credits)",
-      monthlyUsed: "Used this month {used} / {granted} · {requests} requests",
-      builtinCredential: "Credentials configured (last 4: {fp})",
-      builtinCredentialMissing: "Credentials missing",
-      saveBuiltin: "Save",
-      builtinExhausted: "Cap reached",
     },
     error: {
       db: "Failed to read data. Please try again.",
@@ -133,9 +121,9 @@ export default {
       configNoCredential:
         "No credentials available. Inject the built-in credentials, or enter a custom API key and app ID in settings.",
       builtinUnavailable:
-        "Both built-in translation services are disabled or missing credentials. Enable one in Settings → Text Translation.",
+        "Both built-in translation services are currently unavailable (missing credentials or disabled). Try again later or add a custom service.",
       builtinExhausted:
-        "Both built-in services have reached their monthly caps. Raise a cap or add a custom service.",
+        "Both built-in services have reached their monthly caps. Add a custom service or try again next month.",
       unknown: "An unknown error occurred. Please try again.",
     },
     copied: "Translation copied",
