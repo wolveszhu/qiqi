@@ -112,12 +112,6 @@ fn current_period() -> String {
     chrono::Local::now().format("%Y-%m").to_string()
 }
 
-/// 全局内置额度总闸（两家合计仍受 `QUOTA_MONTHLY_CREDITS` 约束）。
-fn quota_exhausted(conn: &Connection) -> Result<bool, AppError> {
-    let monthly = quota_usage::monthly(conn, &current_period())?;
-    Ok(monthly.used >= monthly.granted)
-}
-
 /// 内置候选：启用 + 凭据齐全 + 本月未达各自上限，按「已用量升序、同量按 sort_order」排序。
 ///
 /// 用量直接取自 `quota_usage_platform_monthly`：记账时 `platform` 用服务名，
@@ -207,13 +201,14 @@ fn prepare(conn: &Connection, text: &str, override_lang: Option<&str>) -> Result
                 }],
             )
         } else {
-            // 内置两家：全局额度作总闸，再按各家当月用量与独立上限挑候选。
-            if quota_exhausted(conn)? {
-                return Err(AppError::Config("内置翻译额度已用尽".into()));
-            }
+            // 内置两家：只按各自独立月度上限与启停判定。
+            // 不能用 quota_usage_monthly 的全局额度做总闸——它是聊天等所有内置场景共用的，
+            // 被别的场景消耗完会误伤翻译（各家明明还有额度却报「额度用尽」）。
             let candidates = builtin_candidates(conn)?;
             if candidates.is_empty() {
-                return Err(AppError::Config("内置翻译额度已用尽".into()));
+                return Err(AppError::Config(
+                    "内置翻译服务均不可用：已全部停用 / 凭据缺失 / 本月额度用尽".into(),
+                ));
             }
             (true, candidates)
         };
@@ -546,5 +541,34 @@ mod tests {
         assert!(plan.is_builtin, "自填全停用时回退内置服务");
         assert_eq!(plan.candidates[0].provider_id, "baidu");
         assert_eq!(plan.candidates[0].service_name, "百度翻译");
+    }
+
+    #[test]
+    fn prepare_works_when_only_xfyun_is_enabled() {
+        let (_dir, conn) = fresh_db();
+        let rows = builtin_repo::list_all(&conn).expect("列表");
+        let baidu = rows.iter().find(|r| r.provider_id == "baidu").expect("百度行");
+        builtin_repo::update_config(&conn, baidu.id, false, baidu.monthly_granted)
+            .expect("停用百度");
+        let plan = prepare(&conn, "Hello", None).expect("只启用讯飞也应可用");
+        assert!(plan.is_builtin);
+        assert_eq!(plan.candidates.len(), 1, "只剩讯飞一家候选");
+        assert_eq!(plan.candidates[0].provider_id, "xfyun");
+        assert_eq!(plan.candidates[0].service_name, "讯飞翻译");
+    }
+
+    #[test]
+    fn global_quota_must_not_block_translation_when_a_provider_still_has_grant() {
+        let (_dir, conn) = fresh_db();
+        // 主对话等其它场景消耗了全局额度，但两家内置翻译各自仍有独立额度。
+        let period = current_period();
+        conn.execute(
+            "INSERT INTO quota_usage_monthly (period_key, granted, used, requests) \
+             VALUES (?1, ?2, ?2, 1)",
+            rusqlite::params![period, crate::config::QUOTA_MONTHLY_CREDITS],
+        )
+        .expect("模拟全局额度用尽");
+        let plan = prepare(&conn, "Hello", None).expect("各家仍有额度时不应被全局总闸拦截");
+        assert_eq!(plan.candidates.len(), 2);
     }
 }
