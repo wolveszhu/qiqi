@@ -54,8 +54,10 @@
   构建期环境变量可覆盖它以便轮换，未注入时 M12 种子即可开箱可用。
   `custom_api_key` 等用户自填列首发为空；干净库首次启动后该表 1 行。
 - `builtin_translate_providers` 是 M13 起**内置翻译的唯一凭据真源**（百度 / 讯飞各一行），
-  `name` 同时是 `quota_usage_platform_monthly.platform` 键；`monthly_granted` 为每家独立月度上限，
-  设置页可改。凭据同为已登记的生产凭据，只存在于 Rust 侧迁移 SQL；干净库首发 2 行。
+  `name` 同时是 `quota_usage_platform_monthly.platform` 键；`monthly_granted` / `is_can_use`
+  由 M13 种子在**底层固定**，仅作安全兜底——设置页不暴露上限配置与启停开关，也不注册写命令，
+  防单家过量靠按当月用量自动均衡。凭据同为已登记的生产凭据，只存在于 Rust 侧迁移 SQL；干净库首发 2 行。
+  M13 文件头注释里的「设置页可改」是初始设计，按红线不修改已执行的历史 SQL，以本条为准。
   `translate_settings.builtin_*` 保留为 M12 历史列（兼容旧库与 `has_builtin_credential` 视图），
   不再参与内置选路；构建期注入 `QIQI_BAIDU_APPID` / `QIQI_BAIDU_SECRET` 时，
   `connection::apply_migrations` 会同步覆盖 M13 的百度行，保持 env 轮换能力。
