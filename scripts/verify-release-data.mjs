@@ -121,6 +121,8 @@ const INSERT_ALLOW = new Set([
   "search_settings",
   // M12：内置百度翻译凭据种子（单行 id=1，NOT EXISTS 守卫）
   "translate_settings",
+  // M13：内置翻译服务商（百度 + 讯飞）凭据与各自月度上限，两家各一行
+  "builtin_translate_providers",
 ]);
 // 存量回填表：只允许 INSERT...SELECT 从已有业务数据聚合，禁止 VALUES 硬编码。
 // M10 的平台月表回填属此类——对全新空库不产生任何行，不是种子数据。

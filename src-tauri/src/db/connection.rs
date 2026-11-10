@@ -123,7 +123,17 @@ fn apply_migrations(conn: &mut Connection, db_path: &Path) -> Result<(), AppErro
         conn,
         crate::config::BAIDU_TRANSLATE_APPID,
         crate::config::BAIDU_TRANSLATE_SECRET,
-    )
+    )?;
+    // M13 起内置选路以 builtin_translate_providers 为真源；构建期注入的百度凭据
+    // 需同步覆盖该表，否则 env 轮换会静默失效。未注入时沿用 M13 幂等种子。
+    if let (Some(app_id), Some(secret)) =
+        (crate::config::BAIDU_TRANSLATE_APPID, crate::config::BAIDU_TRANSLATE_SECRET)
+    {
+        crate::db::repositories::builtin_translate_providers::update_credentials(
+            conn, "baidu", app_id, secret, "",
+        )?;
+    }
+    Ok(())
 }
 
 /// Windows 凭据管理器取/建 32 字节 hex 密钥。

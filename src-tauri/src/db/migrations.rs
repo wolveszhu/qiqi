@@ -1,4 +1,4 @@
-//! 有序迁移链 M1–M12（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
+//! 有序迁移链 M1–M13（DDL / 数据迁移 / 种子；规范 §4 / rule.md §5）。
 //!
 //! 链全表与改表操作路径见同目录 `README.md` §3–§4。
 //! 铁律：任何结构变更都**追加新迁移**，禁止改历史 SQL；每条迁移独立事务、失败回滚；
@@ -17,12 +17,13 @@ use crate::config::EMBEDDING_DIM;
 /// 应用支持的目标 schema 版本（= 链上迁移条数）。
 /// 新迁移追加时同步 +1（操作路径见 `README.md` §4.1）；
 /// `connection::apply_migrations` 据此判定版本三分支。
-pub const TARGET_VERSION: usize = 12;
+pub const TARGET_VERSION: usize = 13;
 
 /// 应用支持的迁移链（M1 核心表+种子 → M2 vec0 → M3 tiered → M4 dnd/频率 →
 /// M5 自定义模型表 → M6 内置模型表 → M7 清空三档 → M8 额度用量 →
 /// M9 搜索配置 → M10 额度平台维度与存量回填 → M11 划词翻译配置表 →
-/// M12 内置翻译凭据种子 + 用户自填多服务商表）。
+/// M12 内置翻译凭据种子 + 用户自填多服务商表 →
+/// M13 内置翻译服务商表（百度 + 讯飞凭据与各自月度上限））。
 ///
 /// M2 的 SQL 由 `EMBEDDING_DIM` 运行时渲染，而 `M::up` 只接受 `&'static str`——
 /// 以 `Box::leak` 转为 `'static`（进程内迁移链仅构造一次，泄漏量 = 一条 SQL，可接受；
@@ -73,6 +74,8 @@ pub fn chain() -> Migrations<'static> {
         // M12：已登记的生产凭据（内置百度 APPID/密钥）幂等种子 + custom_translate_providers。
         // 存量库不会重跑 M11，故凭据与新表一律追加本迁移；构建期环境变量可覆盖内置凭据。
         M::up(include_str!("migrations/M12__translate_providers.sql")),
+        // M13：内置翻译服务商表 + 百度 / 讯飞凭据种子 + 各自月度上限（协同选路的数据源）。
+        M::up(include_str!("migrations/M13__builtin_translate_providers.sql")),
     ])
 }
 
@@ -140,6 +143,65 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM custom_translate_providers", [], |row| row.get(0))
             .expect("多服务商表应存在");
         assert_eq!(providers, 0, "用户自配表首发不得预置数据");
+    }
+
+    #[test]
+    fn m13_seeds_two_builtin_providers_idempotently() {
+        crate::db::connection::register_vec_extension().expect("vec 注册");
+        let mut conn = rusqlite::Connection::open_in_memory().expect("内存库");
+        chain().to_version(&mut conn, 12).expect("迁移到 M12");
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' \
+                 AND name='builtin_translate_providers'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("查表");
+        assert_eq!(before, 0, "M12 时新表尚不存在");
+
+        chain().to_latest(&mut conn).expect("迁移到 M13");
+        let current: usize = chain().current_version(&conn).expect("版本读取").into();
+        assert_eq!(current, TARGET_VERSION);
+
+        let rows: Vec<(String, String, String, i64)> = conn
+            .prepare(
+                "SELECT provider_id, api_secret, api_key, monthly_granted \
+                 FROM builtin_translate_providers ORDER BY sort_order",
+            )
+            .expect("准备")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .expect("查询")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("收集");
+        assert_eq!(rows.len(), 2, "百度 + 讯飞各一行");
+        assert_eq!(rows[0].0, "baidu");
+        assert_eq!(rows[1].0, "xfyun");
+        assert!(rows.iter().all(|r| !r.1.is_empty()), "签名密钥不得为空");
+        assert!(!rows[1].2.is_empty(), "讯飞 APIKey 不得为空");
+        assert!(rows.iter().all(|r| r.3 > 0), "月额度应为正数");
+
+        // 幂等：重复迁移不新增行，也不覆盖用户改过的额度 / 启停。
+        conn.execute(
+            "UPDATE builtin_translate_providers SET is_can_use = 2, monthly_granted = 1234 \
+             WHERE provider_id = 'xfyun'",
+            [],
+        )
+        .expect("模拟用户改配置");
+        chain().to_latest(&mut conn).expect("重复迁移");
+        let (count, granted, can_use): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), \
+                        (SELECT monthly_granted FROM builtin_translate_providers WHERE provider_id='xfyun'), \
+                        (SELECT is_can_use FROM builtin_translate_providers WHERE provider_id='xfyun') \
+                 FROM builtin_translate_providers",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("读回");
+        assert_eq!(count, 2, "重复迁移不新增行");
+        assert_eq!(granted, 1234, "不得覆盖用户设置的额度");
+        assert_eq!(can_use, 2, "不得覆盖用户启停");
     }
 
     #[test]

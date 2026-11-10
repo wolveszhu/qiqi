@@ -31,6 +31,8 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
     ("search_settings", "SELECT COUNT(*) FROM search_settings", 1),
     // M11 建表 + M12 幂等种子写入内置百度凭据，故干净库有 1 行。
     ("translate_settings", "SELECT COUNT(*) FROM translate_settings", 1),
+    // M13 幂等种子写入两家内置翻译服务商（百度 + 讯飞）的凭据与月度上限。
+    ("builtin_translate_providers", "SELECT COUNT(*) FROM builtin_translate_providers", 2),
     // ---- 运行时数据（必须为空）----
     ("messages", "SELECT COUNT(*) FROM messages", 0),
     ("summaries", "SELECT COUNT(*) FROM summaries", 0),
@@ -48,7 +50,7 @@ const BASELINE_ROWS: &[(&str, &str, i64)] = &[
 /// 发布构建中禁止出现的测试 / 临时数据标记（与 README §7.2 一致）。
 const FORBIDDEN_MARKERS: &[&str] = &["sk-old", "old/v1", "TEST_", "test-fixture", "mock-data"];
 
-/// 新建临时库并跑完 M1–M12，等价于用户首次启动。
+/// 新建临时库并跑完 M1–M13，等价于用户首次启动。
 fn fresh_db() -> (tempfile::TempDir, Connection) {
     register_vec_extension().expect("vec 注册");
     let dir = tempfile::tempdir().expect("临时目录");
@@ -194,6 +196,26 @@ fn baseline_values_are_production_defaults() {
         )
         .expect("读内置凭据");
     assert!(!builtin_id.is_empty() && !builtin_key.is_empty(), "M12 内置百度凭据种子缺失");
+
+    // M13 两家内置翻译服务商：凭据齐全、各自独立额度；断言信息不得回显凭据值。
+    let providers: Vec<(String, String, String, String, i64)> = conn
+        .prepare(
+            "SELECT provider_id, app_id, api_secret, api_key, monthly_granted \
+             FROM builtin_translate_providers ORDER BY sort_order",
+        )
+        .expect("准备")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+        .expect("查询")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("收集");
+    assert_eq!(providers.len(), 2, "内置翻译服务应为百度 + 讯飞两家");
+    assert_eq!(providers[0].0, "baidu");
+    assert_eq!(providers[1].0, "xfyun");
+    assert!(
+        providers.iter().all(|p| !p.1.is_empty() && !p.2.is_empty() && p.4 > 0),
+        "两家 APPID / 签名密钥 / 月度上限均须就绪"
+    );
+    assert!(!providers[1].3.is_empty(), "讯飞 APIKey 不得缺失");
 }
 
 #[test]
@@ -253,6 +275,29 @@ fn baseline_rows_contain_no_test_markers() {
                 assert!(
                     !text.contains(marker),
                     "自填服务商含禁止测试标记 `{marker}`（列值不回显）"
+                );
+            }
+        }
+    }
+
+    // M13 内置服务商表含凭据列：单独检查，断言信息不回显列值。
+    let mut builtin_stmt = conn
+        .prepare(
+            "SELECT provider_id, name, app_id, api_secret, api_key \
+             FROM builtin_translate_providers",
+        )
+        .expect("准备");
+    let builtin_rows: Vec<(String, String, String, String, String)> = builtin_stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))
+        .expect("查询")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("收集");
+    for row in builtin_rows {
+        for text in [&row.0, &row.1, &row.2, &row.3, &row.4] {
+            for marker in FORBIDDEN_MARKERS {
+                assert!(
+                    !text.contains(marker),
+                    "内置服务商含禁止测试标记 `{marker}`（列值不回显）"
                 );
             }
         }
