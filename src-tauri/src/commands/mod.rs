@@ -9,6 +9,7 @@
 //! TODO(C2/C6): probe.rs 命令（探针快照、proactive_generate）落位。
 
 pub mod chat;
+pub mod custom_avatar;
 pub mod memory;
 pub mod pet;
 pub mod update;

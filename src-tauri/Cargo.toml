@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 # C2 桌面融合：全局快捷键、开机自启（均仅 Rust 侧使用，无 JS 权限条目）
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"

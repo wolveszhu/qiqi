@@ -57,6 +57,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(shortcuts)
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -184,6 +185,12 @@ pub fn run() {
             commands::pet::pet_settle_affection,
             commands::pet::pet_sleep_decay,
             commands::pet::pet_list_affection_logs,
+            commands::custom_avatar::import_custom_avatar,
+            commands::custom_avatar::list_custom_avatars,
+            commands::custom_avatar::read_custom_avatar,
+            commands::custom_avatar::update_custom_avatar_config,
+            commands::custom_avatar::rename_custom_avatar,
+            commands::custom_avatar::delete_custom_avatar,
             commands::chat::chat_send_stream,
             commands::chat::chat_abort,
             commands::chat::chat_list_sessions,

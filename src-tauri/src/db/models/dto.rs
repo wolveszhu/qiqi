@@ -54,6 +54,20 @@ pub struct PetStateDto {
     pub active_renderer: String,
 }
 
+/// 自定义导入形象元数据（列表/导入返回；不含图片字节，渲染按需 `read_custom_avatar`）。
+///
+/// `scale` / `anchor_x` / `anchor_y` 为「整体变换」渲染所需几何参数：
+/// 锚点归一化到图片宽高（0..1），即边缘吸附躺倒时旋转半圆的圆心基准。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomAvatarMetaDto {
+    pub id: String,
+    pub name: String,
+    pub scale: f64,
+    pub anchor_x: f64,
+    pub anchor_y: f64,
+}
+
 /// 事实条目（memory_list_facts 返回）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
