@@ -7,8 +7,10 @@
 
 import { callCommand } from "./client";
 import type {
+  BuiltinTranslateProvider,
   CapturedSelection,
   CustomTranslateProvider,
+  SaveBuiltinTranslateProvider,
   SaveCustomTranslateProvider,
   SaveTranslateSettings,
   TranslateResult,
@@ -99,4 +101,16 @@ export async function moveCustomTranslateProvider(
   up: boolean,
 ): Promise<void> {
   await callCommand("translate_move_custom_provider", { id, up });
+}
+
+/** 两家内置服务商（百度 / 讯飞）的当月用量与各自额度上限，凭据脱敏。 */
+export function listBuiltinTranslateProviders(): Promise<BuiltinTranslateProvider[]> {
+  return callCommand<BuiltinTranslateProvider[]>("translate_list_builtin_providers");
+}
+
+/** 保存某家内置服务商的启停与月度上限。 */
+export async function saveBuiltinTranslateProvider(
+  payload: SaveBuiltinTranslateProvider,
+): Promise<void> {
+  await callCommand("translate_save_builtin_provider", { payload });
 }

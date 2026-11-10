@@ -66,8 +66,9 @@ export interface TranslateResult {
   translatedText: string;
   sourceLang: "zh" | "en";
   targetLang: "zh" | "en";
-  provider: TranslateProviderId;
-  /** 实际使用的服务名（自填服务商的展示名 / 内置「百度翻译」）。 */
+  /** 内置专属标识 `xfyun` 不可自填，但可能作为实际使用的服务商回传。 */
+  provider: TranslateProviderId | "xfyun";
+  /** 实际使用的服务名（自填展示名 / 内置「百度翻译」「讯飞翻译」）。 */
   serviceName: string;
   isBuiltin: boolean;
   quotaExhausted: boolean;
@@ -101,6 +102,26 @@ export interface SaveCustomTranslateProvider {
   appId?: string;
   apiKey?: string;
   enabled?: boolean;
+}
+
+/** 内置翻译服务商（百度 / 讯飞）：凭据脱敏，只回指纹与当月用量。 */
+export interface BuiltinTranslateProvider {
+  id: number;
+  providerId: string;
+  name: string;
+  enabled: boolean;
+  monthlyGranted: number;
+  used: number;
+  requests: number;
+  hasCredential: boolean;
+  credentialFingerprint: string | null;
+}
+
+/** 保存内置服务商配置：只改启停与月度上限，凭据只读。 */
+export interface SaveBuiltinTranslateProvider {
+  id: number;
+  enabled: boolean;
+  monthlyGranted: number;
 }
 
 /** 三档模型配置档位（主对话 / 记忆沉淀 / 兜底）。 */
