@@ -191,6 +191,9 @@ impl ReqwestLlmClient {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .connect_timeout(std::time::Duration::from_secs(10))
+                // 禁用系统代理（含 VPN 注入的代理）：大模型请求直接连目标 API，
+                // 避免中间代理改写/劫持 `model` 字段，导致调用到规定列表外的模型。
+                .no_proxy()
                 .build()
                 .unwrap_or_default(),
             embedding_dim,
