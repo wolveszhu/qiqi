@@ -4,7 +4,8 @@
 //!   **自家进程窗口（桌宠 / 设置 / 翻译浮窗）上的按下不算划词**，否则拖动桌宠会被
 //!   误判为拖选文本并弹出工具条；
 //! - 取词：翻译**只在用户点击「翻译」后**发生；但双击 / 拖选手势阶段会各自注入一次
-//!   `Ctrl+C` 探测，仅用于判定「是否确有选中文本」（短等待、不抢焦点、恢复原剪贴板）；
+//!   `Ctrl+C` 探测，仅用于判定「是否确有选中文本」（短等待、不抢焦点）。
+//!   非文本手势立即还原剪贴板；文本手势把文本留到工具条消失时再清掉；
 //! - 红线：探测之外不在手势阶段读剪贴板 / 注入按键（探测只判定是否弹工具条，不翻译）；
 //!   不把选中文本写入日志；控制台窗口跳过。
 //!
@@ -259,7 +260,7 @@ pub fn poll_selection(app: &AppHandle) {
         PENDING.store(false, Ordering::Relaxed);
         let x = DBL_X.load(Ordering::Relaxed) as i32;
         let y = DBL_Y.load(Ordering::Relaxed) as i32;
-        if has_selected_text(&format!("dbl-{x}-{y}")) {
+        if has_selected_text() {
             emit_selection(app, x, y, SelectionRectDto { x, y, width: 0, height: 0 });
         }
         return;
@@ -279,7 +280,7 @@ pub fn poll_selection(app: &AppHandle) {
     // 与双击**同口径**：拖选也必须验证确有选中文本。
     // 拖动文件夹 / 窗口 / 图标 / 滚动条只产生位移，不产生文本选中，
     // 若只凭 is_drag 的位移与时长阈值就 emit，会在这些场景误弹翻译工具条。
-    if has_selected_text(&format!("drag-{x}-{y}")) {
+    if has_selected_text() {
         emit_selection(app, x, y, rect);
     }
 }
@@ -333,6 +334,75 @@ fn capture_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// 手势探测放进剪贴板的选中文本（工具条显示期间有效）。
+struct GestureClipboard {
+    /// 探测前的剪贴板文本；None 表示原本没有文本（清理时清空剪贴板）。
+    previous: Option<String>,
+    /// 本次捕获的原文（未 trim），用于判断剪贴板是否仍是我们放进去的内容。
+    captured: String,
+}
+
+fn gesture_clipboard() -> &'static Mutex<Option<GestureClipboard>> {
+    static SLOT: OnceLock<Mutex<Option<GestureClipboard>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// 纯函数：剪贴板当前内容是否仍是手势探测放进去的文本（只有是，才允许恢复）。
+fn still_owns_clipboard(current: Option<&str>, captured: &str) -> bool {
+    current == Some(captured)
+}
+
+/// 把剪贴板恢复成探测前的文本；`None` 表示原本没有文本，清空剪贴板。
+fn restore_text(clipboard: &mut arboard::Clipboard, previous: Option<&str>) {
+    match previous {
+        Some(prev) => {
+            let _ = clipboard.set_text(prev.to_string());
+        },
+        None => {
+            let _ = clipboard.clear();
+        },
+    }
+}
+
+/// 工具条消失时清理手势探测留下的选中文本（由 `window::manager::hide_translator` 调用）。
+///
+/// 仅当剪贴板里仍是本次捕获的文本才动它：用户在工具条显示期间自己复制了别的内容时，
+/// 绝不能覆盖。命中则恢复探测前的文本，原本没有文本则清空。
+pub fn restore_gesture_clipboard() {
+    let Ok(mut slot) = gesture_clipboard().lock() else {
+        return;
+    };
+    let Some(state) = slot.take() else {
+        return;
+    };
+    drop(slot);
+    let Ok(mut clipboard) = arboard::Clipboard::new() else {
+        return;
+    };
+    if !still_owns_clipboard(clipboard.get_text().ok().as_deref(), &state.captured) {
+        return;
+    }
+    restore_text(&mut clipboard, state.previous.as_deref());
+}
+
+/// 用户主动复制（工具条「复制」/「复制译文」）后放弃待恢复状态：
+/// 剪贴板里现在是用户想要的内容，工具条消失时不得再把它还原成探测前的文本。
+pub fn clear_gesture_clipboard() {
+    if let Ok(mut slot) = gesture_clipboard().lock() {
+        *slot = None;
+    }
+}
+
+/// 若手势探测的文本仍在剪贴板里，返回它（用户点「翻译」/「复制」时直接复用，
+/// 不再注入 `Ctrl+C`：否则内容不变会被 `is_new_selection_text` 判为"无新文本"而取词失败）。
+fn gesture_captured_text() -> Option<String> {
+    let slot = gesture_clipboard().lock().ok()?;
+    let state = slot.as_ref()?;
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let current = clipboard.get_text().ok()?;
+    still_owns_clipboard(Some(current.as_str()), &state.captured).then(|| state.captured.clone())
+}
+
 /// 点击工具条后恢复原前台窗口，确保 `Ctrl+C` 发给第三方应用而非自家浮窗。
 ///
 /// `SetForegroundWindow` 受前台锁定 / UIPI 限制，失败时不阻断：
@@ -373,20 +443,85 @@ fn simulate_ctrl_c() {
     }
 }
 
-/// 点击小图标后取词：备份 → 注入复制 → 等待剪贴板更新 → 恢复原内容（完整预算）。
+/// 点击工具条后取词：优先复用手势探测已放进剪贴板的选中文本；否则走完整预算重新取词。
 pub fn capture_selection(selection_key: &str) -> Result<CapturedSelectionDto, AppError> {
-    capture_with_wait(selection_key, SELECTION_CLIPBOARD_TRIES, SELECTION_CLIPBOARD_WAIT_MS, true)
+    let _guard = capture_lock().lock().map_err(|_| AppError::Probe("取词互斥锁异常".into()))?;
+    if is_console_window() {
+        return Err(AppError::Probe("当前窗口不支持取词".into()));
+    }
+    // 工具条显示期间剪贴板里就是探测捕获的原文，直接复用。若再注入 Ctrl+C，
+    // 剪贴板内容不变会被 `is_new_selection_text` 判为"无新文本"而取词失败。
+    let text = match gesture_captured_text() {
+        Some(text) => text,
+        None => capture_with_wait(SELECTION_CLIPBOARD_TRIES, SELECTION_CLIPBOARD_WAIT_MS)?,
+    };
+    // 复用路径拿到的是剪贴板原文，与重新取词路径保持同样的 trim 口径。
+    Ok(build_captured(selection_key, text.trim().to_string()))
+}
+
+/// 组装取词结果（选区包围盒供工具条贴合定位）。
+fn build_captured(selection_key: &str, text: String) -> CapturedSelectionDto {
+    let rect = selection_rect(
+        DOWN_X.load(Ordering::Relaxed) as i32,
+        DOWN_Y.load(Ordering::Relaxed) as i32,
+        UP_X.load(Ordering::Relaxed) as i32,
+        UP_Y.load(Ordering::Relaxed) as i32,
+    );
+    CapturedSelectionDto {
+        selection_key: selection_key.to_string(),
+        text,
+        rect,
+        via: "clipboard".into(),
+    }
 }
 
 /// 手势阶段判定「是否确有选中文本」（双击 / 拖选共用，只返回 bool，不暴露文本）。
 ///
-/// 与 `capture_selection` 共用同一套剪贴板流程，但刻意更轻：
-/// - **短等待预算**：本函数在 `probe/scheduler` 唯一的 100ms 轮询线程里同步执行，
-///   若沿用取词的 500ms，会冻结 `state.cursor` 缓存，连带让穿透状态机用过期坐标误判；
-/// - **不恢复前台窗口**：手势刚结束时前台就是目标窗口，此处 `SetForegroundWindow`
-///   只会造成可感知的抢焦点；只有用户点击工具条后的取词才需要它。
-pub fn has_selected_text(selection_key: &str) -> bool {
-    capture_with_wait(selection_key, SELECTION_PROBE_TRIES, SELECTION_PROBE_WAIT_MS, false).is_ok()
+/// 剪贴板生命周期刻意分两种：
+/// - **命中文本** → 把文本**留在剪贴板**（工具条显示期间用户可直接 `Ctrl+V` 粘贴），
+///   探测前的原文记入 `gesture_clipboard`，工具条消失时由 `restore_gesture_clipboard` 清掉；
+/// - **未命中**（拖文件夹 / 窗口 / 图标等）→ **立即还原剪贴板**。这些操作压根不该"复制"，
+///   绝不能把 Explorer 因 `Ctrl+C` 写入的文件列表留在剪贴板里占用粘贴板。
+///
+/// 另外保持轻量：短预算（6×30ms）且不 `SetForegroundWindow`（手势刚结束时前台本就是
+/// 目标窗口）。本函数同步跑在 scheduler 唯一的 100ms 轮询线程里，长时间阻塞会冻结
+/// `state.cursor` 缓存，连带让穿透状态机用过期坐标误判。
+pub fn has_selected_text() -> bool {
+    let Ok(_guard) = capture_lock().lock() else {
+        return false;
+    };
+    if is_console_window() {
+        return false;
+    }
+    // 新一轮手势前先清理上一次工具条可能留下的占用，保证 previous 是用户原始剪贴板。
+    restore_gesture_clipboard();
+    let Ok(mut clipboard) = arboard::Clipboard::new() else {
+        return false;
+    };
+    let previous = clipboard.get_text().ok();
+
+    simulate_ctrl_c();
+    let mut captured: Option<String> = None;
+    for _ in 0..SELECTION_PROBE_TRIES {
+        std::thread::sleep(Duration::from_millis(SELECTION_PROBE_WAIT_MS));
+        let current = clipboard.get_text().ok();
+        if is_new_selection_text(previous.as_deref(), current.as_deref()) {
+            captured = current;
+            break;
+        }
+    }
+    match captured {
+        Some(text) => {
+            if let Ok(mut slot) = gesture_clipboard().lock() {
+                *slot = Some(GestureClipboard { previous, captured: text });
+            }
+            true
+        },
+        None => {
+            restore_text(&mut clipboard, previous.as_deref());
+            false
+        },
+    }
 }
 
 /// 纯函数：剪贴板文本是否构成一次有效的「复制到新文本」（供单测）。
@@ -400,20 +535,10 @@ fn is_new_selection_text(previous: Option<&str>, current: Option<&str>) -> bool 
     }
 }
 
-/// 剪贴板法取词的单一实现（手势探测与真正取词共用，仅预算与前台恢复策略不同）。
-fn capture_with_wait(
-    selection_key: &str,
-    tries: u32,
-    wait_ms: u64,
-    restore_fg: bool,
-) -> Result<CapturedSelectionDto, AppError> {
-    let _guard = capture_lock().lock().map_err(|_| AppError::Probe("取词互斥锁异常".into()))?;
-    if is_console_window() {
-        return Err(AppError::Probe("当前窗口不支持取词".into()));
-    }
-    if restore_fg {
-        restore_foreground();
-    }
+/// 真正取词（仅当剪贴板里没有可复用的手势捕获文本时走）：
+/// 备份 → 恢复原前台窗口 → 注入复制 → 等待更新 → **立即恢复**剪贴板。
+fn capture_with_wait(tries: u32, wait_ms: u64) -> Result<String, AppError> {
+    restore_foreground();
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| AppError::Probe(format!("剪贴板打开失败: {e}")))?;
     let previous = clipboard.get_text().ok();
@@ -428,34 +553,24 @@ fn capture_with_wait(
             break;
         }
     }
-    // 只在确实捕获到新文本时恢复剪贴板：拖动文件夹 / 窗口 / 图标时 Ctrl+C 不产生文本
-    // （甚至可能把文件列表写进剪贴板），此时保持原样，绝不把用户已复制的文件 / 图片
-    // 冲成空文本；捕获到文本时才恢复为原有文本（原本无文本则置空，不残留本次复制内容）。
+    // 取词完成即恢复，不在剪贴板留痕；捕获不到文本时保持原样，
+    // 避免把用户已复制的非文本内容冲成空文本。
     if captured.is_some() {
-        let restored = previous.unwrap_or_default();
-        let _ = clipboard.set_text(restored);
+        restore_text(&mut clipboard, previous.as_deref());
     }
 
-    let text = captured
+    captured
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Probe("未能读取选中文本".into()))?;
-    let rect = selection_rect(
-        DOWN_X.load(Ordering::Relaxed) as i32,
-        DOWN_Y.load(Ordering::Relaxed) as i32,
-        UP_X.load(Ordering::Relaxed) as i32,
-        UP_Y.load(Ordering::Relaxed) as i32,
-    );
-    Ok(CapturedSelectionDto {
-        selection_key: selection_key.to_string(),
-        text,
-        rect,
-        via: "clipboard".into(),
-    })
+        .ok_or_else(|| AppError::Probe("未能读取选中文本".into()))
 }
 
-/// 复制译文（用户主动点击；不经前端 clipboard API）。
+/// 复制译文 / 选中原文（用户主动点击；不经前端 clipboard API）。
+///
+/// 主动复制后放弃手势探测的待恢复状态：剪贴板里现在是用户想要的内容，
+/// 工具条消失时不得再把它还原成探测前的文本。
 pub fn write_clipboard_text(text: &str) -> Result<(), AppError> {
+    clear_gesture_clipboard();
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| AppError::Probe(format!("剪贴板打开失败: {e}")))?;
     clipboard
@@ -500,6 +615,19 @@ mod tests {
         assert!(!is_new_selection_text(Some("old"), Some("old")), "Ctrl+C 未生效");
         assert!(!is_new_selection_text(Some("old"), None), "非文本格式（拖文件夹）");
         assert!(!is_new_selection_text(Some("old"), Some("  \n ")), "纯空白");
+    }
+
+    #[test]
+    fn clipboard_restore_only_when_we_still_own_it() {
+        assert!(still_owns_clipboard(Some("selected"), "selected"));
+        assert!(
+            !still_owns_clipboard(Some("user copied something"), "selected"),
+            "用户自己复制了别的内容，工具条消失时绝不能覆盖"
+        );
+        assert!(
+            !still_owns_clipboard(None, "selected"),
+            "剪贴板变成非文本格式（文件列表 / 图片）也不能覆盖"
+        );
     }
 
     #[test]

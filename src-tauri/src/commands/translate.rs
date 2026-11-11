@@ -55,7 +55,8 @@ pub fn translate_settings_save(
     service::save_settings(&conn, payload)
 }
 
-/// 用户点击小图标后取词（UIA 待接入；当前为剪贴板法，备份后恢复）。
+/// 用户点击小图标后取词（UIA 待接入；当前为剪贴板法）。
+/// 工具条显示期间直接复用手势探测留在剪贴板里的选中文本，不再重复注入 `Ctrl+C`。
 #[tauri::command]
 pub fn translate_capture_selection(
     selection_key: String,
@@ -70,8 +71,14 @@ pub fn translate_copy_result(text: String) -> Result<(), AppError> {
 }
 
 /// 显示译文浮窗（选区旁定位；Rust 侧完成 DPI / 多显示器夹取）。
+///
+/// `compact=false` 表示胶囊工具条已切换为译文卡片（工具条消失）：此刻取词已完成，
+/// 顺带释放手势探测占用的粘贴板。`compact=true` 的首次弹出不清理。
 #[tauri::command]
 pub fn translate_popup_show(x: i32, y: i32, compact: bool, app: AppHandle) -> Result<(), AppError> {
+    if !compact {
+        crate::probe::selection::restore_gesture_clipboard();
+    }
     crate::window::manager::show_translator(&app, x, y, compact)
 }
 
