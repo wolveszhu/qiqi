@@ -7,8 +7,8 @@
  * 自定义形象卡的缩略图直接由注册表 dataUrl 渲染，删除按钮在网格内就地触发（不再展开微调面板）。
  */
 import { open } from "@tauri-apps/plugin-dialog";
-import { emit } from "@tauri-apps/api/event";
-import { computed, onMounted, ref, watch } from "vue";
+import { emit, listen } from "@tauri-apps/api/event";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import AppCard from "../../../components/ui/AppCard.vue";
@@ -49,6 +49,9 @@ const PET_META_KEYS: Record<string, { name: string; sub: string; emoji: string }
 const customList = ref<
   Array<{ id: string; fullId: string; name: string; dataUrl: string }>
 >([]);
+
+/** 事件反注册函数集合（onUnmounted 统一清理）。 */
+const unlisteners: Array<() => void> = [];
 
 /** 从注册表同步自定义形象列表（画廊/选中态依赖其刷新）。 */
 function syncCustomList(): void {
@@ -217,16 +220,18 @@ async function refreshActiveRenderer(): Promise<void> {
   }
 }
 
-/** 删除自定义形象：确认 → Rust 落库删除 + 注册表即时移除。激活态由 Rust 回退并 emit 事件驱动刷新。 */
+/** 删除自定义形象：二次确认由卡片内联「确认删除」承接（防误点），此处仅做落库 + 注册表即时移除。
+ *  激活态由 Rust 回退并 emit pet:renderer:changed，本页监听后刷新预览。 */
 async function deleteAvatar(fullId: string): Promise<void> {
   const uuid = uuidFromFullId(fullId);
   if (!uuid) return;
-  if (!window.confirm(t("avatar.deleteConfirm"))) return;
   try {
     await deleteCustomAvatar(uuid);
     removeCustomConfig(uuid);
     pushToast(t("avatar.deleteOk"));
     syncCustomList();
+    // 兜底：直接拉取激活态写回本窗口 store，确保预览切回内置（即便 pet:renderer:changed 事件错过）。
+    await refreshActiveRenderer();
   } catch (e: unknown) {
     pushToast(e instanceof Error ? e.message : t("common.saveFailed"), "error");
   }
@@ -246,6 +251,18 @@ onMounted(async (): Promise<void> => {
         console.warn("[avatar] 设置快照拉取失败", e);
       });
   }
+  // 窗口 A 删除/切换形象后会发 pet:renderer:changed；窗口 B 与 A 是独立 webview、
+  // petStore 不共享，故此处需自行监听并把激活态同步进本窗口 store——否则删除后桌面宠切回
+  // 内置，但本页 PreviewStage 仍绑着被删的 custom:<uuid>，预览不刷新（props 未变不重建）。
+  unlisteners.push(
+    await listen<string>("pet:renderer:changed", (e) => {
+      if (e.payload) petStore.activeRenderer = e.payload;
+    }),
+  );
+});
+
+onUnmounted((): void => {
+  for (const u of unlisteners) u();
 });
 </script>
 
