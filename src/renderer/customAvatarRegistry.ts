@@ -21,7 +21,7 @@ export interface CustomAvatarConfig {
   name: string;
   /** `data:image/png;base64,...`（仅内存，用于 PIXI `Assets.load`）。 */
   dataUrl: string;
-  /** 整体缩放倍率（1 = 按舞台自适应铺满基准，见 CustomSpriteRenderer.STAGE_FIT_RATIO）。 */
+  /** 整体缩放倍率（1 = 按固定基准尺寸，见 CustomSpriteRenderer.TARGET_LONG_EDGE_PX）。 */
   scale: number;
   /** 圆盘中心 X（归一化 0..1，默认 0.5）。 */
   anchorX: number;

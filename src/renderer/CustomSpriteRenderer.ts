@@ -23,10 +23,11 @@ import { ensureValidHitRegion } from "./PetRendererBase";
 import { breathScales, dampedRecovery, jellyImpulse, rotatedHitRegion } from "./physics";
 
 export class CustomSpriteRenderer implements IPetRenderer {
-  /** 自适应基准：scale=1 时图片最长边占窗口短边的比例。
-   *  取值锚定内置代码猫在 150px 桌宠窗口里的显示高度（coreHeight 154 × PET_SCALE 0.6 ≈ 92px
-   *  → 92/150 ≈ 0.61）；取整 0.6 使自定义形象与内置观感一致。 */
-  private static readonly STAGE_FIT_RATIO = 0.6;
+  /** 自适应基准：scale=1 时图片最长边在屏幕上的**固定像素**，与窗口/预览舞台尺寸解耦。
+   *  取值锚定内置代码猫的显示高度（coreHeight 154 × PET_SCALE 0.6 ≈ 92px），使自定义形象
+   *  在 150px 桌宠窗口与更大的设置预览舞台里都和内置猫同等大小（旧实现按窗口短边比例缩放，
+   *  预览舞台比桌宠窗口大，自定义形象就被放大到比猫大，重新导入后依然不一致）。 */
+  private static readonly TARGET_LONG_EDGE_PX = 92;
 
   /** 固定配置（导入时由注册表注入；滑杆微调走 in-memory 更新后重建）。 */
   private cfg: CustomAvatarConfig;
@@ -99,12 +100,11 @@ export class CustomSpriteRenderer implements IPetRenderer {
     this.naturalW = texture.width;
     this.naturalH = texture.height;
 
-    // 用户图片尺寸不可控（几百到几千像素）：按「最长边 = 舞台短边 × STAGE_FIT_RATIO」
-    // 自适应归一，cfg.scale 作为倍率微调。旧实现把 cfg.scale 直接当精灵缩放，
-    // scale=1 会按原始像素绘制，大图直接放大到只露出局部（耳朵/鼻子的裁切特写）。
+    // 用户图片尺寸不可控（几百到几千像素）：按「最长边 = 固定 TARGET_LONG_EDGE_PX」归一，
+    // cfg.scale 作为倍率。固定像素（非窗口比例）保证自定义形象与内置猫在任何窗口/预览尺寸下
+    // 大小一致——旧实现按窗口短边比例缩放，预览舞台比桌宠窗口大，自定义形象就被放大失真。
     this.fitScale =
-      (Math.min(this.screenW, this.screenH) * CustomSpriteRenderer.STAGE_FIT_RATIO) /
-      Math.max(this.naturalW, this.naturalH);
+      CustomSpriteRenderer.TARGET_LONG_EDGE_PX / Math.max(this.naturalW, this.naturalH);
 
     const sprite = new Sprite(texture);
     sprite.anchor.set(this.cfg.anchorX, this.cfg.anchorY); // 锚点 = 圆盘中心
