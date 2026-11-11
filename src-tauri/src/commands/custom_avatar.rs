@@ -58,6 +58,10 @@ pub fn import_custom_avatar(
         return Err(AppError::Config("仅支持 PNG 透明图片（.png）".into()));
     }
 
+    // 去底管线：白底/纯色底自动透明化（已含透明的图原样通过）；解码失败 = 图片损坏
+    let bytes = crate::imaging::process_avatar_png(&bytes)
+        .map_err(|e| AppError::Config(format!("图片无效或已损坏: {e}")))?;
+
     // 目标目录：app_data_dir/custom_avatars/<id>
     let data_dir = app
         .path()
@@ -72,19 +76,10 @@ pub fn import_custom_avatar(
     let rel_path = format!("custom_avatars/{id}/avatar.png");
 
     let now = custom_avatars::now_iso();
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     custom_avatars::insert(&conn, &id, &name, &rel_path, 1.0, 0.5, 0.5, &now)?;
 
-    Ok(CustomAvatarMetaDto {
-        id,
-        name,
-        scale: 1.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-    })
+    Ok(CustomAvatarMetaDto { id, name, scale: 1.0, anchor_x: 0.5, anchor_y: 0.5 })
 }
 
 /// 列出全部自定义形象（不含图片字节；渲染按需 `read_custom_avatar`）。
@@ -92,10 +87,7 @@ pub fn import_custom_avatar(
 pub fn list_custom_avatars(
     state: State<'_, AppState>,
 ) -> Result<Vec<CustomAvatarMetaDto>, AppError> {
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     let rows = custom_avatars::list_all(&conn)?;
     Ok(rows
         .into_iter()
@@ -122,10 +114,7 @@ pub fn read_custom_avatar(
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(format!("解析 app_data_dir 失败: {e}")))?;
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     let row = custom_avatars::get(&conn, &id)?
         .ok_or_else(|| AppError::Config(format!("自定义形象不存在: {id}")))?;
     let path = data_dir.join(&row.rel_path);
@@ -146,10 +135,7 @@ pub fn update_custom_avatar_config(
     let scale = scale.clamp(SCALE_MIN, SCALE_MAX);
     let anchor_x = anchor_x.clamp(0.0, 1.0);
     let anchor_y = anchor_y.clamp(0.0, 1.0);
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     if custom_avatars::get(&conn, &id)?.is_none() {
         return Err(AppError::Config(format!("自定义形象不存在: {id}")));
     }
@@ -168,10 +154,7 @@ pub fn rename_custom_avatar(
     if name.is_empty() {
         return Err(AppError::Config("形象名称不能为空".into()));
     }
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     if custom_avatars::get(&conn, &id)?.is_none() {
         return Err(AppError::Config(format!("自定义形象不存在: {id}")));
     }
@@ -190,10 +173,7 @@ pub fn delete_custom_avatar(
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(format!("解析 app_data_dir 失败: {e}")))?;
-    let conn = state
-        .db
-        .lock()
-        .map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
+    let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
     let was_active = custom_avatars::is_active(&conn, &id)?;
     custom_avatars::delete(&conn, &id)?;
     // 删图片目录（best-effort，失败仅 log，不阻断删除）。
