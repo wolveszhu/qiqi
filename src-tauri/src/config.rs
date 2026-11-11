@@ -152,9 +152,16 @@ pub const SELECTION_DEDUPE_MS: i64 = 1_500;
 /// 双击选中词判定：两次按下的最大间隔（毫秒）与位移半径（物理像素）。
 pub const SELECTION_DOUBLE_CLICK_MS: i64 = 500;
 pub const SELECTION_DOUBLE_CLICK_RADIUS_PX: i64 = 6;
-/// 模拟复制后等待剪贴板更新的轮询次数与间隔。
+/// 模拟复制后等待剪贴板更新的轮询次数与间隔（用户点击「翻译」后真正取词）。
 pub const SELECTION_CLIPBOARD_TRIES: u32 = 10;
 pub const SELECTION_CLIPBOARD_WAIT_MS: u64 = 50;
+/// 手势阶段「是否确有选中文本」探测的等待预算（6×30=180ms）。
+///
+/// 该探测在 `probe/scheduler` 唯一的 100ms 轮询线程里**同步**执行：若沿用真正取词的
+/// 10×50=500ms，`state.cursor` 缓存会被冻结半秒，导致穿透状态机用过期坐标误判整窗穿透。
+/// 手势只决定「弹不弹工具条」，短等待足够；弹窗后点「翻译」仍用完整预算重新取词。
+pub const SELECTION_PROBE_TRIES: u32 = 6;
+pub const SELECTION_PROBE_WAIT_MS: u64 = 30;
 
 /// 人设基础句（第一人称、情绪化；数值一律转成情绪表达，C5/C7 遵守同口径）。
 ///

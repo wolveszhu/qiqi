@@ -3,9 +3,9 @@
 //! - 手势：`WH_MOUSE_LL` 回调只做 O(1) 阈值判定与置位，事件由 scheduler 的 100ms 轮询 emit；
 //!   **自家进程窗口（桌宠 / 设置 / 翻译浮窗）上的按下不算划词**，否则拖动桌宠会被
 //!   误判为拖选文本并弹出工具条；
-//! - 取词：翻译**只在用户点击「翻译」后**发生；但双击选词会在手势阶段注入一次 `Ctrl+C` 探测，
-//!   仅用于判定「是否确有选中文本」，探测后恢复原剪贴板、无副作用；
-//! - 红线：手势阶段不读剪贴板、不注入按键（双击选词探测除外，且只判定是否弹工具条，不翻译）；
+//! - 取词：翻译**只在用户点击「翻译」后**发生；但双击 / 拖选手势阶段会各自注入一次
+//!   `Ctrl+C` 探测，仅用于判定「是否确有选中文本」（短等待、不抢焦点、恢复原剪贴板）；
+//! - 红线：探测之外不在手势阶段读剪贴板 / 注入按键（探测只判定是否弹工具条，不翻译）；
 //!   不把选中文本写入日志；控制台窗口跳过。
 //!
 //! 已知边界：本版以剪贴板法为唯一取词路径（UIA `TextPattern` 主路径待接入），
@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::config::{
     SELECTION_CLIPBOARD_TRIES, SELECTION_CLIPBOARD_WAIT_MS, SELECTION_DEDUPE_MS,
     SELECTION_DOUBLE_CLICK_MS, SELECTION_DOUBLE_CLICK_RADIUS_PX, SELECTION_MAX_DRAG_MS,
-    SELECTION_MIN_DRAG_MS, SELECTION_MIN_DRAG_PX,
+    SELECTION_MIN_DRAG_MS, SELECTION_MIN_DRAG_PX, SELECTION_PROBE_TRIES, SELECTION_PROBE_WAIT_MS,
 };
 use crate::db::models::{CapturedSelectionDto, SelectionRectDto, TranslateSelectionPayload};
 use crate::error::AppError;
@@ -253,13 +253,13 @@ pub fn poll_selection(app: &AppHandle) {
         let _ = crate::window::manager::hide_translator(app);
         let _ = app.emit("translate:selection:hide", ());
     }
-    // 双击选中词：仅当确有选中文本才弹工具条。用取词探测（Ctrl+C 读剪贴板，空则 Err）；
-    // 探测会恢复原剪贴板，无副作用；控制台窗口返回 Err 直接跳过。rect 退化为点击点 0×0。
+    // 双击选中词：仅当确有选中文本才弹工具条（取词探测 Ctrl+C 读剪贴板，空则 false）。
+    // 控制台窗口返回 false 直接跳过；rect 退化为点击点 0×0。
     if DOUBLE_CLICK.swap(false, Ordering::Relaxed) {
         PENDING.store(false, Ordering::Relaxed);
         let x = DBL_X.load(Ordering::Relaxed) as i32;
         let y = DBL_Y.load(Ordering::Relaxed) as i32;
-        if capture_selection(&format!("dbl-{x}-{y}")).is_ok() {
+        if has_selected_text(&format!("dbl-{x}-{y}")) {
             emit_selection(app, x, y, SelectionRectDto { x, y, width: 0, height: 0 });
         }
         return;
@@ -276,7 +276,12 @@ pub fn poll_selection(app: &AppHandle) {
         x,
         y,
     );
-    emit_selection(app, x, y, rect);
+    // 与双击**同口径**：拖选也必须验证确有选中文本。
+    // 拖动文件夹 / 窗口 / 图标 / 滚动条只产生位移，不产生文本选中，
+    // 若只凭 is_drag 的位移与时长阈值就 emit，会在这些场景误弹翻译工具条。
+    if has_selected_text(&format!("drag-{x}-{y}")) {
+        emit_selection(app, x, y, rect);
+    }
 }
 
 /// 统一去重并广播选区事件（拖选与双击共用；控制台窗口跳过）。
@@ -368,30 +373,68 @@ fn simulate_ctrl_c() {
     }
 }
 
-/// 点击小图标后取词：备份 → 注入复制 → 等待剪贴板更新 → **无条件恢复**原内容。
+/// 点击小图标后取词：备份 → 注入复制 → 等待剪贴板更新 → 恢复原内容（完整预算）。
 pub fn capture_selection(selection_key: &str) -> Result<CapturedSelectionDto, AppError> {
+    capture_with_wait(selection_key, SELECTION_CLIPBOARD_TRIES, SELECTION_CLIPBOARD_WAIT_MS, true)
+}
+
+/// 手势阶段判定「是否确有选中文本」（双击 / 拖选共用，只返回 bool，不暴露文本）。
+///
+/// 与 `capture_selection` 共用同一套剪贴板流程，但刻意更轻：
+/// - **短等待预算**：本函数在 `probe/scheduler` 唯一的 100ms 轮询线程里同步执行，
+///   若沿用取词的 500ms，会冻结 `state.cursor` 缓存，连带让穿透状态机用过期坐标误判；
+/// - **不恢复前台窗口**：手势刚结束时前台就是目标窗口，此处 `SetForegroundWindow`
+///   只会造成可感知的抢焦点；只有用户点击工具条后的取词才需要它。
+pub fn has_selected_text(selection_key: &str) -> bool {
+    capture_with_wait(selection_key, SELECTION_PROBE_TRIES, SELECTION_PROBE_WAIT_MS, false).is_ok()
+}
+
+/// 纯函数：剪贴板文本是否构成一次有效的「复制到新文本」（供单测）。
+///
+/// 排除三种情况：`get_text()` 失败（拖动文件夹时剪贴板是文件列表等非文本格式）、
+/// 与原内容相同（Ctrl+C 未生效）、纯空白（无实际选中内容）。
+fn is_new_selection_text(previous: Option<&str>, current: Option<&str>) -> bool {
+    match current {
+        Some(text) => !text.trim().is_empty() && Some(text) != previous,
+        None => false,
+    }
+}
+
+/// 剪贴板法取词的单一实现（手势探测与真正取词共用，仅预算与前台恢复策略不同）。
+fn capture_with_wait(
+    selection_key: &str,
+    tries: u32,
+    wait_ms: u64,
+    restore_fg: bool,
+) -> Result<CapturedSelectionDto, AppError> {
     let _guard = capture_lock().lock().map_err(|_| AppError::Probe("取词互斥锁异常".into()))?;
     if is_console_window() {
         return Err(AppError::Probe("当前窗口不支持取词".into()));
     }
-    restore_foreground();
+    if restore_fg {
+        restore_foreground();
+    }
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| AppError::Probe(format!("剪贴板打开失败: {e}")))?;
     let previous = clipboard.get_text().ok();
 
     simulate_ctrl_c();
     let mut captured: Option<String> = None;
-    for _ in 0..SELECTION_CLIPBOARD_TRIES {
-        std::thread::sleep(Duration::from_millis(SELECTION_CLIPBOARD_WAIT_MS));
+    for _ in 0..tries {
+        std::thread::sleep(Duration::from_millis(wait_ms));
         let current = clipboard.get_text().ok();
-        if current.is_some() && current != previous {
+        if is_new_selection_text(previous.as_deref(), current.as_deref()) {
             captured = current;
             break;
         }
     }
-    // 无论成功与否都恢复用户剪贴板；原本没有文本时置空，避免残留本次复制内容。
-    let restored = previous.unwrap_or_default();
-    let _ = clipboard.set_text(restored);
+    // 只在确实捕获到新文本时恢复剪贴板：拖动文件夹 / 窗口 / 图标时 Ctrl+C 不产生文本
+    // （甚至可能把文件列表写进剪贴板），此时保持原样，绝不把用户已复制的文件 / 图片
+    // 冲成空文本；捕获到文本时才恢复为原有文本（原本无文本则置空，不残留本次复制内容）。
+    if captured.is_some() {
+        let restored = previous.unwrap_or_default();
+        let _ = clipboard.set_text(restored);
+    }
 
     let text = captured
         .map(|t| t.trim().to_string())
@@ -423,6 +466,7 @@ pub fn write_clipboard_text(text: &str) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PROBE_INTERVAL_MS;
 
     #[test]
     fn drag_requires_enough_distance_and_time() {
@@ -447,6 +491,26 @@ mod tests {
         assert!(!inside_rect(100, 10, 0, 0, 100, 50), "右边界排他");
         assert!(!inside_rect(10, 50, 0, 0, 100, 50), "下边界排他");
         assert!(!inside_rect(-1, 10, 0, 0, 100, 50));
+    }
+
+    #[test]
+    fn clipboard_change_counts_only_as_new_non_blank_text() {
+        assert!(is_new_selection_text(Some("old"), Some("selected")));
+        assert!(is_new_selection_text(None, Some("selected")));
+        assert!(!is_new_selection_text(Some("old"), Some("old")), "Ctrl+C 未生效");
+        assert!(!is_new_selection_text(Some("old"), None), "非文本格式（拖文件夹）");
+        assert!(!is_new_selection_text(Some("old"), Some("  \n ")), "纯空白");
+    }
+
+    #[test]
+    fn gesture_probe_budget_keeps_cursor_polling_alive() {
+        let gesture_ms = SELECTION_PROBE_TRIES as u64 * SELECTION_PROBE_WAIT_MS;
+        let capture_ms = SELECTION_CLIPBOARD_TRIES as u64 * SELECTION_CLIPBOARD_WAIT_MS;
+        assert!(
+            gesture_ms <= PROBE_INTERVAL_MS.saturating_mul(2),
+            "手势探测同步跑在 scheduler 线程，不得超过两轮探针间隔: {gesture_ms}ms"
+        );
+        assert!(gesture_ms < capture_ms, "手势判定应比真正取词更短");
     }
 
     #[test]
