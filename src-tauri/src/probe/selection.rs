@@ -1,6 +1,8 @@
 //! 全局划词手势检测与「仅主动触发」取词。
 //!
 //! - 手势：`WH_MOUSE_LL` 回调只做 O(1) 阈值判定与置位，事件由 scheduler 的 100ms 轮询 emit；
+//!   **自家进程窗口（桌宠 / 设置 / 翻译浮窗）上的按下不算划词**，否则拖动桌宠会被
+//!   误判为拖选文本并弹出工具条；
 //! - 取词：翻译**只在用户点击「翻译」后**发生；但双击选词会在手势阶段注入一次 `Ctrl+C` 探测，
 //!   仅用于判定「是否确有选中文本」，探测后恢复原剪贴板、无副作用；
 //! - 红线：手势阶段不读剪贴板、不注入按键（双击选词探测除外，且只判定是否弹工具条，不翻译）；
@@ -14,15 +16,17 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
     VIRTUAL_KEY, VK_C, VK_CONTROL,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetClassNameW, GetForegroundWindow, GetMessageW, HHOOK, MSG,
-    MSLLHOOKSTRUCT, SetForegroundWindow, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-    WH_MOUSE_LL, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN,
+    CallNextHookEx, DispatchMessageW, GA_ROOT, GetAncestor, GetClassNameW, GetForegroundWindow,
+    GetMessageW, GetWindowThreadProcessId, HHOOK, MSG, MSLLHOOKSTRUCT, SetForegroundWindow,
+    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_MOUSE_LL, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_RBUTTONDOWN, WindowFromPoint,
 };
 
 use crate::config::{
@@ -101,6 +105,33 @@ fn is_inside_translator(px: i32, py: i32) -> bool {
         )
 }
 
+/// 纯函数：本次左键按下是否应**跳过**划词手势（便于单测）。
+///
+/// 自家窗口一律跳过：拖动桌宠的位移（≥8px、≥60ms）恰好满足 `is_drag`，
+/// 若不排除，松手即被当成拖选文本弹出翻译工具条；点击设置窗口同理。
+pub fn should_ignore_gesture(inside_translator: bool, own_window: bool) -> bool {
+    inside_translator || own_window
+}
+
+/// 鼠标位置下的顶层窗口是否属于本进程（桌宠 / 设置 / 翻译浮窗均为同进程 WebView）。
+///
+/// 用 `WindowFromPoint` 而非 `GetForegroundWindow`：低级钩子回调发生在窗口激活之前，
+/// 前台窗口可能仍是旧的；取鼠标命中窗口才准确。WebView2 子窗口经
+/// `GetAncestor(GA_ROOT)` 归一到 Tauri 顶层窗口后再比对 PID。
+unsafe fn is_own_window_at(px: i32, py: i32) -> bool {
+    let hwnd = unsafe { WindowFromPoint(POINT { x: px, y: py }) };
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let target = if root.0.is_null() { hwnd } else { root };
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(target, Some(&mut pid));
+    }
+    pid == unsafe { GetCurrentProcessId() }
+}
+
 /// 纯函数：由按下/松开两点计算选区包围盒（供工具条贴合选中词定位）。
 pub fn selection_rect(down_x: i32, down_y: i32, up_x: i32, up_y: i32) -> SelectionRectDto {
     SelectionRectDto {
@@ -134,14 +165,18 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
         let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let message = wparam.0 as u32;
         if message == WM_LBUTTONDOWN {
-            if is_inside_translator(info.pt.x, info.pt.y) {
-                // 点击自家工具条 / 浮窗：不算划词，也不触发收起
+            let inside = is_inside_translator(info.pt.x, info.pt.y);
+            let own = unsafe { is_own_window_at(info.pt.x, info.pt.y) };
+            // 点击工具条 / 浮窗之外且工具条可见 → 收起（点在桌宠上同样算「窗口之外」）。
+            if !inside && WIN_VISIBLE.load(Ordering::Relaxed) {
+                DISMISS.store(true, Ordering::Relaxed);
+            }
+            if should_ignore_gesture(inside, own) {
+                // 自家窗口：拖动桌宠、点击设置窗口都不算划词。同时清空双击计数，
+                // 避免与之后第三方应用里的点击拼成误判双击、误注入 Ctrl+C。
                 DRAGGING.store(false, Ordering::Relaxed);
+                LAST_CLICK_MS.store(0, Ordering::Relaxed);
             } else {
-                // 点击窗口之外：收起工具条 / 浮窗，同时仍允许本次按下成为新一次划词
-                if WIN_VISIBLE.load(Ordering::Relaxed) {
-                    DISMISS.store(true, Ordering::Relaxed);
-                }
                 TARGET_HWND.store(unsafe { GetForegroundWindow() }.0 as isize, Ordering::Relaxed);
                 let now = now_ms();
                 let last = LAST_CLICK_MS.load(Ordering::Relaxed);
@@ -412,6 +447,14 @@ mod tests {
         assert!(!inside_rect(100, 10, 0, 0, 100, 50), "右边界排他");
         assert!(!inside_rect(10, 50, 0, 0, 100, 50), "下边界排他");
         assert!(!inside_rect(-1, 10, 0, 0, 100, 50));
+    }
+
+    #[test]
+    fn own_windows_never_start_a_selection_gesture() {
+        assert!(should_ignore_gesture(false, true), "拖动桌宠 / 点击设置窗口不算划词");
+        assert!(should_ignore_gesture(true, false), "点击翻译工具条不算划词");
+        assert!(should_ignore_gesture(true, true));
+        assert!(!should_ignore_gesture(false, false), "第三方应用划词照常触发");
     }
 
     #[test]
