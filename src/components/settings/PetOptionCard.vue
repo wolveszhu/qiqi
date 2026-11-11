@@ -3,6 +3,8 @@
  * 形象选项卡（设计方案 §5.2 / §4.1）：选中态 2px matcha 边 + 浅绿底 + 「✓ 使用中」角标；
  * disabled 供尚未实现的形象灰显（当前两套内置形象均已实现，故不传）；
  * dashed 变体为「导入自定义形象」占位（＋）。点击上抛 select 事件，业务无耦合。
+ * 自定义形象：传 `image`（dataUrl）显示真实缩略图，传 `deletable` 时右上角出现删除按钮，
+ * 点击删除上抛 delete 事件（阻止冒泡，不会误触 select）。
  */
 import { useI18n } from "vue-i18n";
 
@@ -13,14 +15,16 @@ withDefaults(
     name: string;
     sub?: string;
     emoji?: string;
+    image?: string;
     selected?: boolean;
     disabled?: boolean;
     dashed?: boolean;
+    deletable?: boolean;
   }>(),
-  { selected: false, disabled: false, dashed: false },
+  { selected: false, disabled: false, dashed: false, deletable: false },
 );
 
-const emit = defineEmits<{ (e: "select"): void }>();
+const emit = defineEmits<{ (e: "select"): void; (e: "delete"): void }>();
 </script>
 
 <template>
@@ -31,7 +35,15 @@ const emit = defineEmits<{ (e: "select"): void }>();
     type="button"
     @click="emit('select')"
   >
-    <span class="pet-opt__avatar">{{ emoji ?? "🐱" }}</span>
+    <span class="pet-opt__avatar">
+      <img
+        v-if="image"
+        class="pet-opt__img"
+        :src="image"
+        :alt="name"
+      />
+      <template v-else>{{ emoji ?? "🐱" }}</template>
+    </span>
     <span class="pet-opt__info">
       <span class="pet-opt__name">{{ name }}</span>
       <span
@@ -45,11 +57,21 @@ const emit = defineEmits<{ (e: "select"): void }>();
       class="pet-opt__check"
       >{{ t("petOption.inUse") }}</span
     >
+    <button
+      v-if="deletable"
+      class="pet-opt__del"
+      type="button"
+      :aria-label="t('avatar.deleteAvatar')"
+      @click.stop="emit('delete')"
+    >
+      ×
+    </button>
   </button>
 </template>
 
 <style scoped>
 .pet-opt {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -88,6 +110,12 @@ const emit = defineEmits<{ (e: "select"): void }>();
   font-size: 24px;
   background: var(--bg-soft);
   flex: none;
+  overflow: hidden;
+}
+.pet-opt__img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 .pet-opt__info {
   display: flex;
@@ -108,5 +136,27 @@ const emit = defineEmits<{ (e: "select"): void }>();
   font-size: 11px;
   font-weight: 700;
   color: var(--matcha-deep);
+}
+.pet-opt__del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--peach-deep);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.pet-opt__del:hover {
+  opacity: 1;
 }
 </style>

@@ -4,7 +4,7 @@
  *
  * 形象清单 = 内置（factory `listRenderers` 派生）+ 自定义（customAvatarRegistry 合并）；
  * 导入走 `tauri-plugin-dialog` 取路径 → Rust 校验/拷贝/落库 → 注册表即时刷新。
- * 选中自定义卡即展开 `CustomAvatarEditor` 微调面板（缩放 / 锚点 / 重命名 / 删除）。
+ * 自定义形象卡的缩略图直接由注册表 dataUrl 渲染，删除按钮在网格内就地触发（不再展开微调面板）。
  */
 import { open } from "@tauri-apps/plugin-dialog";
 import { emit } from "@tauri-apps/api/event";
@@ -17,15 +17,20 @@ import AppToggle from "../../../components/ui/AppToggle.vue";
 import HintBox from "../../../components/ui/HintBox.vue";
 import PetOptionCard from "../../../components/settings/PetOptionCard.vue";
 import PreviewStage from "../../../components/settings/PreviewStage.vue";
-import CustomAvatarEditor from "../../../components/settings/CustomAvatarEditor.vue";
 import { getState, updateState } from "../../../api/pet";
 import { getTyped, setSnapRatio, setSnapSleep } from "../../../api/settings";
-import { importCustomAvatar, readCustomAvatar } from "../../../api/customAvatar";
+import {
+  deleteCustomAvatar,
+  importCustomAvatar,
+  readCustomAvatar,
+} from "../../../api/customAvatar";
 import { listRenderers } from "../../../renderer/factory";
 import {
   addCustomConfig,
   loadCustomAvatars,
   listCustomConfigs,
+  removeCustomConfig,
+  uuidFromFullId,
 } from "../../../renderer/customAvatarRegistry";
 import { SNAP_SHOW_RATIO_MAX, SNAP_SHOW_RATIO_MIN } from "../../../utils/edgeSnap";
 import { pushToast } from "../../../composables/useToast";
@@ -41,7 +46,9 @@ const PET_META_KEYS: Record<string, { name: string; sub: string; emoji: string }
 };
 
 /** 自定义形象缓存快照（注册表非响应式，经 syncCustomList 同步到响应式副本）。 */
-const customList = ref<Array<{ id: string; fullId: string; name: string }>>([]);
+const customList = ref<
+  Array<{ id: string; fullId: string; name: string; dataUrl: string }>
+>([]);
 
 /** 从注册表同步自定义形象列表（画廊/选中态依赖其刷新）。 */
 function syncCustomList(): void {
@@ -49,41 +56,44 @@ function syncCustomList(): void {
     id: c.id,
     fullId: c.fullId,
     name: c.name,
+    dataUrl: c.dataUrl,
   }));
 }
 
-/** 选项卡清单 = 内置（注册表派生） + 自定义（注册表合并）。 */
+/** 选项卡清单 = 内置（注册表派生） + 自定义（注册表合并，卡片直接显示真实缩略图 + 删除）。 */
 const OPTIONS = computed(() => [
   ...listRenderers().map((id) => {
     const meta = PET_META_KEYS[id];
     return {
       id,
+      fullId: id,
       name: meta ? t(meta.name) : id,
       sub: meta ? t(meta.sub) : t("avatar.builtinFallback"),
       emoji: meta?.emoji ?? "🐾",
+      image: undefined,
+      deletable: false,
     };
   }),
   ...customList.value.map((c) => ({
     id: c.fullId,
+    fullId: c.fullId,
     name: c.name,
     sub: t("avatar.customSub"),
-    emoji: "🖼",
+    emoji: undefined,
+    image: c.dataUrl,
+    deletable: true,
   })),
 ]);
 
 const savedName = ref(petStore.petName);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** 当前正在微调的自定义形象 id（非 custom: 前缀时为 null）。 */
-const editorId = ref<string | null>(null);
-
-/** 选中形象：import 走导入；custom: 打开微调；其余落库切换。 */
+/** 选中形象：import 走导入；其余落库切换。自定义形象微调面板已移除（缩放/锚点滑杆下架）。 */
 function selectRenderer(id: string): void {
   if (id === "import") {
     void runImport();
     return;
   }
-  editorId.value = id.startsWith("custom:") ? id : null;
   const prev = petStore.activeRenderer;
   petStore.activeRenderer = id; // 乐观
   void saveRenderer(id, prev);
@@ -125,7 +135,6 @@ async function runImport(): Promise<void> {
       anchorY: meta.anchorY,
     });
     syncCustomList();
-    editorId.value = fullId;
     pushToast(t("avatar.importOk"));
     // 设为当前形象
     const prev = petStore.activeRenderer;
@@ -208,14 +217,19 @@ async function refreshActiveRenderer(): Promise<void> {
   }
 }
 
-/** 编辑器改名/重缩放后，画廊名字同步。 */
-function onEditorUpdated(): void {
-  syncCustomList();
-}
-/** 编辑器删除当前形象后：关编辑器 + 画廊同步（激活态由 Rust 回退并 emit 事件驱动）。 */
-function onEditorDeleted(): void {
-  editorId.value = null;
-  syncCustomList();
+/** 删除自定义形象：确认 → Rust 落库删除 + 注册表即时移除。激活态由 Rust 回退并 emit 事件驱动刷新。 */
+async function deleteAvatar(fullId: string): Promise<void> {
+  const uuid = uuidFromFullId(fullId);
+  if (!uuid) return;
+  if (!window.confirm(t("avatar.deleteConfirm"))) return;
+  try {
+    await deleteCustomAvatar(uuid);
+    removeCustomConfig(uuid);
+    pushToast(t("avatar.deleteOk"));
+    syncCustomList();
+  } catch (e: unknown) {
+    pushToast(e instanceof Error ? e.message : t("common.saveFailed"), "error");
+  }
 }
 
 onMounted(async (): Promise<void> => {
@@ -258,8 +272,11 @@ onMounted(async (): Promise<void> => {
           :name="o.name"
           :sub="o.sub"
           :emoji="o.emoji"
+          :image="o.image"
+          :deletable="o.deletable"
           :selected="petStore.activeRenderer === o.id"
           @select="selectRenderer(o.id)"
+          @delete="deleteAvatar(o.fullId)"
         />
         <PetOptionCard
           :name="t('avatar.importTitle')"
@@ -269,18 +286,6 @@ onMounted(async (): Promise<void> => {
           @select="selectRenderer('import')"
         />
       </div>
-    </AppCard>
-
-    <!-- 右中：自定义形象微调（仅选中自定义卡时出现） -->
-    <AppCard
-      v-if="editorId && editorId.startsWith('custom:')"
-      :title="t('avatar.editorTitle')"
-    >
-      <CustomAvatarEditor
-        :avatar-id="editorId"
-        @updated="onEditorUpdated"
-        @deleted="onEditorDeleted"
-      />
     </AppCard>
 
     <!-- 右下：窗口与交互 -->
