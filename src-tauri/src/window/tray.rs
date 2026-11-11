@@ -50,11 +50,7 @@ pub fn build_tray(app: &App, locale: &str) -> Result<(), AppError> {
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .on_tray_icon_event(move |_icon, event| {
             // 左键 = 唤起应用（桌宠回桌面 + 打开设置）；右键交给菜单，其余按键忽略。
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                ..
-            } = event
-            {
+            if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
                 reveal_app(&handle);
             }
         })
@@ -118,12 +114,8 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         MENU_AUTOSTART => {
             toggle_autostart(app);
             // 切换后立即重建菜单，使标签在「开机自启 ↔ 关闭开机自启」间即时翻转
-            let locale = app
-                .state::<AppState>()
-                .locale
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
+            let locale =
+                app.state::<AppState>().locale.lock().map(|g| g.clone()).unwrap_or_default();
             let _ = rebuild_tray_menu(app, &locale);
         },
         MENU_QUIT => app.exit(0),
@@ -221,21 +213,11 @@ fn choose_locale_message(
     zh: &str,
     en: &str,
 ) -> (String, &'static str) {
-    let is_en = locale
-        .lock()
-        .map(|g| g.starts_with("en"))
-        .unwrap_or(false);
-    if is_en {
-        (en.to_string(), "warn")
-    } else {
-        (zh.to_string(), "warn")
-    }
+    let is_en = locale.lock().map(|g| g.starts_with("en")).unwrap_or(false);
+    if is_en { (en.to_string(), "warn") } else { (zh.to_string(), "warn") }
 }
 
 /// 向前端推送一条 toast（前端 `main.ts` 全局订阅 `app:toast` 事件后展示）。
 fn emit_toast<R: Runtime>(app: &AppHandle<R>, message: &str, tone: &str) {
-    let _ = app.emit(
-        "app:toast",
-        serde_json::json!({ "message": message, "tone": tone }),
-    );
+    let _ = app.emit("app:toast", serde_json::json!({ "message": message, "tone": tone }));
 }

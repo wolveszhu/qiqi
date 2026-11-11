@@ -239,7 +239,11 @@ mod tests {
         // 共鸣同深度对话：日上限 60 + 收益递减（按强度取基数后再折算）
         assert_eq!(apply(0, &AffectionSignal::Resonance(2), &[]).delta, 20, "首次 strength2 满分");
         let one = logs(&[(REASON_RESONANCE, 20)]);
-        assert_eq!(apply(20, &AffectionSignal::Resonance(1), &one).delta, 10, "第 2 次 strength1 满分");
+        assert_eq!(
+            apply(20, &AffectionSignal::Resonance(1), &one).delta,
+            10,
+            "第 2 次 strength1 满分"
+        );
         let two = logs(&[(REASON_RESONANCE, 20), (REASON_RESONANCE, 10)]);
         assert_eq!(apply(30, &AffectionSignal::Resonance(2), &two).delta, 12, "第 3 次降到 12");
         // 日上限兜底

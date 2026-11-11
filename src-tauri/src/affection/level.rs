@@ -106,10 +106,7 @@ mod tests {
         let gaps: Vec<i64> =
             (1..LEVEL_FLOORS.len()).map(|i| LEVEL_FLOORS[i] - LEVEL_FLOORS[i - 1]).collect();
         assert_eq!(gaps, vec![201, 350, 500], "各档跨度：L1 0–200、L2 350、L3 500");
-        assert!(
-            gaps.windows(2).all(|w| w[1] > w[0]),
-            "每升一级所需分数必须严格递增"
-        );
+        assert!(gaps.windows(2).all(|w| w[1] > w[0]), "每升一级所需分数必须严格递增");
     }
 
     #[test]

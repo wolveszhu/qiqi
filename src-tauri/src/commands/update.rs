@@ -60,11 +60,7 @@ fn current_version() -> String {
 
 /// 拉取单个源并解析（内部错误用 `String` 承载，便于多源失败信息合并展示）。
 async fn fetch_one(client: &reqwest::Client, url: &str) -> Result<LatestManifest, String> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {e}"))?;
+    let resp = client.get(url).send().await.map_err(|e| format!("请求失败: {e}"))?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         // 404 单独提示：最常见原因是仓库为私有（匿名访问一律 404）或清单未推送
         return Err(
@@ -93,10 +89,7 @@ async fn fetch_latest() -> Result<LatestManifest, AppError> {
             Err(e) => failures.push(format!("{url} → {e}")),
         }
     }
-    Err(AppError::Llm(format!(
-        "所有更新源均不可达（{}）",
-        failures.join("；")
-    )))
+    Err(AppError::Llm(format!("所有更新源均不可达（{}）", failures.join("；"))))
 }
 
 /// 比较当前版本与远端清单，产出 `UpdateInfo`。
@@ -104,11 +97,9 @@ async fn fetch_latest() -> Result<LatestManifest, AppError> {
 /// 版本不可解析（如 latest 带 `v` 前缀、当前版本异常）时**回落为"无更新"**——
 /// 宁可漏报也不误报；错误由调用方（手动检查）或后台循环（静默吞掉）处理。
 fn detect(current: &str, latest: &LatestManifest) -> UpdateInfo {
-    let available = semver::Version::parse(current).ok().is_some_and(|c| {
-        semver::Version::parse(&latest.version)
-            .map(|l| l > c)
-            .unwrap_or(false)
-    });
+    let available = semver::Version::parse(current)
+        .ok()
+        .is_some_and(|c| semver::Version::parse(&latest.version).map(|l| l > c).unwrap_or(false));
     UpdateInfo {
         available,
         current: current.to_string(),
@@ -159,7 +150,9 @@ mod tests {
         let m = LatestManifest {
             version: "0.2.0".into(),
             notes: Some("新增远程更新".into()),
-            download_url: Some("https://github.com/wolveszhu/qiqi/releases/download/v0.2.0/qiqi.msi".into()),
+            download_url: Some(
+                "https://github.com/wolveszhu/qiqi/releases/download/v0.2.0/qiqi.msi".into(),
+            ),
         };
         let info = detect("0.1.0", &m);
         assert!(info.available, "更高版本应标记可更新");
@@ -212,7 +205,8 @@ mod tests {
         assert_eq!(m.download_url.as_deref(), Some("https://x/a.msi"));
 
         // 缺省可选字段（notes/downloadUrl）也能解析，不报错
-        let m2: LatestManifest = serde_json::from_str(r#"{"version":"0.3.1"}"#).expect("应解析最小字段");
+        let m2: LatestManifest =
+            serde_json::from_str(r#"{"version":"0.3.1"}"#).expect("应解析最小字段");
         assert_eq!(m2.version, "0.3.1");
         assert!(m2.notes.is_none());
         assert!(m2.download_url.is_none());
