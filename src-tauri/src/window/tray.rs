@@ -7,12 +7,14 @@
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{App, AppHandle, Manager, Runtime};
+use tauri::{App, AppHandle, Emitter, Manager, Runtime};
+use tauri_plugin_autostart::ManagerExt as _;
 
 use super::click_through;
 use super::manager::{LABEL_MAIN, LABEL_SETTINGS};
 use crate::error::AppError;
 use crate::i18n::{TrayStrings, tray_strings};
+use crate::state::AppState;
 
 /// 菜单项 id（集中常量，禁魔法字符串）。
 const MENU_SHOW: &str = "tray_show";
@@ -58,6 +60,12 @@ pub fn build_tray(app: &App, locale: &str) -> Result<(), AppError> {
         })
         .build(app)
         .map_err(AppError::from)?;
+
+    // 开发态清理：自动关闭残留的 dev 开机自启（详见 `prune_dev_autostart`）。
+    // 注意 `handle` 已 move 进左键闭包，这里改用 `app.handle()` 取一份新句柄。
+    #[cfg(debug_assertions)]
+    prune_dev_autostart(&app.handle().clone());
+
     Ok(())
 }
 
@@ -68,12 +76,17 @@ fn build_menu<M: tauri::Manager<R>, R: tauri::Runtime>(
     manager: &M,
     s: &TrayStrings,
 ) -> Result<tauri::menu::Menu<R>, AppError> {
+    // 开机自启文案随真实开关态翻转：已开启 → 显示「关闭开机自启」，反之「开机自启」。
+    let autostart_label = match manager.autolaunch().is_enabled() {
+        Ok(true) => s.autostart_on,
+        _ => s.autostart,
+    };
     MenuBuilder::new(manager)
         .items(&[
             &MenuItemBuilder::with_id(MENU_SHOW, s.show).build(manager)?,
             &MenuItemBuilder::with_id(MENU_HIDE, s.hide).build(manager)?,
             &MenuItemBuilder::with_id(MENU_SETTINGS, s.settings).build(manager)?,
-            &MenuItemBuilder::with_id(MENU_AUTOSTART, s.autostart).build(manager)?,
+            &MenuItemBuilder::with_id(MENU_AUTOSTART, autostart_label).build(manager)?,
             &MenuItemBuilder::with_id(MENU_QUIT, s.quit).build(manager)?,
         ])
         .build()
@@ -102,7 +115,17 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
             }
         },
         MENU_SETTINGS => show_window(app, LABEL_SETTINGS),
-        MENU_AUTOSTART => toggle_autostart(app),
+        MENU_AUTOSTART => {
+            toggle_autostart(app);
+            // 切换后立即重建菜单，使标签在「开机自启 ↔ 关闭开机自启」间即时翻转
+            let locale = app
+                .state::<AppState>()
+                .locale
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
+            let _ = rebuild_tray_menu(app, &locale);
+        },
         MENU_QUIT => app.exit(0),
         _ => {},
     }
@@ -146,16 +169,73 @@ fn reveal_window<R: Runtime>(app: &AppHandle<R>, label: &str, focus: bool) {
 }
 
 /// 开机自启开关（读当前状态取反；失败静默——菜单不因注册表异常崩溃）。
+///
+/// 开发构建（`cfg!(debug_assertions)`）下**禁止启用**：dev 二进制加载 `devUrl`
+/// （localhost:1420 开发服务器），系统开机自启时并无 vite 在跑，会导致
+/// 「无法连接本地网络」。故仅允许关闭，启用一律拒绝并提示。
 fn toggle_autostart<R: Runtime>(app: &AppHandle<R>) {
-    use tauri_plugin_autostart::ManagerExt as _;
     let manager = app.autolaunch();
     match manager.is_enabled() {
         Ok(true) => {
             let _ = manager.disable();
         },
         Ok(false) => {
+            if cfg!(debug_assertions) {
+                emit_autostart_blocked_toast(app);
+                return;
+            }
             let _ = manager.enable();
         },
         Err(_) => {},
     }
+}
+
+/// 启动期清理：开发构建下若已残留开机自启注册（dev 二进制无法脱离 vite 运行），
+/// 自动关闭它以消除「开机连不上 localhost:1420」的故障，并提示用户。
+#[cfg(debug_assertions)]
+fn prune_dev_autostart<R: Runtime>(app: &AppHandle<R>) {
+    if app.autolaunch().is_enabled().unwrap_or(false) {
+        let _ = app.autolaunch().disable();
+        let (message, tone) = choose_locale_message(
+            &app.state::<AppState>().locale,
+            "检测到开发模式的开机自启，已自动关闭：开发构建需配合开发服务器，系统启动时无服务器可连。",
+            "Dev-mode autostart was auto-disabled: a dev build needs the dev server, which is absent at OS boot.",
+        );
+        emit_toast(app, &message, tone);
+    }
+}
+
+/// 开发态下点「启用开机自启」被拒时的提示。
+fn emit_autostart_blocked_toast<R: Runtime>(app: &AppHandle<R>) {
+    let (message, tone) = choose_locale_message(
+        &app.state::<AppState>().locale,
+        "开发模式下开机自启无效（仅发布构建支持），已忽略。",
+        "Launch at startup is unavailable in dev builds (release only); ignored.",
+    );
+    emit_toast(app, &message, tone);
+}
+
+/// 按缓存语言二选一（非法/缺省回落中文）。
+fn choose_locale_message(
+    locale: &std::sync::Mutex<String>,
+    zh: &str,
+    en: &str,
+) -> (String, &'static str) {
+    let is_en = locale
+        .lock()
+        .map(|g| g.starts_with("en"))
+        .unwrap_or(false);
+    if is_en {
+        (en.to_string(), "warn")
+    } else {
+        (zh.to_string(), "warn")
+    }
+}
+
+/// 向前端推送一条 toast（前端 `main.ts` 全局订阅 `app:toast` 事件后展示）。
+fn emit_toast<R: Runtime>(app: &AppHandle<R>, message: &str, tone: &str) {
+    let _ = app.emit(
+        "app:toast",
+        serde_json::json!({ "message": message, "tone": tone }),
+    );
 }

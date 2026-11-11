@@ -133,6 +133,10 @@ pub fn set_locale(
 ) -> Result<(), AppError> {
     let conn = state.db.lock().map_err(db_lock_err)?;
     app_settings::set_locale(&conn, &locale)?;
+    // 同步缓存语言，托盘菜单（无 WebView 渲染）即时取用
+    if let Ok(mut g) = state.locale.lock() {
+        *g = locale.clone();
+    }
     // 语言切换即时反映到系统托盘（无 WebView 渲染，纯 OS 菜单）。
     // 托盘重建失败非致命：locale 已落库，下次启动仍生效，故吞掉错误。
     let _ = crate::window::tray::rebuild_tray_menu(&app, &locale);

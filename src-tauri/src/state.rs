@@ -45,11 +45,13 @@ pub struct AppState {
     pub last_response_ms: Mutex<Option<u64>>,
     /// 边缘吸附休眠态（D4.4：true=休眠中；日记生成等后台任务门控；内存态，重启清零）。
     pub sleep_mode: Mutex<bool>,
+    /// 当前语言（启动读取 app_settings；`set_locale` 命令同步；托盘菜单刷新文案用）。
+    pub locale: Mutex<String>,
 }
 
 impl AppState {
-    /// 构造初始状态（db 由调用方注入）。
-    pub fn new(db: Mutex<Connection>) -> Self {
+    /// 构造初始状态（db 由调用方注入；locale 一并缓存，托盘菜单刷新用）。
+    pub fn new(db: Mutex<Connection>, locale: String) -> Self {
         Self {
             db,
             hit_region: Mutex::new(HitRegion::default()),
@@ -60,6 +62,7 @@ impl AppState {
             last_foreground: Mutex::new(None),
             last_response_ms: Mutex::new(None),
             sleep_mode: Mutex::new(false),
+            locale: Mutex::new(locale),
         }
     }
 
@@ -74,7 +77,10 @@ mod tests {
     use super::*;
 
     fn state() -> AppState {
-        AppState::new(Mutex::new(rusqlite::Connection::open_in_memory().expect("内存库")))
+        AppState::new(
+            Mutex::new(rusqlite::Connection::open_in_memory().expect("内存库")),
+            "zh-CN".to_string(),
+        )
     }
 
     #[test]

@@ -9,7 +9,10 @@ pub struct TrayStrings {
     pub show: &'static str,
     pub hide: &'static str,
     pub settings: &'static str,
+    /// 开机自启「关闭态」标签（当前未启用时显示，点击即启用）。
     pub autostart: &'static str,
+    /// 开机自启「开启态」标签（当前已启用时显示，点击即关闭）。
+    pub autostart_on: &'static str,
     pub quit: &'static str,
 }
 
@@ -27,6 +30,7 @@ pub fn tray_strings(locale: &str) -> TrayStrings {
             hide: "Hide Pet",
             settings: "Settings",
             autostart: "Launch at Startup",
+            autostart_on: "Disable Launch at Startup",
             quit: "Quit",
         },
         _ => TrayStrings {
@@ -34,6 +38,7 @@ pub fn tray_strings(locale: &str) -> TrayStrings {
             hide: "隐藏桌宠",
             settings: "设置",
             autostart: "开机自启",
+            autostart_on: "关闭开机自启",
             quit: "退出",
         },
     }

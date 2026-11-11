@@ -83,18 +83,18 @@ pub fn run() {
                 .map_err(|e| error::AppError::Io(format!("解析 app_data_dir 失败: {e}")))?
                 .join("pet.db");
             let db::Db { conn } = db::init(&db_path)?;
-            app.manage(crate::state::AppState::new(conn));
 
             // 读取语言偏好（首启缺省 zh-CN；前端会在检测 OS 语言后回写并重建托盘）
             let locale = {
                 use crate::db::repositories::app_settings;
-                let state = app.state::<AppState>();
-                let conn = state
-                    .db
+                let guard = conn
                     .lock()
                     .map_err(|e| error::AppError::Db(format!("获取数据库连接失败: {e}")))?;
-                app_settings::get_locale(&conn)?
+                app_settings::get_locale(&guard)?
             };
+
+            // 注入全局状态（locale 一并缓存，托盘菜单刷新文案用）
+            app.manage(crate::state::AppState::new(conn, locale.clone()));
 
             // [C2] 桌面融合装配：托盘 + 探针单点轮询 + 穿透同步循环
             window::tray::build_tray(app, &locale)?;
