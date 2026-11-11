@@ -147,11 +147,11 @@
 
 ## 6. 已知遗留（本次整理未改动，登记备查）
 
-- `M6__default_models.sql` 内含内置模型平台的明文 API Key 种子。它属于已执行的
-  历史迁移，按红线不可修改；如需轮换，应新增迁移 `UPDATE` 并同步评估种子口径。
 - `M3` / `M4` / `M7` 是历史数据迁移，链上必经执行，不可删除。
 - `models/values.rs` 的 `Legacy*` 结构仍被读取端引用，用于兜底极旧库，不可删。
-- `M6` 的两个内置模型平台明文 Key 在发布守卫中登记为**允许的系统基础数据**（见 §7.5）。
+- `M6` / `M12` / `M13` 的凭据种子**已于 2026-11-11 置为空占位**（只改种子值，
+  DDL / 行数 / 幂等守卫不变，存量库不重跑）；真实凭据改由构建期环境变量注入，
+  详见 §7.5。已入远端的旧明文须按发布文档做历史清理并轮换，见 `.env.example` 说明。
 
 ## 7. 发布数据基线与防回归
 
@@ -174,10 +174,10 @@
 | :--- | ---: | :--- |
 | `pet_states` | 1 | 系统基础：默认「喵喵」/ `code_cat` / Lv1 / 0 分 |
 | `app_settings` | 2 | 系统基础：type=1 空三档；type=2 勿扰 + `frequency=normal` |
-| `default_model_settings` | 2 | 系统基础：智谱 / 硅基流动内置额度模型 |
+| `default_model_settings` | 2 | 系统基础：智谱 / 硅基流动内置额度模型（Key 为空占位，见 §7.5） |
 | `search_settings` | 1 | 系统基础：`tavily` / 未启用 / 空 Key |
-| `translate_settings` | 1 | 系统基础：`baidu` / `auto` / 默认开启 / 空自定义 Key（内置凭据由 M12 种子写入） |
-| `builtin_translate_providers` | 2 | 系统基础：百度 / 讯飞内置凭据 + 兜底上限每月 5,000（M13 种子、M14 对齐） |
+| `translate_settings` | 1 | 系统基础：`baidu` / `auto` / 默认开启 / 空自定义 Key（内置凭据列为空占位） |
+| `builtin_translate_providers` | 2 | 系统基础：百度 / 讯飞，兜底上限每月 5,000（M13 种子、M14 对齐；凭据列为空占位） |
 | `custom_avatars` | 0 | 用户自配，首发不得预置（M15 仅建表，无种子） |
 | `messages` | 0 | 运行时对话 |
 | `summaries` | 0 | 运行时摘要 |
@@ -191,8 +191,8 @@
 | `quota_usage_monthly` | 0 | 运行时月度全局汇总 |
 | `quota_usage_platform_monthly` | 0 | 运行时按平台月度汇总（M10 新增，干净库无数据） |
 
-合计 17 张表、**9 行系统基础数据**（`translate_settings` 的内置凭据由 M12 幂等种子写入，
-`builtin_translate_providers` 两家凭据由 M13 幂等种子写入，与 M6 同属已登记的生产凭据；
+合计 17 张表、**9 行系统基础数据**（三张内置表的凭据列均为空占位，行数由
+M6 / M12 / M13 的幂等种子固定，真实凭据见 §7.5 的构建期注入；
 `custom_translate_providers` 首发 0 行）。任何标注为 0 行的运行时表出现非 0 行，即视为
 测试 / 临时数据混入，发布必须阻断。
 
@@ -205,7 +205,7 @@
 | 层 | 落点 | 触发 | 作用 |
 | :--- | :--- | :--- | :--- |
 | 1 定义 | 本文件 §7.2 | 人工维护 | 基线的单一真源，改表时同步 |
-| 2 静态守卫 | `scripts/verify-release-data.mjs` | `pnpm verify:release-data` | 校验 `bundle.resources` 为空、扫描源码/`dist` 无数据文件；`dist` 命中自动删除并报告，源码命中直接失败；扫描迁移 SQL 无测试标记、INSERT 白名单 |
+| 2 静态守卫 | `scripts/verify-release-data.mjs` | `pnpm verify:release-data` | 校验 `bundle.resources` 为空、扫描源码/`dist` 无数据文件；`dist` 命中自动删除并报告，源码命中直接失败；扫描迁移 SQL 无测试标记 / 凭据字面量（4 类平台格式）、INSERT 白名单 |
 | 3 运行时守卫 | `src-tauri/tests/release_data_guard.rs` | `cargo test --test release_data_guard` | 干净空库跑完 M1–M15，断言表集合、逐表行数、关键默认值与无测试串 |
 | 4 CI 阻断 | `.github/workflows/release.yml` | 打 `v*` tag | 在 `tauri-action` **之前**依次跑 2、3，任一失败即中止、不产出 Release |
 
@@ -226,12 +226,23 @@ MSI 重装不会删除 `app_data_dir`，开发机上验证发布包时必须先�
 若不清目录，旧库会走前向迁移分支（先备份 `pet.db.bak`）而**保留历史数据**，
 这是预期行为，不代表安装包带数据。
 
-### 7.5 已登记例外
+### 7.5 内置共享凭据边界（2026-11-11 修订，原「已登记例外」废止）
 
-`M6__default_models.sql` 的两个明文 API Key 属「内置免费额度模型」的
-生产凭据：移除会让内置额度功能失效，本期按用户决策**保留**，仅在此登记。
-因此：
+**迁移 SQL 一律不含明文凭据**：`M6` / `M12` / `M13` 的凭据列只写空占位
+（`''`），表结构、行数与 `NOT EXISTS` 幂等守卫均不变，存量库不会重跑历史 SQL。
+真实值只在构建期由环境变量注入（`src-tauri/build.rs` 的 `CREDENTIAL_ENV` →
+`config.rs` 的 `option_env!`），启动时由
+`db::repositories::builtin_credentials::sync` 写入 SQLCipher 库。
 
-- 守卫把 `default_model_settings` 的 2 行计入允许基线；
-- 但静态守卫仍会阻断这两个 Key 出现在 `dist/`（前端产物绝不含凭据）；
-- 后续如改为服务端下发，须同步更新 §7.2 基线与守卫期望值。
+- **变量清单**：见仓库根 `.env.example`（7 个 `QIQI_*`，CI 配同名
+  Repository secrets，本地用 `.env` / 进程环境变量，`.gitignore` 已忽略）。
+- **降级**：未注入时写空串，内置额度 / 内置翻译通道降级为「未配置」，
+  用户自填 BYOK 不受影响；启动播种**无条件覆盖**，存量库里已轮换作废的
+  旧明文会被清掉，不会残留失效 Key。
+- **守卫**：`release_data_guard.rs` 断言凭据与构建期注入值一致（未注入即为
+  空），断言信息不回显凭据值；`verify-release-data.mjs` 专项扫描迁移 SQL
+  的凭据字面量（4 类平台格式），命中即阻断发布。
+- **局限（必须知晓）**：环境变量值会编入客户端二进制，随安装包分发仍可被
+  逆向提取。本方案解决的是**源码仓库 / git 历史明文泄露**，不是对终端用户
+  保密。要真正保密须改为服务端代理转发或纯 BYOK。已推送到远端的旧明文
+  **不会因本改造消失**，须轮换全部平台凭据并清理 git 历史。
