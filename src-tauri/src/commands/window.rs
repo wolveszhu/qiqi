@@ -9,8 +9,13 @@ use crate::state::{AppState, HitRegion};
 use crate::window;
 
 /// 开始拖拽窗口 A（系统接管；rule.md §5：前端禁模拟拖拽）。
+///
+/// 系统拖拽期间窗口持续移动，而穿透状态机的 cursor 是 100ms 缓存、命中区是低频上报，
+/// 两者必然不同步，任一轮误判为"未命中"就会把窗口置成穿透。这里丢弃翻转缓存，
+/// 让拖动结束后的下一轮同步**无条件重算并写回**正确状态（自愈，不依赖前端回调）。
 #[tauri::command]
-pub fn window_start_drag(app: AppHandle) -> Result<(), AppError> {
+pub fn window_start_drag(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    *state.last_ignore.lock().map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))? = None;
     window::drag::start_drag_main(&app)
 }
 
@@ -33,10 +38,20 @@ pub fn window_hide(target: String, app: AppHandle) -> Result<(), AppError> {
 }
 
 /// 直接设置穿透状态（C2.4 兜底通道；正常路径由 Rust 状态机自动翻转）。
+///
+/// 必须同步 `last_ignore`：状态机只在"目标状态与缓存不同"时才写系统 API，
+/// 直调若留下旧缓存，会造成该关时不开、该开时不关的单向卡死。
 #[tauri::command]
-pub fn window_set_ignore_cursor_events(ignore: bool, app: AppHandle) -> Result<(), AppError> {
+pub fn window_set_ignore_cursor_events(
+    ignore: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     let window = resolve(&app, window::manager::LABEL_MAIN)?;
-    window.set_ignore_cursor_events(ignore).map_err(AppError::from)
+    window.set_ignore_cursor_events(ignore).map_err(AppError::from)?;
+    *state.last_ignore.lock().map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))? =
+        Some(ignore);
+    Ok(())
 }
 
 /// 上报命中区域（C2.2：前端低频、变化才调）。
@@ -78,12 +93,14 @@ pub fn window_set_click_through_enabled(
         .lock()
         .map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))?;
     *slot = enabled;
-    // 关总闸时立即解除穿透（不必等下一轮询）
+    // 关总闸时立即解除穿透（不必等下一轮询），并同步翻转缓存
     if !enabled {
         drop(slot);
         if let Some(window) = app.get_webview_window(window::manager::LABEL_MAIN) {
             window.set_ignore_cursor_events(false).map_err(AppError::from)?;
         }
+        *state.last_ignore.lock().map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))? =
+            Some(false);
     }
     Ok(())
 }

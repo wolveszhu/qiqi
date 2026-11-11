@@ -24,11 +24,14 @@ pub fn is_passthrough_managed(label: &str) -> bool {
 /// 坐标系：cursor、window_pos、region 三者均为**屏幕物理像素**（region 由
 /// `window_set_hit_region` 命令在落缓存时单点换算，见该命令文档）。
 /// 规则：
-/// - 区域无效（未上报/尺寸为 0）→ 视为未命中（回退默认穿透，计划 §3.2 兜底）；
+/// - 区域无效（首启未上报 / 吸附休眠裁切为 0 / 渲染器挂载失败）→ **视为命中，整窗可点击**。
+///   绝不能回退成「整窗穿透」：`target_ignore` 会恒为 true，配合 `sync_click_through`
+///   只在翻转时写系统 API 的短路，会形成"一旦打开就永不关闭"的死锁，用户再也点不到桌宠。
+///   宁可短暂失去透明区穿透，也要保证形象始终可拖动 / 可点醒。
 /// - 边界四边取闭区间（含边），与 `set_ignore_cursor_events` 的像素语义一致。
 pub fn is_over_pet(cursor: (i32, i32), window_pos: (i32, i32), region: &HitRegion) -> bool {
     if !region.is_valid() {
-        return false;
+        return true;
     }
     let (cx, cy) = cursor;
     let (wx, wy) = window_pos;
@@ -151,12 +154,17 @@ mod tests {
         assert!(!is_over_pet((610, 401), (500, 300), &r));
     }
 
+    // 回归：首次启动拖动桌宠后整窗点击穿透、再也点不动（2026-11-11 手工反馈）。
+    // 根因：首启命中区未上报 / 贴边休眠裁切成 0 → 区域无效 → 旧逻辑回退"整窗穿透"，
+    // 而状态机只在翻转时写系统 API，target 恒 true 便永不关闭。
     #[test]
-    fn invalid_region_falls_back_to_passthrough() {
-        // 未上报（全 0）→ 未命中 → 穿透开
-        assert!(!is_over_pet((0, 0), (0, 0), &HitRegion::default()));
-        assert!(!is_over_pet((100, 100), (0, 0), &region(0, 0, 0, 100)));
-        assert!(!is_over_pet((100, 100), (0, 0), &region(0, 0, 100, 0)));
+    fn invalid_region_falls_back_to_clickable() {
+        // 未上报（全 0）/ 零宽 / 零高 → 一律视为命中 → 不穿透
+        assert!(is_over_pet((0, 0), (0, 0), &HitRegion::default()));
+        assert!(is_over_pet((100, 100), (0, 0), &region(0, 0, 0, 100)));
+        assert!(is_over_pet((100, 100), (0, 0), &region(0, 0, 100, 0)));
+        // 关键：即使上一轮已被置为穿透，无效区域也必须驱动状态机翻回可点击
+        assert!(!target_ignore(is_over_pet((0, 0), (0, 0), &HitRegion::default()), true,));
     }
 
     #[test]

@@ -19,7 +19,7 @@ pub struct HitRegion {
 }
 
 impl HitRegion {
-    /// 区域是否有效（未上报/尺寸为 0 视为无效 → 穿透回退默认开启）。
+    /// 区域是否有效（未上报 / 尺寸为 0 视为无效 → 回退**整窗可点击**，绝不回退穿透）。
     pub fn is_valid(&self) -> bool {
         self.width > 0 && self.height > 0
     }
