@@ -11,7 +11,11 @@ import { onMounted, onUnmounted, reactive, watch } from "vue";
 import { getState } from "../api/pet";
 import { setHitRegion } from "../api/window";
 import { createRenderer } from "../renderer/factory";
-import { loadCustomAvatars } from "../renderer/customAvatarRegistry";
+import {
+  getCustomConfig,
+  loadCustomAvatars,
+  uuidFromFullId,
+} from "../renderer/customAvatarRegistry";
 import type { IPetRenderer } from "../renderer/IPetRenderer";
 import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
 import type { HitRegion } from "../api/types";
@@ -127,6 +131,18 @@ export async function rebuildRenderer(id: string): Promise<void> {
   lastRegionKey = "";
   // 兜底清空：`destroy()` 不保证把 canvas 从 DOM 摘掉
   container.innerHTML = "";
+
+  // 自定义形象：注册表是各窗口独立的内存缓存，窗口 B 导入/删除后只更新 B 的副本。
+  // 窗口 A 收到 pet:renderer:changed 时可能查不到该配置——createRenderer 会静默
+  // 回落 code_cat，表现为「切换自定义形象不生效」。缺失时整表补载再建渲染器。
+  const uuid = uuidFromFullId(id);
+  if (uuid && !getCustomConfig(uuid)) {
+    try {
+      await loadCustomAvatars();
+    } catch (e: unknown) {
+      console.warn("[pet] 自定义形象注册表补载失败（沿用内置形象）", e);
+    }
+  }
 
   const next = createRenderer(id);
   renderer = next;
