@@ -13,6 +13,7 @@
 
 use rusqlite::Connection;
 
+use qiqi_lib::config;
 use qiqi_lib::db::connection::{Db, init_with_key, register_vec_extension};
 use qiqi_lib::db::migrations::TARGET_VERSION;
 
@@ -142,7 +143,8 @@ fn baseline_values_are_production_defaults() {
     assert!(dnd.contains("\"dnd\""), "勿扰结构应存在");
     assert!(dnd.contains("\"frequency\":\"normal\""), "频率应为默认 normal");
 
-    // 内置模型：恰好两家，且 Key 为已登记的生产凭据（非空）
+    // 内置模型：恰好两家；Key 只能来自构建期注入，未注入时为空占位。
+    // 迁移 SQL 不得预置明文——断言信息固定文案，绝不回显凭据值。
     let models: Vec<(String, String)> = conn
         .prepare("SELECT name, api_key FROM default_model_settings ORDER BY id")
         .expect("准备")
@@ -151,9 +153,14 @@ fn baseline_values_are_production_defaults() {
         .collect::<Result<Vec<_>, _>>()
         .expect("收集");
     assert_eq!(models.len(), 2, "内置模型应为 2 家");
-    assert!(models.iter().all(|(name, key)| !name.is_empty() && !key.is_empty()));
-    assert!(models.iter().any(|(name, _)| name == "智谱"));
-    assert!(models.iter().any(|(name, _)| name == "硅基流动"));
+    let expected_models = [
+        ("智谱", config::ZHIPU_API_KEY.unwrap_or("")),
+        ("硅基流动", config::SILICONFLOW_API_KEY.unwrap_or("")),
+    ];
+    for (i, (name, key)) in models.iter().enumerate() {
+        assert_eq!(name, expected_models[i].0, "内置模型平台名或顺序变化");
+        assert!(key == expected_models[i].1, "内置模型 Key 与构建期注入不一致");
+    }
 
     // 联网搜索：未配置 Key、未启用（用户自填 BYOK）
     let (provider, key, enabled): (String, String, i64) = conn
@@ -189,7 +196,9 @@ fn baseline_values_are_production_defaults() {
     assert!(tr_key.is_empty(), "首发不得预置自定义翻译 Key");
     assert!(tr_app_id.is_empty(), "首发不得预置自定义 APPID");
 
-    // M12 已登记的生产凭据：必须非空，但断言信息不得回显凭据值。
+    // M12 历史内置列：只来自构建期注入，未注入时为空占位；断言信息不回显凭据值。
+    let baidu_id = config::BAIDU_TRANSLATE_APPID.unwrap_or("");
+    let baidu_secret = config::BAIDU_TRANSLATE_SECRET.unwrap_or("");
     let (builtin_id, builtin_key): (String, String) = conn
         .query_row(
             "SELECT builtin_app_id, builtin_secret FROM translate_settings WHERE id = 1",
@@ -197,9 +206,12 @@ fn baseline_values_are_production_defaults() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("读内置凭据");
-    assert!(!builtin_id.is_empty() && !builtin_key.is_empty(), "M12 内置百度凭据种子缺失");
+    assert!(
+        builtin_id == baidu_id && builtin_key == baidu_secret,
+        "M12 内置凭据与构建期注入不一致（或残留迁移 SQL 明文）"
+    );
 
-    // M13 两家内置翻译服务商：凭据齐全、各自独立额度；断言信息不得回显凭据值。
+    // M13 两家内置翻译服务商：凭据只来自构建期注入，各自独立额度不变。
     let providers: Vec<(String, String, String, String, i64)> = conn
         .prepare(
             "SELECT provider_id, app_id, api_secret, api_key, monthly_granted \
@@ -214,10 +226,16 @@ fn baseline_values_are_production_defaults() {
     assert_eq!(providers[0].0, "baidu");
     assert_eq!(providers[1].0, "xfyun");
     assert!(
-        providers.iter().all(|p| !p.1.is_empty() && !p.2.is_empty() && p.4 == 5_000),
-        "两家 APPID / 签名密钥须就绪，兜底上限应为每月 5,000（M14 对齐）"
+        providers[0].1 == baidu_id && providers[0].2 == baidu_secret && providers[0].4 == 5_000,
+        "百度内置凭据与构建期注入不一致，或兜底上限不是每月 5,000（M14 对齐）"
     );
-    assert!(!providers[1].3.is_empty(), "讯飞 APIKey 不得缺失");
+    assert!(
+        providers[1].1 == config::XFYUN_APPID.unwrap_or("")
+            && providers[1].2 == config::XFYUN_API_SECRET.unwrap_or("")
+            && providers[1].3 == config::XFYUN_API_KEY.unwrap_or("")
+            && providers[1].4 == 5_000,
+        "讯飞内置凭据与构建期注入不一致，或兜底上限不是每月 5,000（M14 对齐）"
+    );
 }
 
 #[test]

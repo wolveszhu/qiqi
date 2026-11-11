@@ -110,7 +110,8 @@ mod tests {
             )
             .expect("读内置凭据");
         assert_eq!(count, 1, "M12 应播种单行配置");
-        assert!(!app_id.is_empty() && !secret.is_empty(), "内置凭据不得为空");
+        // 凭据列只留空占位：真实值由构建期环境变量在启动播种时写入，迁移 SQL 不含明文。
+        assert!(app_id.is_empty() && secret.is_empty(), "迁移 SQL 不得预置内置凭据");
 
         chain().to_latest(&mut conn).expect("重复迁移");
         let count: i64 = conn
@@ -143,7 +144,8 @@ mod tests {
         assert_eq!(target, "en", "不得覆盖用户译入语言");
         assert_eq!(provider, "deepl", "不得覆盖用户服务商");
         assert_eq!(key, "user-key", "不得覆盖用户自定义 Key");
-        assert!(!builtin_id.is_empty(), "存量行应补齐内置凭据");
+        // 条件 UPDATE 只写空占位；真实凭据由启动播种注入，不得在迁移里补齐。
+        assert!(builtin_id.is_empty(), "迁移 SQL 不得预置内置凭据");
 
         let providers: i64 = conn
             .query_row("SELECT COUNT(*) FROM custom_translate_providers", [], |row| row.get(0))
@@ -183,8 +185,8 @@ mod tests {
         assert_eq!(rows.len(), 2, "百度 + 讯飞各一行");
         assert_eq!(rows[0].0, "baidu");
         assert_eq!(rows[1].0, "xfyun");
-        assert!(rows.iter().all(|r| !r.1.is_empty()), "签名密钥不得为空");
-        assert!(!rows[1].2.is_empty(), "讯飞 APIKey 不得为空");
+        // 凭据列只留空占位：真实值由构建期环境变量在启动播种时写入。
+        assert!(rows.iter().all(|r| r.1.is_empty() && r.2.is_empty()), "迁移 SQL 不得预置内置凭据");
         assert!(rows.iter().all(|r| r.3 > 0), "月额度应为正数");
 
         // 幂等：重复迁移不新增行，也不覆盖用户改过的额度 / 启停。

@@ -76,9 +76,11 @@ pub fn list_all(conn: &Connection) -> Result<Vec<BuiltinProviderRow>, AppError> 
     rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
 }
 
-/// 构建期环境变量轮换内置凭据（与 M12 的 `seed_builtin` 同口径）。
+/// 构建期环境变量同步内置凭据（与 M12 的 `seed_builtin` 同口径）。
 ///
-/// 无 env 注入时不调用，M13 种子即开箱可用；注入时覆盖对应行，不改启停与额度。
+/// 由启动播种**每次无条件调用**：注入时覆盖对应行，未注入时传空串清空
+/// （M13 种子只留空占位），便于轮换且能清掉存量库里已作废的旧明文。
+/// 不改启停与额度。
 pub fn update_credentials(
     conn: &Connection,
     provider_id: &str,

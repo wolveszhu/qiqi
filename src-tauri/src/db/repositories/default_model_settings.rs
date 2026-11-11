@@ -1,10 +1,11 @@
-//! default_model_settings 表访问（内置免费额度模型，只读）。
+//! default_model_settings 表访问（内置免费额度模型）。
 //!
-//! 种子由 M6 迁移写入（智谱 / 硅基流动）；本模块只读不写——
-//! 内置模型的增删改属运营行为，不走应用内 UI（用户决策：内置不在 UI 暴露）。
-//! `api_key` 明文只在本层与命令层之间流转，**禁止进日志/错误/DTO**。
+//! 种子由 M6 迁移写入（智谱 / 硅基流动，凭据列为空占位）；内置模型的增删改
+//! 属运营行为，不走应用内 UI（用户决策：内置不在 UI 暴露）。唯一写入口是
+//! `set_api_key`，仅供启动时的 `builtin_credentials::sync` 同步构建期注入值。
+//! `api_key` 明文只在本层与编排层之间流转，**禁止进日志/错误/DTO**。
 
-use rusqlite::Connection;
+use rusqlite::{Connection, params};
 
 use super::parse_model_list;
 use crate::error::AppError;
@@ -60,6 +61,20 @@ pub fn list_available_llm(conn: &Connection) -> Result<Vec<DefaultModelRow>, App
         })
         .map_err(AppError::from)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+}
+
+/// 同步内置模型 API Key（**唯一写入口**：构建期注入 → SQLCipher 库）。
+///
+/// 只在 `apply_migrations()` 的启动播种路径调用；未注入时写入空串，
+/// 使已轮换作废的旧明文在存量库里也被清掉，内置额度自然降级为 BYOK。
+/// 按平台名定位，不新增行——发布基线行数由 M6 的 `NOT EXISTS` 守卫固定。
+pub fn set_api_key(conn: &Connection, name: &str, api_key: &str) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE default_model_settings SET api_key = ?1 WHERE name = ?2",
+        params![api_key, name],
+    )
+    .map_err(AppError::from)?;
+    Ok(())
 }
 
 /// 内置模型的**粘性轮询**起始下标（纯函数，可测）。

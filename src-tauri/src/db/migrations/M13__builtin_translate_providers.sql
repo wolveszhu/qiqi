@@ -2,8 +2,11 @@
 --
 -- 依据：用户决策 2026-11-10「讯飞翻译与百度翻译一同作为内置服务，按当月用量选最少的一家，
 -- 各自独立月度上限且设置页可改；凭据写入数据表」。
--- 与 M6 / M12 同口径：内置共享凭据属**已登记的生产凭据**，只允许存在于 Rust 侧迁移 SQL，
--- 不得进入前端产物 / dist；上线前须分别在百度、讯飞控制台配置额度上限与调用白名单。
+-- **凭据边界（2026-11-11 修订）**：两行的 app_id / api_secret / api_key 一律为空占位；
+-- 真实凭据只由构建期环境变量（QIQI_BAIDU_* / QIQI_XFYUN_*）注入，
+-- 经启动路径 `db::repositories::builtin_credentials::sync` 写入 SQLCipher 库。
+-- 迁移 SQL 随仓库分发且被 include_str! 编入二进制，绝不允许出现明文凭据；
+-- 上线前仍须分别在百度、讯飞控制台配置额度上限与调用白名单。
 -- 铁律：不改 M11 / M12 历史 SQL（存量库不会重跑），新表与种子一律追加本迁移。
 -- 单事务幂等：CREATE TABLE IF NOT EXISTS + NOT EXISTS 守卫，重复执行不重复插入。
 
@@ -21,15 +24,14 @@ CREATE TABLE IF NOT EXISTS builtin_translate_providers (
     sort_order      INTEGER NOT NULL DEFAULT 0      -- 当月用量相同时的稳定次序
 );
 
--- 2) 百度翻译：沿用 M12 已登记的凭据，保证存量库升级后两家都在表里。
+-- 2) 百度翻译：空占位种子，保证存量库升级后两家都在表里（凭据由启动播种写入）。
 INSERT INTO builtin_translate_providers
     (provider_id, name, app_id, api_secret, api_key, monthly_granted, is_can_use, sort_order)
-SELECT 'baidu', '百度翻译', '20261107002714302', 'YjDAPNYWWfN7STvnQjky', '', 50000, 1, 0
+SELECT 'baidu', '百度翻译', '', '', '', 50000, 1, 0
 WHERE NOT EXISTS (SELECT 1 FROM builtin_translate_providers WHERE provider_id = 'baidu');
 
--- 3) 讯飞机器翻译（新）：APPID / APISecret / APIKey 三项凭据。
+-- 3) 讯飞机器翻译：APPID / APISecret / APIKey 三项凭据列同样为空占位。
 INSERT INTO builtin_translate_providers
     (provider_id, name, app_id, api_secret, api_key, monthly_granted, is_can_use, sort_order)
-SELECT 'xfyun', '讯飞翻译', 'c9955e0e', 'ZmFjNGJkNDE1M2RlYjk1ZjIwYmVkNDg4',
-       'b8cbf3e6d624f59e38f39b6b321b65f8', 50000, 1, 1
+SELECT 'xfyun', '讯飞翻译', '', '', '', 50000, 1, 1
 WHERE NOT EXISTS (SELECT 1 FROM builtin_translate_providers WHERE provider_id = 'xfyun');

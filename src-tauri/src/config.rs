@@ -112,15 +112,25 @@ pub const SEARCH_TIMEOUT_SECS: u64 = 30;
 /// 默认搜索服务商（用户可在设置切换）。
 pub const SEARCH_DEFAULT_PROVIDER: &str = "tavily";
 
-// ---------- 全局划词翻译常量 ----------
+// ---------- 内置共享凭据（构建期注入；明文绝不进仓库 / 日志 / 前端产物）----------
 
-/// 内置百度翻译 APPID（构建期由 `build.rs` 从环境变量注入；未注入为 None）。
-///
-/// 明文只存在于受控构建环境与 SQLCipher 库，禁止写入仓库、日志、错误信息或前端产物。
-/// 用 `option_env!` 而非 `env!`：本地未配置环境变量时仍可编译，内置通道降级为「未配置」。
+// 统一口径：全部凭据只由 `build.rs` 从构建期环境变量注入（`option_env!`），
+// 未注入为 `None` → 启动播种写入空串 → 内置通道降级为「未配置」，用户自填 BYOK 不受影响。
+// 用 `option_env!` 而非 `env!`，保证本地未配置环境变量时仍可编译。
+// 变量清单见 `build.rs::CREDENTIAL_ENV` 与 `.env.example`。
+
+// M6：内置免费额度 LLM
+pub const ZHIPU_API_KEY: Option<&str> = option_env!("QIQI_ZHIPU_API_KEY");
+pub const SILICONFLOW_API_KEY: Option<&str> = option_env!("QIQI_SILICONFLOW_API_KEY");
+
+// M12 / M13：内置翻译 · 百度（APPID + 密钥成对）
 pub const BAIDU_TRANSLATE_APPID: Option<&str> = option_env!("QIQI_BAIDU_APPID");
-/// 内置百度翻译密钥（同上，与 APPID 成对注入）。
 pub const BAIDU_TRANSLATE_SECRET: Option<&str> = option_env!("QIQI_BAIDU_SECRET");
+
+// M13：内置翻译 · 讯飞（APPID + APISecret + APIKey 三项）
+pub const XFYUN_APPID: Option<&str> = option_env!("QIQI_XFYUN_APPID");
+pub const XFYUN_API_SECRET: Option<&str> = option_env!("QIQI_XFYUN_API_SECRET");
+pub const XFYUN_API_KEY: Option<&str> = option_env!("QIQI_XFYUN_API_KEY");
 
 /// 五个翻译服务的官方 endpoint（接入文档核对后集中在此，禁止散落到 preset）。
 pub const BAIDU_TRANSLATE_URL: &str = "https://fanyi-api.baidu.com/api/trans/vip/translate";

@@ -115,11 +115,12 @@ impl TranslateSettingsRow {
     }
 }
 
-/// 首次启动幂等播种：保证单行存在，并同步编译期注入的内置凭据。
+/// 每次启动幂等播种：保证单行存在，并**无条件**同步构建期注入的内置凭据。
 ///
-/// `app_id` / `secret` 来自 `config::BAIDU_TRANSLATE_*`（`option_env!`）。未注入时为 `None`：
-/// 仍插入一行空凭据配置，使发布基线行数确定、内置通道降级为「未配置」但不阻断启动。
-/// 每次启动同步内置凭据（便于轮换），**不覆盖**用户的开关 / 译入语言 / 服务商 / 自定义 Key。
+/// `app_id` / `secret` 来自 `config::BAIDU_TRANSLATE_*`（`option_env!`）。未注入时为 `None`
+/// → 写入空串：既让发布基线行数确定、内置通道降级为「未配置」但不阻断启动，
+/// 也把存量库里已轮换作废的旧明文清掉（旧实现只在注入时覆盖，会残留失效 Key）。
+/// 只写内置两列，**不覆盖**用户的开关 / 译入语言 / 服务商 / 自定义 Key。
 pub fn seed_builtin(
     conn: &Connection,
     app_id: Option<&str>,
@@ -131,13 +132,11 @@ pub fn seed_builtin(
         [],
     )
     .map_err(AppError::from)?;
-    if let (Some(id), Some(key)) = (app_id, secret) {
-        conn.execute(
-            "UPDATE translate_settings SET builtin_app_id = ?1, builtin_secret = ?2 WHERE id = 1",
-            params![id, key],
-        )
-        .map_err(AppError::from)?;
-    }
+    conn.execute(
+        "UPDATE translate_settings SET builtin_app_id = ?1, builtin_secret = ?2 WHERE id = 1",
+        params![app_id.unwrap_or(""), secret.unwrap_or("")],
+    )
+    .map_err(AppError::from)?;
     Ok(())
 }
 

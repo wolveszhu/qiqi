@@ -5,6 +5,12 @@
 -- 「结构变更必须追加新迁移、禁止改历史 SQL」的规则移至本独立迁移。
 --
 -- 单事务幂等：IF NOT EXISTS 建表 + NOT EXISTS 守卫种子（重跑不重复插入）。
+--
+-- **凭据边界（2026-11-11）**：两行 api_key 一律为空占位。内置额度模型的真实 Key
+-- 只由构建期环境变量（QIQI_ZHIPU_API_KEY / QIQI_SILICONFLOW_API_KEY）注入，
+-- 经 `db::repositories::builtin_credentials::sync` 在每次启动时写入 SQLCipher 库。
+-- 迁移 SQL 会被 include_str! 编入二进制且随仓库分发，绝不允许出现明文凭据；
+-- 本文件只调整种子值，表结构 / 行数 / 幂等守卫均不变（存量库不会重跑）。
 
 CREATE TABLE IF NOT EXISTS default_model_settings (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,11 +25,11 @@ CREATE TABLE IF NOT EXISTS default_model_settings (
 CREATE INDEX IF NOT EXISTS ids_model_setting_name_type ON default_model_settings (name, type);
 
 INSERT INTO default_model_settings (name, type, base_url, models, api_key, is_can_use)
-SELECT  '智谱',1,  'https://open.bigmodel.cn/api/paas/v4', '["glm-4-flash"]', 'b2bee017e94749ad8d8ad0ec887f5b2a.QdwhPAfAZ9W0xCSI', 1
+SELECT  '智谱',1,  'https://open.bigmodel.cn/api/paas/v4', '["glm-4-flash"]', '', 1
 WHERE NOT EXISTS (SELECT 1 FROM default_model_settings WHERE name = '智谱');
 
 INSERT INTO default_model_settings (name, type, base_url, models, api_key, is_can_use)
-SELECT  '硅基流动',  1,'https://api.siliconflow.cn/v1', '["Qwen/Qwen2.5-7B-Instruct", "THUDM/GLM-4-9B-0414", "THUDM/GLM-Z1-9B-0414", "Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", "Qwen/Qwen3.5-4B"]', 'sk-opmeqwxdxruazubxxfjmwxjgbbdgqojvxznhtrgpsopbjbxx', 1
+SELECT  '硅基流动',  1,'https://api.siliconflow.cn/v1', '["Qwen/Qwen2.5-7B-Instruct", "THUDM/GLM-4-9B-0414", "THUDM/GLM-Z1-9B-0414", "Qwen/Qwen3-8B", "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", "Qwen/Qwen3.5-4B"]', '', 1
 WHERE NOT EXISTS (SELECT 1 FROM default_model_settings WHERE name = '硅基流动');
 
 -- 额度默认口径对齐（用户原在 M1 DDL 将 default 1→2 的意图）：

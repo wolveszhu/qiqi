@@ -117,22 +117,11 @@ fn apply_migrations(conn: &mut Connection, db_path: &Path) -> Result<(), AppErro
         },
     }
 
-    // 划词翻译内置凭据播种：放在迁移成功后的共同路径，使 init（生产）与
+    // 内置共享凭据播种：放在迁移成功后的共同路径，使 init（生产）与
     // init_with_key（发布守卫 / 单测旁路）行为一致，避免守卫看不到新行。
-    crate::db::repositories::translate_settings::seed_builtin(
-        conn,
-        crate::config::BAIDU_TRANSLATE_APPID,
-        crate::config::BAIDU_TRANSLATE_SECRET,
-    )?;
-    // M13 起内置选路以 builtin_translate_providers 为真源；构建期注入的百度凭据
-    // 需同步覆盖该表，否则 env 轮换会静默失效。未注入时沿用 M13 幂等种子。
-    if let (Some(app_id), Some(secret)) =
-        (crate::config::BAIDU_TRANSLATE_APPID, crate::config::BAIDU_TRANSLATE_SECRET)
-    {
-        crate::db::repositories::builtin_translate_providers::update_credentials(
-            conn, "baidu", app_id, secret, "",
-        )?;
-    }
+    // M6 / M12 / M13 的 SQL 种子只留空占位，真实值全部由构建期环境变量注入后
+    // 在此写入；未注入则写空串，同时清掉存量库里已轮换作废的旧明文。
+    crate::db::repositories::builtin_credentials::sync(conn)?;
     Ok(())
 }
 
