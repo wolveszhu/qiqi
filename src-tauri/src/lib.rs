@@ -72,6 +72,12 @@ pub fn run() {
                 // 隐藏时复位穿透（仅窗口 A 生效；常规窗口始终可点击，见 click_through 文档）
                 let _ = window::click_through::reset_to_passthrough(window);
             }
+            // 穿透移动静默窗（C2.4）：窗口 A 的 Moved（系统拖拽逐帧 / set_position 一次性）
+            // 都刷新时间戳，穿透同步在静默窗内整轮跳过——拖拽模态循环里误置穿透会
+            // 丢鼠标事件中断拖拽（state::DRAG_QUIET_MS）。
+            if let tauri::WindowEvent::Moved(_) = event {
+                window::click_through::note_window_moved(window);
+            }
         })
         .setup(|app| {
             // [B4] 数据层接线：SQLCipher 加密连接 + 迁移链 + 状态注册。

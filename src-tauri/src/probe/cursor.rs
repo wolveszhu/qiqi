@@ -1,7 +1,8 @@
-//! 鼠标坐标探针：**全应用唯一的 `GetCursorPos` 调用点**（规范 §4 硬约束）。
+//! 鼠标坐标探针：**全应用唯一的 `GetCursorPos` 封装**（规范 §4 硬约束：禁止另开轮询）。
 //!
-//! 单点原则：穿透判断（click_through）与视线跟随（lookAt）共用本文件的轮询结果——
-//! 穿透读进程内缓存、lookAt 走 `probe:cursor:move` 事件，杜绝双轮询。
+//! 消费方：`probe/scheduler` 每 100ms 轮询写缓存并 emit `probe:cursor:move`（视线跟随）；
+//! 穿透同步（click_through）每轮**现取**一次——缓存来自另一条 100ms 线程，快速移动后
+//! 点击时最坏滞后 200ms 才解除穿透，现取把延迟砍半。两者共用本封装，不是双轮询。
 
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;

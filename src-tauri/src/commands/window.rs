@@ -11,10 +11,13 @@ use crate::window;
 /// 开始拖拽窗口 A（系统接管；rule.md §5：前端禁模拟拖拽）。
 ///
 /// 系统拖拽期间窗口持续移动，而穿透状态机的 cursor 是 100ms 缓存、命中区是低频上报，
-/// 两者必然不同步，任一轮误判为"未命中"就会把窗口置成穿透。这里丢弃翻转缓存，
-/// 让拖动结束后的下一轮同步**无条件重算并写回**正确状态（自愈，不依赖前端回调）。
+/// 两者必然不同步，任一轮误判为"未命中"就会把窗口置成穿透、丢鼠标事件中断拖拽。
+/// 两道防线：① 进入移动静默窗（`state::DRAG_QUIET_MS`），随后的 `Moved` 事件持续刷新，
+/// 静默窗内穿透同步整轮跳过；② 丢弃翻转缓存，让拖动结束后的下一轮同步
+/// **无条件重算并写回**正确状态（自愈，不依赖前端回调）。
 #[tauri::command]
 pub fn window_start_drag(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    state.note_drag_moved();
     *state.last_ignore.lock().map_err(|e| AppError::Db(format!("获取状态锁失败: {e}")))? = None;
     window::drag::start_drag_main(&app)
 }

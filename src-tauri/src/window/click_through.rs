@@ -1,8 +1,10 @@
 //! 动态点击穿透（C2.4）：命中判定 + 状态翻转驱动。
 //!
 //! 性能红线：`set_ignore_cursor_events` **仅在状态翻转时调用**（每 100ms 轮询
-//! 最多一次系统调用，且多数轮询零调用）；判定输入全部来自进程内缓存
-//! （`AppState.hit_region` / `cursor`），不走事件。
+//! 最多一次系统调用，且多数轮询零调用）。判定输入：命中区来自进程内缓存
+//! （`AppState.hit_region`），鼠标位置**每轮现取** `GetCursorPos`（见
+//! `sync_click_through`——缓存由探针线程维护，快速移动后点击时最坏滞后两轮）。
+//! 窗口移动静默窗内整轮跳过（`state::DRAG_QUIET_MS`），拖拽模态循环零系统调用。
 
 use tauri::{AppHandle, Manager, Runtime, WebviewWindow, Window};
 
@@ -47,9 +49,24 @@ pub fn target_ignore(over_pet: bool, click_through_enabled: bool) -> bool {
     click_through_enabled && !over_pet
 }
 
+/// 记录一次窗口移动（`lib.rs` 的 `WindowEvent::Moved` 转发）。
+///
+/// 仅窗口 A 生效；系统拖拽逐帧触发，`AtomicU64::Relaxed` 即可——时间戳只用于
+/// "静默窗内 / 外"判定，无跨变量顺序依赖。
+pub fn note_window_moved<R: Runtime>(window: &Window<R>) {
+    if !is_passthrough_managed(window.label()) {
+        return;
+    }
+    if let Some(state) = window.try_state::<AppState>() {
+        state.note_drag_moved();
+    }
+}
+
 /// 执行一次穿透同步：读缓存 → 判翻转 → 必要时调用系统 API。
 ///
 /// 仅窗口 A 受托管；传入其它窗口一律不写穿透（避免误伤设置窗口）。
+/// 移动静默窗（系统拖拽 / `set_position` 后 300ms）内整轮跳过：模态拖拽循环里
+/// cursor 缓存与命中区必然滞后，误判会把窗口置穿透、丢鼠标事件中断拖拽。
 /// 返回本次是否发生了系统调用（供测试/诊断）。
 pub fn sync_click_through<R: Runtime>(
     app: &AppHandle<R>,
@@ -61,9 +78,20 @@ pub fn sync_click_through<R: Runtime>(
     let Some(state) = app.try_state::<AppState>() else {
         return Ok(false);
     };
+    // 移动静默窗：跳过同步且**不动翻转缓存**——拖动结束后 last_ignore 仍为
+    // start_drag 清下的 None，下一轮无条件重算自愈（不依赖前端回调）。
+    if state.is_move_quiet() {
+        return Ok(false);
+    }
     let (over_pet, enabled) = {
         let region = *state.hit_region.lock().map_err(lock_err)?;
-        let cursor = *state.cursor.lock().map_err(lock_err)?;
+        let mut cursor = *state.cursor.lock().map_err(lock_err)?;
+        // 现取鼠标位置：缓存来自探针线程（另一条 100ms 循环），快速移动到形象上
+        // 点击时最坏滞后两轮（200ms）才解除穿透，点击落到下层窗口。GetCursorPos
+        // 为轻量只读调用，本线程同样 100ms 一次，成本可忽略。
+        if let Ok(live) = crate::probe::cursor::current_position() {
+            cursor = live;
+        }
         let enabled = *state.click_through_enabled.lock().map_err(lock_err)?;
         let pos = window.outer_position().map_err(AppError::from)?;
         (is_over_pet(cursor, (pos.x, pos.y), &region), enabled)
