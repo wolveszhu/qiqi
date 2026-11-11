@@ -60,8 +60,15 @@ jobs:
       - name: Verify clean-install data baseline
         working-directory: src-tauri
         env:
+          # 全部内置共享凭据（与 .env.example / build.rs 清单一致）；迁移 SQL 只留空占位，
+          # 守卫必须与打包产物看到同一组注入值，否则基线断言会与实际发布包不一致。
+          QIQI_ZHIPU_API_KEY: ${{ secrets.QIQI_ZHIPU_API_KEY }}
+          QIQI_SILICONFLOW_API_KEY: ${{ secrets.QIQI_SILICONFLOW_API_KEY }}
           QIQI_BAIDU_APPID: ${{ secrets.QIQI_BAIDU_APPID }}
           QIQI_BAIDU_SECRET: ${{ secrets.QIQI_BAIDU_SECRET }}
+          QIQI_XFYUN_APPID: ${{ secrets.QIQI_XFYUN_APPID }}
+          QIQI_XFYUN_API_SECRET: ${{ secrets.QIQI_XFYUN_API_SECRET }}
+          QIQI_XFYUN_API_KEY: ${{ secrets.QIQI_XFYUN_API_KEY }}
         run: cargo test --test release_data_guard
 
       - name: Build and publish Tauri app
@@ -69,9 +76,14 @@ jobs:
         env:
           # 自动发布 Release 所需的令牌（仓库自带，无需手动配置 secret）。
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 划词翻译内置凭据：仅存在于 Actions secrets，明文不进仓库与前端产物。
+          # 内置共享凭据：仅存在于 Actions secrets，明文不进仓库 / 迁移 SQL / 前端产物。
+          QIQI_ZHIPU_API_KEY: ${{ secrets.QIQI_ZHIPU_API_KEY }}
+          QIQI_SILICONFLOW_API_KEY: ${{ secrets.QIQI_SILICONFLOW_API_KEY }}
           QIQI_BAIDU_APPID: ${{ secrets.QIQI_BAIDU_APPID }}
           QIQI_BAIDU_SECRET: ${{ secrets.QIQI_BAIDU_SECRET }}
+          QIQI_XFYUN_APPID: ${{ secrets.QIQI_XFYUN_APPID }}
+          QIQI_XFYUN_API_SECRET: ${{ secrets.QIQI_XFYUN_API_SECRET }}
+          QIQI_XFYUN_API_KEY: ${{ secrets.QIQI_XFYUN_API_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Qiqi ${{ github.ref_name }}"

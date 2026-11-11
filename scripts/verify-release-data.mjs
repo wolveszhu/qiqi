@@ -9,7 +9,8 @@
  * 1. `tauri.conf.json` 未配置 bundle.resources / externalBin / assets（否则会携带预置库）；
  * 2. 源码侧无数据库 / 备份 / 损坏隔离文件；`dist/` 命中则自动删除并报告（可重建产物）；
  * 3. 迁移 SQL 无测试标记，且 INSERT / UPDATE 只允许写系统基础数据表（白名单）；
- * 4. `dist/` 不含明文凭据（M6 / M12 的已登记生产 Key 只允许存在于 Rust 侧 SQL）；
+ * 4. `dist/`、迁移 SQL 与源码均不含明文凭据（内置共享凭据只走构建期环境变量注入，
+ *    迁移种子一律空占位；见 db/README.md §7.5 与 src-tauri/build.rs）；
  * 5. README §7.2 基线表与 `release_data_guard.rs` 的 BASELINE_ROWS 一致，防止定义漂移。
  *
  * 用法：`pnpm verify:release-data`（无第三方依赖，Windows / Linux 均可跑）。
@@ -182,9 +183,10 @@ for (const name of sqlFiles) {
 }
 note(`已扫描 ${sqlFiles.length} 个迁移 SQL`);
 
-// ---------- 4. dist/ 不得含明文凭据 ----------
+// ---------- 4. 明文凭据零容忍（dist / 迁移 SQL / 源码）----------
 
-// M6 的 Key 属已登记的生产凭据，只允许存在于 Rust 侧 SQL，不得进入前端产物。
+// 内置共享凭据只由构建期环境变量注入（build.rs → option_env! → 启动播种写入 SQLCipher 库）。
+// 迁移 SQL 会随仓库分发且被 include_str! 编入二进制，故种子只允许空占位。
 const CREDENTIAL = /\b(sk-[A-Za-z0-9]{24,}|[a-f0-9]{32}\.[A-Za-z0-9]{16,})\b/i;
 const TEXT_EXT = new Set([
   ".js",
@@ -209,6 +211,32 @@ if (existsSync(abs("dist"))) {
     SKIP_DIRS,
   );
 }
+
+// ---------- 4b. 迁移 SQL 不得含凭据字面量 ----------
+
+// 迁移 SQL 随仓库分发且被 include_str! 编入二进制，是本次泄露的载体；
+// 内置凭据只允许空占位，真实值走构建期环境变量注入（build.rs → 启动播种）。
+// 覆盖 4 家平台格式：sk-…（硅基流动）、id.secret（智谱）、长 hex / 字母数字
+// （讯飞 APISecret / APIKey、百度 Secret）、17 位数字（百度 APPID）。
+// 只匹配「单引号内整串为高熵 token」，不会误伤 URL、模型 JSON、中文平台名等合法常量。
+// 专项扫描保证零误报；**全仓源码与 git 历史另由 gitleaks 兜底**（见发布文档与 CI）。
+const SECRET_LITERAL =
+  /'(?:sk-[A-Za-z0-9_-]{16,}|[A-Za-z0-9]{20,}\.[A-Za-z0-9]{16,}|[A-Za-z0-9]{20,}|\d{17})'/;
+for (const name of sqlFiles) {
+  readFileSync(join(migrationsDir, name), "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      // 注释里的示例不算；报告只给文件与行号，**绝不回显匹配到的凭据值**。
+      if (line.trim().startsWith("--")) return;
+      if (SECRET_LITERAL.test(line)) {
+        fail(
+          `迁移 ${name}:${index + 1} 含疑似明文凭据；` +
+            `迁移 SQL 只允许空占位，真实值走构建期环境变量注入（见 build.rs）`,
+        );
+      }
+    });
+}
+note(`已扫描 ${sqlFiles.length} 个迁移 SQL 的凭据字面量`);
 
 // ---------- 5. 基线定义一致性（README ↔ Rust 守卫） ----------
 
