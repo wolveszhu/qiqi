@@ -47,6 +47,7 @@ export default {
         "website",
         "ci",
         "release",
+        "plans",
       ],
     ],
     "subject-case": [2, "always", ["lower-case", "sentence-case"]],
