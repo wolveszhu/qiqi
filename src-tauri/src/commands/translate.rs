@@ -73,11 +73,12 @@ pub fn translate_copy_result(text: String) -> Result<(), AppError> {
 /// 显示译文浮窗（选区旁定位；Rust 侧完成 DPI / 多显示器夹取）。
 ///
 /// `compact=false` 表示胶囊工具条已切换为译文卡片（工具条消失）：此刻取词已完成，
-/// 顺带释放手势探测占用的粘贴板。`compact=true` 的首次弹出不清理。
+/// 结束手势捕获状态；剪贴板里的选中词保留不动（用户可能只是想复制它）。
+/// `compact=true` 的首次弹出不清理。
 #[tauri::command]
 pub fn translate_popup_show(x: i32, y: i32, compact: bool, app: AppHandle) -> Result<(), AppError> {
     if !compact {
-        crate::probe::selection::restore_gesture_clipboard();
+        crate::probe::selection::clear_gesture_clipboard();
     }
     crate::window::manager::show_translator(&app, x, y, compact)
 }

@@ -5,7 +5,8 @@
 //!   误判为拖选文本并弹出工具条；
 //! - 取词：翻译**只在用户点击「翻译」后**发生；但双击 / 拖选手势阶段会各自注入一次
 //!   `Ctrl+C` 探测，仅用于判定「是否确有选中文本」（短等待、不抢焦点）。
-//!   非文本手势立即还原剪贴板；文本手势把文本留到工具条消失时再清掉；
+//!   非文本手势立即还原剪贴板（不占用粘贴板）；文本手势的选中词**保留在剪贴板**，
+//!   工具条消失也不清除——用户可能只是想复制这个词而不是翻译它；
 //! - 红线：探测之外不在手势阶段读剪贴板 / 注入按键（探测只判定是否弹工具条，不翻译）；
 //!   不把选中文本写入日志；控制台窗口跳过。
 //!
@@ -334,10 +335,11 @@ fn capture_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// 手势探测放进剪贴板的选中文本（工具条显示期间有效）。
+/// 手势探测捕获的选中文本（工具条显示期间有效）。
+///
+/// **只记录文本供「点击翻译 / 复制」时复用**，不记录探测前的剪贴板内容：
+/// 用户可能只想复制选中词而不是翻译它，工具条消失后剪贴板必须原样保留。
 struct GestureClipboard {
-    /// 探测前的剪贴板文本；None 表示原本没有文本（清理时清空剪贴板）。
-    previous: Option<String>,
     /// 本次捕获的原文（未 trim），用于判断剪贴板是否仍是我们放进去的内容。
     captured: String,
 }
@@ -347,12 +349,15 @@ fn gesture_clipboard() -> &'static Mutex<Option<GestureClipboard>> {
     SLOT.get_or_init(|| Mutex::new(None))
 }
 
-/// 纯函数：剪贴板当前内容是否仍是手势探测放进去的文本（只有是，才允许恢复）。
+/// 纯函数：剪贴板当前内容是否仍是手势探测放进去的文本（只有是，才允许复用取词）。
 fn still_owns_clipboard(current: Option<&str>, captured: &str) -> bool {
     current == Some(captured)
 }
 
 /// 把剪贴板恢复成探测前的文本；`None` 表示原本没有文本，清空剪贴板。
+///
+/// **仅用于「非文本手势」**：拖文件 / 文件夹时 `Ctrl+C` 可能把文件列表写进剪贴板，
+/// 必须还原；文本手势绝不调用（见 [`GestureClipboard`] 文档）。
 fn restore_text(clipboard: &mut arboard::Clipboard, previous: Option<&str>) {
     match previous {
         Some(prev) => {
@@ -364,29 +369,11 @@ fn restore_text(clipboard: &mut arboard::Clipboard, previous: Option<&str>) {
     }
 }
 
-/// 工具条消失时清理手势探测留下的选中文本（由 `window::manager::hide_translator` 调用）。
+/// 结束本轮手势的捕获状态（**只丢状态，绝不改动剪贴板**）。
 ///
-/// 仅当剪贴板里仍是本次捕获的文本才动它：用户在工具条显示期间自己复制了别的内容时，
-/// 绝不能覆盖。命中则恢复探测前的文本，原本没有文本则清空。
-pub fn restore_gesture_clipboard() {
-    let Ok(mut slot) = gesture_clipboard().lock() else {
-        return;
-    };
-    let Some(state) = slot.take() else {
-        return;
-    };
-    drop(slot);
-    let Ok(mut clipboard) = arboard::Clipboard::new() else {
-        return;
-    };
-    if !still_owns_clipboard(clipboard.get_text().ok().as_deref(), &state.captured) {
-        return;
-    }
-    restore_text(&mut clipboard, state.previous.as_deref());
-}
-
-/// 用户主动复制（工具条「复制」/「复制译文」）后放弃待恢复状态：
-/// 剪贴板里现在是用户想要的内容，工具条消失时不得再把它还原成探测前的文本。
+/// 调用点：工具条隐藏、胶囊切译文卡片、新一轮手势开始前、用户主动复制译文 / 原文。
+/// 用户决策（2026-11-11）：选中词留在剪贴板供直接 `Ctrl+V`，工具条消失也不清除——
+/// 划词只是「可能要翻译」，用户完全可能只是想复制这个词。
 pub fn clear_gesture_clipboard() {
     if let Ok(mut slot) = gesture_clipboard().lock() {
         *slot = None;
@@ -478,10 +465,14 @@ fn build_captured(selection_key: &str, text: String) -> CapturedSelectionDto {
 /// 手势阶段判定「是否确有选中文本」（双击 / 拖选共用，只返回 bool，不暴露文本）。
 ///
 /// 剪贴板生命周期刻意分两种：
-/// - **命中文本** → 把文本**留在剪贴板**（工具条显示期间用户可直接 `Ctrl+V` 粘贴），
-///   探测前的原文记入 `gesture_clipboard`，工具条消失时由 `restore_gesture_clipboard` 清掉；
+/// - **命中文本** → 选中词**留在剪贴板**：用户可能只是想复制而不是翻译，工具条显示期间
+///   和消失后都可直接 `Ctrl+V`。工具条消失只丢弃捕获状态，绝不清剪贴板；
 /// - **未命中**（拖文件夹 / 窗口 / 图标等）→ **立即还原剪贴板**。这些操作压根不该"复制"，
 ///   绝不能把 Explorer 因 `Ctrl+C` 写入的文件列表留在剪贴板里占用粘贴板。
+///
+/// 探测前先把剪贴板清空作哨兵：上一轮手势留下的选中词会成为本轮的比对基准，
+/// 若用户再次选中同一段文本，`Ctrl+C` 后内容不变会被误判为"没有选中文本"而不弹工具条。
+/// 未命中时按探测前原文还原，因此哨兵不会造成净改动。
 ///
 /// 另外保持轻量：短预算（6×30ms）且不 `SetForegroundWindow`（手势刚结束时前台本就是
 /// 目标窗口）。本函数同步跑在 scheduler 唯一的 100ms 轮询线程里，长时间阻塞会冻结
@@ -493,19 +484,25 @@ pub fn has_selected_text() -> bool {
     if is_console_window() {
         return false;
     }
-    // 新一轮手势前先清理上一次工具条可能留下的占用，保证 previous 是用户原始剪贴板。
-    restore_gesture_clipboard();
+    // 新一轮手势先丢弃上一轮的捕获状态（**不动剪贴板**，选中词要留给用户）。
+    clear_gesture_clipboard();
     let Ok(mut clipboard) = arboard::Clipboard::new() else {
         return false;
     };
+    // 备份探测前内容，仅用于「未命中」时还原；文本手势不还原。
     let previous = clipboard.get_text().ok();
+    // 清空作哨兵，使本次 Ctrl+C 产生的任何文本都能被判为"新文本"（含与上次相同的词）。
+    let _ = clipboard.clear();
+    // clear 可能失败（剪贴板被其它进程占用），此时以实际读回值作基准，
+    // 避免把旧内容误判成本次选中词。
+    let baseline = clipboard.get_text().ok().filter(|s| !s.trim().is_empty());
 
     simulate_ctrl_c();
     let mut captured: Option<String> = None;
     for _ in 0..SELECTION_PROBE_TRIES {
         std::thread::sleep(Duration::from_millis(SELECTION_PROBE_WAIT_MS));
         let current = clipboard.get_text().ok();
-        if is_new_selection_text(previous.as_deref(), current.as_deref()) {
+        if is_new_selection_text(baseline.as_deref(), current.as_deref()) {
             captured = current;
             break;
         }
@@ -513,7 +510,7 @@ pub fn has_selected_text() -> bool {
     match captured {
         Some(text) => {
             if let Ok(mut slot) = gesture_clipboard().lock() {
-                *slot = Some(GestureClipboard { previous, captured: text });
+                *slot = Some(GestureClipboard { captured: text });
             }
             true
         },
@@ -567,8 +564,8 @@ fn capture_with_wait(tries: u32, wait_ms: u64) -> Result<String, AppError> {
 
 /// 复制译文 / 选中原文（用户主动点击；不经前端 clipboard API）。
 ///
-/// 主动复制后放弃手势探测的待恢复状态：剪贴板里现在是用户想要的内容，
-/// 工具条消失时不得再把它还原成探测前的文本。
+/// 主动复制后结束本轮捕获状态：剪贴板里现在是用户明确要的内容（译文或选中原文），
+/// 后续手势不应再复用它。本函数只丢状态，不做任何还原。
 pub fn write_clipboard_text(text: &str) -> Result<(), AppError> {
     clear_gesture_clipboard();
     let mut clipboard =
@@ -611,6 +608,8 @@ mod tests {
     #[test]
     fn clipboard_change_counts_only_as_new_non_blank_text() {
         assert!(is_new_selection_text(Some("old"), Some("selected")));
+        // 探测前清空哨兵的基准：上一轮留下的选中词与本轮相同，也仍应判为"有新文本"，
+        // 否则用户再次选中同一个词时工具条不会弹出。
         assert!(is_new_selection_text(None, Some("selected")));
         assert!(!is_new_selection_text(Some("old"), Some("old")), "Ctrl+C 未生效");
         assert!(!is_new_selection_text(Some("old"), None), "非文本格式（拖文件夹）");
@@ -618,15 +617,15 @@ mod tests {
     }
 
     #[test]
-    fn clipboard_restore_only_when_we_still_own_it() {
+    fn clipboard_reuse_only_when_we_still_own_it() {
         assert!(still_owns_clipboard(Some("selected"), "selected"));
         assert!(
             !still_owns_clipboard(Some("user copied something"), "selected"),
-            "用户自己复制了别的内容，工具条消失时绝不能覆盖"
+            "用户自己复制了别的内容时，不能再复用上次捕获的文本"
         );
         assert!(
             !still_owns_clipboard(None, "selected"),
-            "剪贴板变成非文本格式（文件列表 / 图片）也不能覆盖"
+            "剪贴板变成非文本格式（文件列表 / 图片）时也不能复用"
         );
     }
 
