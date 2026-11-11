@@ -23,8 +23,10 @@ import { ensureValidHitRegion } from "./PetRendererBase";
 import { breathScales, dampedRecovery, jellyImpulse, rotatedHitRegion } from "./physics";
 
 export class CustomSpriteRenderer implements IPetRenderer {
-  /** 自适应基准：scale=1 时图片最长边占舞台短边的比例（与内置形象观感协调）。 */
-  private static readonly STAGE_FIT_RATIO = 0.5;
+  /** 自适应基准：scale=1 时图片最长边占窗口短边的比例。
+   *  取值锚定内置代码猫在 150px 桌宠窗口里的显示高度（coreHeight 154 × PET_SCALE 0.6 ≈ 92px
+   *  → 92/150 ≈ 0.61）；取整 0.6 使自定义形象与内置观感一致。 */
+  private static readonly STAGE_FIT_RATIO = 0.6;
 
   /** 固定配置（导入时由注册表注入；滑杆微调走 in-memory 更新后重建）。 */
   private cfg: CustomAvatarConfig;
@@ -241,16 +243,21 @@ export class CustomSpriteRenderer implements IPetRenderer {
     if (!app) {
       return this.fillRegion(0, 0, this.screenW, this.screenH);
     }
-    // sprite 顶左在 petRoot 局部坐标 = body 平移 + R(θ)·(-anchorX·W, -anchorY·H)；
-    // rotatedHitRegion 的 (left, top) 是「盒左上相对旋转中心（petRoot 原点）」，
-    // 故把吸附平移量并入：躺倒后命中区随锚点一起滑向贴边侧，与视觉一致
+    // 旋转中心 = petRoot 中心（=舞台中心） + body 平移 (sleepX, sleepY)；
+    // 精灵绕 body 原点（= 圆盘中心）旋转，故 relative left/top 是「盒左上相对该旋转中心」
+    // （即 -anchor·W/H），平移量须体现在旋转中心坐标上、而非并入 left/top——
+    // 旧实现把 sleepX 塞进 left，导致旋转中心错算、命中区跑到窗口顶部一条带，
+    // 可见形象在贴边侧却点击穿透、拖不出来。此处旋转中心随吸附平移同步移动，命中区
+    // 才与视觉一致（露出的半边正好落在窗口内）。
+    const rotCenterX = app.screen.width / 2 + this.sleepX;
+    const rotCenterY = app.screen.height / 2 + this.sleepY;
     const region = rotatedHitRegion(
-      app.screen.width / 2,
-      app.screen.height / 2,
+      rotCenterX,
+      rotCenterY,
       w,
       h,
-      this.sleepX - this.cfg.anchorX * w,
-      this.sleepY - this.cfg.anchorY * h,
+      -this.cfg.anchorX * w,
+      -this.cfg.anchorY * h,
       this.sleepAngle,
       this.screenW,
       this.screenH,
