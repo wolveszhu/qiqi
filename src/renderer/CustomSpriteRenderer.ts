@@ -23,6 +23,9 @@ import { ensureValidHitRegion } from "./PetRendererBase";
 import { breathScales, dampedRecovery, jellyImpulse, rotatedHitRegion } from "./physics";
 
 export class CustomSpriteRenderer implements IPetRenderer {
+  /** 自适应基准：scale=1 时图片最长边占舞台短边的比例（与内置形象观感协调）。 */
+  private static readonly STAGE_FIT_RATIO = 0.5;
+
   /** 固定配置（导入时由注册表注入；滑杆微调走 in-memory 更新后重建）。 */
   private cfg: CustomAvatarConfig;
   private app?: Application;
@@ -33,6 +36,9 @@ export class CustomSpriteRenderer implements IPetRenderer {
   /** 图片自然尺寸（纹理加载后填充）。 */
   private naturalW = 1;
   private naturalH = 1;
+
+  /** 自适应基准缩放（mount 时按图片与舞台尺寸算出；`cfg.scale` 是其上的倍率）。 */
+  private fitScale = 1;
 
   /** 舞台像素尺寸（resizeTo 容器，mount 时记录）。 */
   private screenW = 400;
@@ -86,10 +92,17 @@ export class CustomSpriteRenderer implements IPetRenderer {
     this.naturalW = texture.width;
     this.naturalH = texture.height;
 
+    // 用户图片尺寸不可控（几百到几千像素）：按「最长边 = 舞台短边 × STAGE_FIT_RATIO」
+    // 自适应归一，cfg.scale 作为倍率微调。旧实现把 cfg.scale 直接当精灵缩放，
+    // scale=1 会按原始像素绘制，大图直接放大到只露出局部（耳朵/鼻子的裁切特写）。
+    this.fitScale =
+      (Math.min(this.screenW, this.screenH) * CustomSpriteRenderer.STAGE_FIT_RATIO) /
+      Math.max(this.naturalW, this.naturalH);
+
     const sprite = new Sprite(texture);
     sprite.anchor.set(this.cfg.anchorX, this.cfg.anchorY); // 锚点 = 圆盘中心
     sprite.position.set(0, 0); // 锚点落在 body 原点
-    sprite.scale.set(this.cfg.scale); // 用户整体缩放（固定）
+    sprite.scale.set(this.fitScale * this.cfg.scale); // 自适应 × 用户倍率
     body.addChild(sprite);
 
     app.ticker.add(this.updateTransforms);
@@ -197,7 +210,8 @@ export class CustomSpriteRenderer implements IPetRenderer {
    * 与基类口径一致。
    */
   getHitRegion(): HitRegion {
-    const s = this.cfg.scale;
+    // 与 mount 的精灵缩放同源：自适应基准 × 用户倍率（否则命中区与视觉错位）
+    const s = this.fitScale * this.cfg.scale;
     const w = this.naturalW * s;
     const h = this.naturalH * s;
     const app = this.app;
