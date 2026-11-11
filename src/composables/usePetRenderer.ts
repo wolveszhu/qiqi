@@ -142,8 +142,7 @@ export async function rebuildRenderer(id: string): Promise<void> {
   if (gen !== rebuildGeneration) return;
 
   if (lastExpression) next.setExpression(lastExpression);
-  startHitRegionReporting();
-  reportHitRegion(); // 立即补报一次，不等 500ms
+  startHitRegionReporting(); // 内部立即补报一次，不等 500ms
   afterRebuild?.();
 }
 
@@ -235,6 +234,11 @@ function onWindowResize(): void {
 
 /** 启动 hitRegion 低频上报（变化才 invoke）。 */
 function startHitRegionReporting(): void {
+  // 首启 / 形象重建后**立即**补报一次：旧实现只起 500ms 定时器，首次上报前
+  // Rust 侧命中区全 0。用户一开应用就拖动桌宠时，会命中"无效区域"分支，
+  // 配合穿透状态机的翻转短路造成整窗点击穿透、再也点不动。
+  // 必须放在 timer 判重之前，否则 rebuildRenderer 走提前 return 就漏报了。
+  reportHitRegion();
   if (hitRegionTimer) return;
   hitRegionTimer = setInterval(reportHitRegion, HIT_REGION_INTERVAL_MS);
   // 窗口 A 展开/收起：形象居中位置变化，立即重报一次（不等 500ms）

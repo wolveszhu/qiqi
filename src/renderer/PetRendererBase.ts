@@ -26,6 +26,27 @@ import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
 /** 画布逻辑尺寸初始默认值（mount 时按容器实际尺寸重算）。 */
 const CANVAS_SIZE = 240;
 
+/**
+ * 贴边休眠命中区裁切结果的**有效性兜底**（纯函数，单测覆盖）。
+ *
+ * 裁切退化为 0 或负值（贴边比例 / 旋转参数边界）时回退整窗：绝不上报无效命中区，
+ * 否则 Rust 穿透状态机会把桌宠锁在「整窗穿透」里，用户再也点不醒
+ * （`click_through.rs::is_over_pet` 另有同向兜底，此处是上报端双保险）。
+ */
+export function ensureValidHitRegion(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+  windowWidth: number,
+  windowHeight: number,
+): HitRegion {
+  if (width > 0 && height > 0) {
+    return { x: left, y: top, width, height };
+  }
+  return { x: 0, y: 0, width: windowWidth, height: windowHeight };
+}
+
 /** 动画常量（两套形象共用；集中定义，防散落魔法数）。 */
 const BREATH_OMEGA = 0.0025; // rad/ms → 周期约 2.5s
 const TAIL_OMEGA = 0.0021; // 尾巴摆动角频率
@@ -244,10 +265,21 @@ export abstract class PetRendererBase implements IPetRenderer {
       const right = Math.min(this.centerX * 2, cx + halfW);
       const top = Math.max(0, cy - halfH);
       const bottom = Math.min(this.centerY * 2, cy + halfH);
-      this.hitRegion.x = left;
-      this.hitRegion.y = top;
-      this.hitRegion.width = Math.max(0, right - left);
-      this.hitRegion.height = Math.max(0, bottom - top);
+      const width = Math.max(0, right - left);
+      const height = Math.max(0, bottom - top);
+      const region = ensureValidHitRegion(
+        left,
+        top,
+        width,
+        height,
+        this.centerX * 2,
+        this.centerY * 2,
+      );
+      // 逐字段赋值而非替换对象：`getHitRegion()` 复用同一对象，外部可能已持有引用。
+      this.hitRegion.x = region.x;
+      this.hitRegion.y = region.y;
+      this.hitRegion.width = region.width;
+      this.hitRegion.height = region.height;
       return;
     }
     this.hitRegion.x = this.centerX + this.coreLeft * this.petScale;
