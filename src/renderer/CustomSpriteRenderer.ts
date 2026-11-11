@@ -16,15 +16,18 @@
 
 import { Application, Assets, Container, Sprite, type Texture } from "pixi.js";
 
-import type { IPetRenderer } from "./IPetRenderer";
+import type { HitRegion, IPetRenderer, PetAction } from "./IPetRenderer";
 import type { CustomAvatarConfig } from "./customAvatarRegistry";
 import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
-import { breathScales, dampedRecovery, jellyImpulse } from "./physics";
+import { ensureValidHitRegion } from "./PetRendererBase";
+import { breathScales, dampedRecovery, jellyImpulse, rotatedHitRegion } from "./physics";
 
 export class CustomSpriteRenderer implements IPetRenderer {
   /** 固定配置（导入时由注册表注入；滑杆微调走 in-memory 更新后重建）。 */
   private cfg: CustomAvatarConfig;
   private app?: Application;
+  /** 舞台根容器（居中锚定；窗口尺寸变化时更新 position，见 relayout）。 */
+  private root?: Container;
   private body?: Container;
 
   /** 图片自然尺寸（纹理加载后填充）。 */
@@ -44,6 +47,9 @@ export class CustomSpriteRenderer implements IPetRenderer {
   private lastRatio = SNAP_SHOW_RATIO_DEFAULT;
   private idleMode = false;
 
+  /** 命中矩形缓存（复用同一对象，500ms 上报一次；与 PetRendererBase 同款纪律）。 */
+  private readonly hitRegion: HitRegion = { x: 0, y: 0, width: 0, height: 0 };
+
   constructor(cfg: CustomAvatarConfig) {
     this.cfg = cfg;
   }
@@ -56,7 +62,8 @@ export class CustomSpriteRenderer implements IPetRenderer {
       antialias: true,
       resizeTo: container,
       autoDensity: true,
-      resolution: window.devicePixelRatio || 1,
+      // 与基类同款 2 上限：300% DPI 屏裸用 devicePixelRatio 会让纹理分辨率爆炸
+      resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
     container.appendChild(app.canvas);
     this.app = app;
@@ -67,6 +74,7 @@ export class CustomSpriteRenderer implements IPetRenderer {
     const petRoot = new Container();
     petRoot.position.set(this.screenW / 2, this.screenH / 2);
     app.stage.addChild(petRoot);
+    this.root = petRoot;
 
     // body 原点对齐 petRoot 原点 → 锚点（圆盘中心）即舞台中心、即旋转中心
     const body = new Container();
@@ -86,7 +94,27 @@ export class CustomSpriteRenderer implements IPetRenderer {
 
     app.ticker.add(this.updateTransforms);
     if (this.idleMode) app.ticker.maxFPS = 30;
+    // 窗口展开/收起 → 重新居中：petRoot 位置在 mount 时固定，不同步会在窗口
+    // 尺寸变化后与 getHitRegion（每次现读 app.screen）错开，点击判定错位。
+    window.addEventListener("resize", this.relayout);
   }
+
+  /**
+   * 窗口尺寸变化 → 同步 resize 后重新居中（同 PetRendererBase.relayout：
+   * PIXI `resizeTo` 经 ResizeObserver → ticker 异步生效，显式 `app.resize()`
+   * 防止命中区按旧 `app.screen` 上报）。
+   */
+  private readonly relayout = (): void => {
+    requestAnimationFrame(() => {
+      const app = this.app;
+      const root = this.root;
+      if (!app || !root) return;
+      app.resize();
+      this.screenW = app.screen.width;
+      this.screenH = app.screen.height;
+      root.position.set(this.screenW / 2, this.screenH / 2);
+    });
+  };
 
   /**
    * 单一 Ticker：呼吸 + 果冻衰减 + 边缘吸附旋转（复用 physics 纯函数）。
@@ -112,15 +140,20 @@ export class CustomSpriteRenderer implements IPetRenderer {
     this.body.rotation = this.sleepAngle;
   };
 
-  playAction(name: string): void {
-    if (name === "click") {
-      this.jelly = jellyImpulse(); // 整体 Q 弹（拉宽压扁）
-    } else if (name === "sleep") {
-      this.setEdgeSleep(true, this.lastSide, this.lastRatio);
-    } else if (name === "stretch" || name === "wake") {
-      this.setEdgeSleep(false);
+  playAction(name: PetAction): void {
+    switch (name) {
+      case "click":
+        this.jelly = jellyImpulse(); // 整体 Q 弹（拉宽压扁）
+        break;
+      case "sleep":
+        this.setEdgeSleep(true, this.lastSide, this.lastRatio);
+        break;
+      case "stretch":
+        this.setEdgeSleep(false);
+        break;
+      default:
+        break; // idle / drag / eat：单图无矢量分层，无对应动作
     }
-    // 'idle' 等无额外动作
   }
 
   /**
@@ -154,29 +187,62 @@ export class CustomSpriteRenderer implements IPetRenderer {
     if (this.app) this.app.ticker.maxFPS = enabled ? 30 : 60;
   }
 
-  getHitRegion(): { x: number; y: number; width: number; height: number } {
-    if (!this.app) {
-      return { x: 0, y: 0, width: this.screenW, height: this.screenH };
-    }
+  /**
+   * 命中区：整图包围盒（含透明边）绕锚点旋转后的窗口 AABB。
+   *
+   * 休眠躺倒是任意角度（±π·showRatio 渐变），必须按当前 `sleepAngle` 实时求
+   * 旋转 AABB 并裁切窗口——旧实现恒按未旋转矩形返回，躺倒后命中区与视觉错位，
+   * 点击判定落到形象外的直立矩形上。裁切退化为 0 → 整窗回退（穿透死锁防线，
+   * 与基类 `ensureValidHitRegion` 同向兜底）。呼吸/果冻缩放（±3%/1.15）不反映，
+   * 与基类口径一致。
+   */
+  getHitRegion(): HitRegion {
     const s = this.cfg.scale;
     const w = this.naturalW * s;
     const h = this.naturalH * s;
-    // sprite 顶左在 petRoot 局部坐标 = (-anchorX*W, -anchorY*H)，petRoot 居中
-    const cx = this.app.screen.width / 2;
-    const cy = this.app.screen.height / 2;
-    return {
-      x: cx - this.cfg.anchorX * w,
-      y: cy - this.cfg.anchorY * h,
-      width: w,
-      height: h,
-    };
+    const app = this.app;
+    if (!app) {
+      return this.fillRegion(0, 0, this.screenW, this.screenH);
+    }
+    // sprite 顶左在 petRoot 局部坐标 = (-anchorX·W, -anchorY·H)；petRoot 居中 = 旋转中心
+    const region = rotatedHitRegion(
+      app.screen.width / 2,
+      app.screen.height / 2,
+      w,
+      h,
+      -this.cfg.anchorX * w,
+      -this.cfg.anchorY * h,
+      this.sleepAngle,
+      this.screenW,
+      this.screenH,
+    );
+    const valid = ensureValidHitRegion(
+      region.x,
+      region.y,
+      region.width,
+      region.height,
+      this.screenW,
+      this.screenH,
+    );
+    return this.fillRegion(valid.x, valid.y, valid.width, valid.height);
+  }
+
+  /** 逐字段写回复用对象（外部可能已持有引用，见 PetRendererBase.updateHitRegion）。 */
+  private fillRegion(x: number, y: number, width: number, height: number): HitRegion {
+    this.hitRegion.x = x;
+    this.hitRegion.y = y;
+    this.hitRegion.width = width;
+    this.hitRegion.height = height;
+    return this.hitRegion;
   }
 
   dispose(): void {
+    window.removeEventListener("resize", this.relayout);
     if (this.app) {
       this.app.ticker.remove(this.updateTransforms);
       this.app.destroy(true, { children: true });
       this.app = undefined;
+      this.root = undefined;
       this.body = undefined;
     }
   }

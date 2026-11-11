@@ -6,6 +6,8 @@
  * - 渲染器（CodeCatRenderer）在 Ticker 回调中调用这些函数，仅回写 transform
  */
 
+import type { HitRegion } from "./IPetRenderer";
+
 /**
  * 呼吸缩放：正弦驱动的横向压扁 / 纵向拉伸（baseline §D 呼吸公式）。
  *
@@ -72,4 +74,51 @@ export function eyeOffset(
  */
 export function jellyImpulse(): [number, number] {
   return [1.15, 0.85];
+}
+
+/**
+ * 旋转包围盒命中区（纯函数）：局部盒绕旋转中心转 rot 后取窗口内 AABB。
+ *
+ * 自定义形象（CustomSpriteRenderer）休眠躺倒是任意角度（±π·showRatio 渐变），
+ * 不能像内置猫狗那样只做 90° 宽高互换——这里用闭式解求旋转 AABB：
+ * 半宽 = |w/2·cos| + |h/2·sin|（四角 min/max 的解析形式）。
+ * 贴边躺倒时一半溢出窗口，裁切到窗口内；裁成 0 由调用方
+ * `ensureValidHitRegion` 兜底为整窗（穿透死锁防线，见 PetRendererBase）。
+ *
+ * @param centerX - 旋转中心窗口 X（舞台中心）
+ * @param centerY - 旋转中心窗口 Y
+ * @param w - 局部盒宽（纹理自然宽 × scale）
+ * @param h - 局部盒高
+ * @param left - 局部盒左边界相对旋转中心（= −anchorX·w）
+ * @param top - 局部盒上边界相对旋转中心（= −anchorY·h）
+ * @param rot - 当前旋转角（弧度；休眠渐变动画中逐步逼近目标值）
+ * @param windowW - 窗口宽（裁切上界）
+ * @param windowH - 窗口高（裁切上界）
+ * @returns 裁切后的窗口局部命中矩形（可能为 0 尺寸，交由调用方兜底）
+ */
+export function rotatedHitRegion(
+  centerX: number,
+  centerY: number,
+  w: number,
+  h: number,
+  left: number,
+  top: number,
+  rot: number,
+  windowW: number,
+  windowH: number,
+): HitRegion {
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  const hw = (w / 2) * Math.abs(cos) + (h / 2) * Math.abs(sin);
+  const hh = (w / 2) * Math.abs(sin) + (h / 2) * Math.abs(cos);
+  // 盒中心（相对旋转中心）随旋转平移：rendered = P + R(θ)·p
+  const bcx = left + w / 2;
+  const bcy = top + h / 2;
+  const cx = centerX + bcx * cos - bcy * sin;
+  const cy = centerY + bcx * sin + bcy * cos;
+  const x0 = Math.max(0, cx - hw);
+  const y0 = Math.max(0, cy - hh);
+  const x1 = Math.min(windowW, cx + hw);
+  const y1 = Math.min(windowH, cy + hh);
+  return { x: x0, y: y0, width: Math.max(0, x1 - x0), height: Math.max(0, y1 - y0) };
 }

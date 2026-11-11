@@ -289,7 +289,9 @@ export abstract class PetRendererBase implements IPetRenderer {
   }
 
   /**
-   * 重新布局（窗口 A 展开/收起后）：延后一帧等 PIXI `resizeTo` 生效，
+   * 重新布局（窗口 A 展开/收起后）：延后一帧等容器布局稳定，**显式同步 resize**
+   * （PIXI `resizeTo` 的实际生效路径是 ResizeObserver → ticker，比本 rAF 晚 1–2 帧，
+   * 不强制同步会按旧 `app.screen` 居中并上报旧命中区，窗口展开后穿透判定短暂错位），
    * 再按新画布尺寸重新居中并重算命中区——形象屏幕位置不跳（窗口中心保持不变）。
    */
   private readonly relayout = (): void => {
@@ -297,6 +299,7 @@ export abstract class PetRendererBase implements IPetRenderer {
       const app = this.app;
       const root = this.petRoot;
       if (!app || !root) return;
+      app.resize();
       this.centerX = app.screen.width / 2;
       this.centerY = app.screen.height / 2;
       root.position.set(this.centerX, this.centerY);
