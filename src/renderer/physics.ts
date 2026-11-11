@@ -79,7 +79,7 @@ export function jellyImpulse(): [number, number] {
 /**
  * 旋转包围盒命中区（纯函数）：局部盒绕旋转中心转 rot 后取窗口内 AABB。
  *
- * 自定义形象（CustomSpriteRenderer）休眠躺倒是任意角度（±π·showRatio 渐变），
+ * 自定义形象（CustomSpriteRenderer）休眠躺倒是「固定 ±90° + 锚点平移」的渐变动画，
  * 不能像内置猫狗那样只做 90° 宽高互换——这里用闭式解求旋转 AABB：
  * 半宽 = |w/2·cos| + |h/2·sin|（四角 min/max 的解析形式）。
  * 贴边躺倒时一半溢出窗口，裁切到窗口内；裁成 0 由调用方

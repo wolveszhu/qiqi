@@ -49,6 +49,11 @@ export class CustomSpriteRenderer implements IPetRenderer {
   private jelly: [number, number] = [1, 1];
   private sleepAngle = 0;
   private sleepTarget = 0;
+  /** 吸附平移（petRoot 局部）：锚点（圆盘中心）当前值与目标值，与角度同步渐变。 */
+  private sleepX = 0;
+  private sleepY = 0;
+  private sleepXT = 0;
+  private sleepYT = 0;
   private lastSide: SnapEdge | null = null;
   private lastRatio = SNAP_SHOW_RATIO_DEFAULT;
   private idleMode = false;
@@ -151,6 +156,11 @@ export class CustomSpriteRenderer implements IPetRenderer {
       this.sleepAngle = this.sleepTarget;
     }
     this.body.rotation = this.sleepAngle;
+
+    // 吸附平移与角度同款渐变：锚点滑向贴边一侧（圆盘中心落到边线上）
+    this.sleepX += (this.sleepXT - this.sleepX) * 0.12;
+    this.sleepY += (this.sleepYT - this.sleepY) * 0.12;
+    this.body.position.set(this.sleepX, this.sleepY);
   };
 
   playAction(name: PetAction): void {
@@ -191,8 +201,22 @@ export class CustomSpriteRenderer implements IPetRenderer {
   ): void {
     this.lastSide = side;
     this.lastRatio = showRatio;
-    // 左=顺时针(-π)、右=逆时针(+π)；showRatio 决定躺倒幅度（D4.4 露出比例）
-    this.sleepTarget = sleeping ? (side === "left" ? -1 : 1) * Math.PI * showRatio : 0;
+    if (!sleeping || !side) {
+      this.sleepTarget = 0;
+      this.sleepXT = 0;
+      this.sleepYT = 0;
+      return;
+    }
+    // 与 PetRendererBase.setEdgeSleep 同款语义（一致性要求）：
+    // 固定旋转 ±90°（右=顺时针 −π/2、左=逆时针 +π/2）；showRatio 不改角度，
+    // 改锚点平移——圆盘中心推到距贴边一侧边线 (showRatio − 0.5)·直径 处
+    // （showRatio=0.5 → 圆心恰在边线上，半个圆留在窗口内）。
+    this.sleepTarget = side === "right" ? -Math.PI / 2 : Math.PI / 2;
+    const d = Math.max(this.naturalW, this.naturalH) * this.fitScale * this.cfg.scale;
+    const inset = (showRatio - 0.5) * d;
+    // body.position 是 petRoot 局部坐标（原点=舞台中心）：目标窗口 X − 舞台中心 X
+    this.sleepXT = side === "right" ? this.screenW / 2 - inset : inset - this.screenW / 2;
+    this.sleepYT = 0; // 锚点静止时即舞台中心，纵向保持不动
   }
 
   setIdleMode(enabled: boolean): void {
@@ -201,13 +225,12 @@ export class CustomSpriteRenderer implements IPetRenderer {
   }
 
   /**
-   * 命中区：整图包围盒（含透明边）绕锚点旋转后的窗口 AABB。
+   * 命中区：整图包围盒（含透明边）绕锚点旋转 + 吸附平移后的窗口 AABB。
    *
-   * 休眠躺倒是任意角度（±π·showRatio 渐变），必须按当前 `sleepAngle` 实时求
-   * 旋转 AABB 并裁切窗口——旧实现恒按未旋转矩形返回，躺倒后命中区与视觉错位，
-   * 点击判定落到形象外的直立矩形上。裁切退化为 0 → 整窗回退（穿透死锁防线，
-   * 与基类 `ensureValidHitRegion` 同向兜底）。呼吸/果冻缩放（±3%/1.15）不反映，
-   * 与基类口径一致。
+   * 休眠渐变动画中角度与平移都在逼近目标，必须按当前 `sleepAngle`/`sleepX/Y`
+   * 实时求旋转 AABB 并裁切窗口——恒按未旋转矩形返回会导致躺倒后命中区与视觉
+   * 错位。裁切退化为 0 → 整窗回退（穿透死锁防线，与基类 `ensureValidHitRegion`
+   * 同向兜底）。呼吸/果冻缩放（±3%/1.15）不反映，与基类口径一致。
    */
   getHitRegion(): HitRegion {
     // 与 mount 的精灵缩放同源：自适应基准 × 用户倍率（否则命中区与视觉错位）
@@ -218,14 +241,16 @@ export class CustomSpriteRenderer implements IPetRenderer {
     if (!app) {
       return this.fillRegion(0, 0, this.screenW, this.screenH);
     }
-    // sprite 顶左在 petRoot 局部坐标 = (-anchorX·W, -anchorY·H)；petRoot 居中 = 旋转中心
+    // sprite 顶左在 petRoot 局部坐标 = body 平移 + R(θ)·(-anchorX·W, -anchorY·H)；
+    // rotatedHitRegion 的 (left, top) 是「盒左上相对旋转中心（petRoot 原点）」，
+    // 故把吸附平移量并入：躺倒后命中区随锚点一起滑向贴边侧，与视觉一致
     const region = rotatedHitRegion(
       app.screen.width / 2,
       app.screen.height / 2,
       w,
       h,
-      -this.cfg.anchorX * w,
-      -this.cfg.anchorY * h,
+      this.sleepX - this.cfg.anchorX * w,
+      this.sleepY - this.cfg.anchorY * h,
       this.sleepAngle,
       this.screenW,
       this.screenH,
