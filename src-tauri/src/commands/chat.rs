@@ -489,6 +489,9 @@ async fn run_chat_task(
                         );
                     },
                     Ok(crate::llm::client::StreamEvent::Usage(u)) => usage = Some(u),
+                    // 防御：客户端内部已在收到 `[DONE]` 时终止流，正常不会到达这里；
+                    // 万一到达，按正常收尾处理而不是报错（避免「断线」误报）。
+                    Ok(crate::llm::client::StreamEvent::Done) => break,
                     Err(e) => {
                         let err_str = e.to_string();
                         {

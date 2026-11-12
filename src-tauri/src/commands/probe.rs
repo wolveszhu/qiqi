@@ -133,6 +133,7 @@ pub async fn proactive_generate(
                 match event {
                     Ok(crate::llm::client::StreamEvent::Delta(d)) => full.push_str(&d),
                     Ok(crate::llm::client::StreamEvent::Usage(u)) => usage = Some(u),
+                    Ok(crate::llm::client::StreamEvent::Done) => break,
                     Err(e) => {
                         // 流中断：用已收集文本；记账记失败条目（0 点）
                         stream_interrupted = Some(e.to_string());

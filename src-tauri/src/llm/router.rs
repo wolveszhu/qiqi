@@ -299,6 +299,7 @@ async fn collect_full_text(
         match event? {
             super::client::StreamEvent::Delta(d) => out.push_str(&d),
             super::client::StreamEvent::Usage(u) => usage = Some(u),
+            super::client::StreamEvent::Done => break,
         }
     }
     Ok((out, usage))

@@ -148,12 +148,21 @@ fn describe_http_error(body: &str) -> String {
     }
 }
 
-/// 流式事件：文本增量或流末用量帧（`stream_options.include_usage` 触发）。
+/// 流式事件：文本增量、流末用量帧（`stream_options.include_usage` 触发）或流结束。
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
     Delta(String),
     Usage(TokenUsage),
+    /// 收到 `data: [DONE]`：客户端内部据此**主动结束** `unfold`，
+    /// 不再依赖服务端关闭连接（keep-alive 会一直挂到超时，误报「断线」）。
+    /// 不外泄给命令层，命令层仅保留防御分支。
+    Done,
 }
+
+/// 首字节超时（连接 + 响应头），**不覆盖 SSE body**。
+const FIRST_BYTE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// SSE chunk 间空闲超时：模型长时间无输出时主动结束，避免永久挂起。
+const CHUNK_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// 流式事件流：每项为一段文本增量、流末用量帧（或错误）。
 pub type DeltaStream =
@@ -179,23 +188,36 @@ pub trait LlmClient: Send + Sync {
 
 // ---------- Reqwest 实现 ----------
 
-/// 默认客户端（rustls TLS；单例复用连接池）。
+/// Reqwest 实现（rustls TLS）：**流式与非流式使用不同超时策略**。
 pub struct ReqwestLlmClient {
-    http: reqwest::Client,
+    /// 非流式短请求（embedding）：短总超时，端点不可达时快速降级。
+    embed_http: reqwest::Client,
+    /// SSE 流式对话：绝不设 `timeout()`，否则长回复会在中途被掐断。
+    stream_http: reqwest::Client,
     embedding_dim: usize,
 }
 
 impl ReqwestLlmClient {
     pub fn new(embedding_dim: usize) -> Self {
-        Self {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+        // 关键（2026-11-12 修复）：reqwest 的 `timeout` 覆盖「从发起到响应体读完」，
+        // SSE 是长连接流——原先统一 30s 会在回复生成中途掐断 `bytes_stream`，
+        // 命令层收到流错误并 emit `chat:stream:error`，前端显示「刚才好像断线了」。
+        // 流式客户端只保留 connect_timeout，另由首字节超时 + chunk 空闲超时兜底。
+        let builder = || {
+            reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
-                // 禁用系统代理（含 VPN 注入的代理）：大模型请求直接连目标 API，
-                // 避免中间代理改写/劫持 `model` 字段，导致调用到规定列表外的模型。
+                // 禁用系统代理（含 VPN 注入的代理）：直连目标 API，
+                // 避免中间代理改写/劫持 `model` 字段。
                 .no_proxy()
+        };
+        Self {
+            embed_http: builder()
+                // 内置额度 embedding 端点（Workers）可能不可达；5s 快速失败降级为
+                // 无向量检索，避免每轮对话先白等 30s。
+                .timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap_or_default(),
+            stream_http: builder().build().unwrap_or_default(),
             embedding_dim,
         }
     }
@@ -230,14 +252,19 @@ impl LlmClient for ReqwestLlmClient {
         request: ChatRequest,
     ) -> Result<DeltaStream, AppError> {
         let url = format!("{}/chat/completions", target.base_url.trim_end_matches('/'));
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&target.api_key)
-            .json(&Self::chat_body(target, &request))
-            .send()
-            .await
-            .map_err(|e| AppError::Llm(format!("HTTP {e}")))?;
+        // 首字节超时只覆盖「连接 + 响应头」，不覆盖后续 SSE body；
+        // 超时由编排链记为「目标失败」并 failover，不会变成流中途断线。
+        let resp = tokio::time::timeout(
+            FIRST_BYTE_TIMEOUT,
+            self.stream_http
+                .post(&url)
+                .bearer_auth(&target.api_key)
+                .json(&Self::chat_body(target, &request))
+                .send(),
+        )
+        .await
+        .map_err(|_| AppError::Llm("等待模型响应超时（30s 未收到首字节）".into()))?
+        .map_err(|e| AppError::Llm(format!("HTTP {e}")))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -261,25 +288,38 @@ impl LlmClient for ReqwestLlmClient {
                 loop {
                     // 先尝试从缓冲解析一个完整 SSE event
                     if let Some(event) = next_sse_event(&mut buffer) {
+                        // `[DONE]` 已到：主动结束流，不等服务端关闭连接。
+                        // 部分服务端 keep-alive 会让 bytes_stream 一直挂到超时 → 误报断线。
+                        if matches!(event, StreamEvent::Done) {
+                            return None;
+                        }
                         return Some((Ok(event), (bytes, buffer)));
                     }
-                    match bytes.next().await {
-                        Some(Ok(chunk)) => {
+                    match tokio::time::timeout(CHUNK_IDLE_TIMEOUT, bytes.next()).await {
+                        Ok(Some(Ok(chunk))) => {
                             buffer.push_str(&String::from_utf8_lossy(&chunk));
                         },
-                        Some(Err(e)) => {
+                        Ok(Some(Err(e))) => {
                             return Some((
                                 Err(AppError::Llm(format!("流读取失败: {e}"))),
                                 (bytes, buffer),
                             ));
                         },
-                        None => {
+                        Ok(None) => {
                             // 流结束：处理残余缓冲（若有完整 event）
                             let event = next_sse_event(&mut buffer);
-                            if let Some(e) = event {
+                            if let Some(e) = event
+                                && !matches!(e, StreamEvent::Done)
+                            {
                                 return Some((Ok(e), (bytes, buffer)));
                             }
                             return None;
+                        },
+                        Err(_) => {
+                            return Some((
+                                Err(AppError::Llm("模型流空闲超时（120s 无数据）".into())),
+                                (bytes, buffer),
+                            ));
                         },
                     }
                 }
@@ -295,7 +335,7 @@ impl LlmClient for ReqwestLlmClient {
     ) -> Result<Vec<Vec<f32>>, AppError> {
         let url = format!("{}/embeddings", target.base_url.trim_end_matches('/'));
         let resp = self
-            .http
+            .embed_http
             .post(&url)
             .bearer_auth(&target.api_key)
             .json(&serde_json::json!({ "model": target.model, "input": texts }))
@@ -348,8 +388,8 @@ struct EmbeddingItem {
 
 /// 从缓冲中取出下一个完整 SSE event（文本增量或流末用量帧）。
 ///
-/// 分帧规则：空行分隔 event；`data: ` 行取负载；`data: [DONE]` 视为流结束
-/// （返回 None 前清空缓冲使后续读取自然结束）。
+/// 分帧规则：空行分隔 event；`data: ` 行取负载；`data: [DONE]` 返回
+/// [`StreamEvent::Done`]，由 `unfold` 主动终止流（不再依赖服务端关闭连接）。
 /// 返回 `None` 表示缓冲中没有完整 event（等待更多数据）。
 pub fn next_sse_event(buffer: &mut String) -> Option<StreamEvent> {
     while let Some(pos) = buffer.find("\n\n") {
@@ -360,7 +400,7 @@ pub fn next_sse_event(buffer: &mut String) -> Option<StreamEvent> {
             };
             let payload = payload.trim();
             if payload == "[DONE]" {
-                return None;
+                return Some(StreamEvent::Done);
             }
             if let Ok(frame) = serde_json::from_str::<SseFrame>(payload) {
                 // 流末用量帧（include_usage：choices 为空 + usage 有值）——不再丢弃，
@@ -513,14 +553,26 @@ impl LlmClient for MockLlmClient {
 mod tests {
     use super::*;
 
-    /// 喂入多行 SSE 文本，收集全部事件。
+    /// 喂入多行 SSE 文本，收集全部事件（与 `unfold` 同语义：`Done` 不外泄、立即终止）。
     fn collect(sse: &str) -> Vec<StreamEvent> {
         let mut buffer = sse.to_string();
         let mut out = Vec::new();
         while let Some(e) = next_sse_event(&mut buffer) {
+            if matches!(e, StreamEvent::Done) {
+                break;
+            }
             out.push(e);
         }
         out
+    }
+
+    /// 回归：`[DONE]` 必须给出明确结束信号，否则客户端会继续等 chunk 直到超时断线。
+    #[test]
+    fn sse_done_is_an_explicit_end_event() {
+        let mut buffer = String::from(
+            "data: [DONE]\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"never\"}}]}\n\n",
+        );
+        assert_eq!(next_sse_event(&mut buffer), Some(StreamEvent::Done));
     }
 
     #[test]
@@ -610,6 +662,7 @@ mod tests {
                 match event.expect("event") {
                     StreamEvent::Delta(d) => got.push_str(&d),
                     StreamEvent::Usage(_) => {},
+                    StreamEvent::Done => break,
                 }
             }
             got
@@ -638,7 +691,7 @@ mod tests {
             .into_iter()
             .filter_map(|e| match e.expect("event") {
                 StreamEvent::Usage(u) => Some(u),
-                StreamEvent::Delta(_) => None,
+                StreamEvent::Delta(_) | StreamEvent::Done => None,
             })
             .collect();
         assert_eq!(usage, vec![TokenUsage { prompt_tokens: 11, completion_tokens: 7 }]);
