@@ -321,10 +321,10 @@ if (-not $Publish) {
   Invoke-Checked -Label "构建前端" -WorkDir $RepoRoot -Command "pnpm" -Arguments @("build")
 }
 
-# ---------- 3.5 内置共享凭据（只从进程环境继承，不落仓库、不打印值） ----------
-# 清单与 .env.example / build.rs / release.yml 保持一致；build.rs 用 option_env! 读取，
-# 必须在守卫步骤（编译 Rust）之前就已存在于进程环境。
-# 缺失时不阻断构建，内置额度通道降级为「未配置」，但此包不可作为正式发布包。
+# ---------- 3.5 内置共享凭据（CI secrets / .env，不落仓库、不打印值） ----------
+# 清单与 .env.example / build.rs / release.yml 保持一致。
+# build.rs 自己会读仓库根 .env；这里同步导入进程环境，使 cargo / tauri 子进程与 CI
+# 路径一致，并让下方「是否齐全」的提示准确（全程不回显任何值）。
 $credentialNames = @(
   "QIQI_ZHIPU_API_KEY",
   "QIQI_SILICONFLOW_API_KEY",
@@ -334,9 +334,21 @@ $credentialNames = @(
   "QIQI_XFYUN_API_SECRET",
   "QIQI_XFYUN_API_KEY"
 )
+$envFile = Join-Path $RepoRoot ".env"
+if (Test-Path $envFile) {
+  foreach ($line in [IO.File]::ReadAllLines($envFile, [Text.Encoding]::UTF8)) {
+    if ($line -match '^\s*(QIQI_[A-Z0-9_]+)\s*=\s*(.*?)\s*$') {
+      $name = $Matches[1]
+      $value = $Matches[2].Trim().Trim('"').Trim("'")
+      if ($credentialNames -contains $name -and $value.Length -gt 0 -and -not (Test-Path "Env:$name")) {
+        Set-Item -Path "Env:$name" -Value $value
+      }
+    }
+  }
+}
 $missingCredentials = @($credentialNames | Where-Object { -not (Test-Path "Env:$_") })
 if ($missingCredentials.Count -gt 0) {
-  Write-Host "    提示：未注入 $($missingCredentials -join ', ')，内置额度通道将降级为未配置；正式发布前请配置环境变量或 CI secrets。" -ForegroundColor Yellow
+  Write-Host "    提示：$($missingCredentials -join ', ') 未注入，内置额度通道将降级为未配置；正式发布前请在 .env 或 CI secrets 配置。" -ForegroundColor Yellow
 }
 
 # ---------- 4. 发布数据守卫 ----------
