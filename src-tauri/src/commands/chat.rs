@@ -114,11 +114,18 @@ pub async fn chat_send_stream(
         let tiered = app_settings_tiered(&conn)?;
         let quota = app_settings_quota(&conn)?;
         let pet = crate::db::repositories::pet_states::get(&conn)?;
-        let embedded = quota == crate::config::QUOTA_MODE_EMBEDDED;
-        // 自定义（用户自配，优先）始终入链；内置仅在「内置额度」模式兜底
+        // 自定义（用户自配，优先）始终入链；内置额度模式、或 BYOK 但无任何自带 Key
+        // 来源时接入内置兜底（M6 默认 BYOK，不兜底会让全新库的编排链为空）。
         let custom = custom_model_settings::list_enabled_llm(&conn)?;
-        let builtin =
-            if embedded { default_model_settings::list_available_llm(&conn)? } else { Vec::new() };
+        let builtin = if router::should_use_builtin(
+            quota,
+            !custom.is_empty(),
+            !tiered.main.api_key.is_empty(),
+        ) {
+            default_model_settings::list_available_llm(&conn)?
+        } else {
+            Vec::new()
+        };
         let (cursor, last_ok) = router::next_builtin_slot();
         let chain = router::build_chain(&router::ChainInput {
             custom: &custom,

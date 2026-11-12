@@ -71,6 +71,18 @@ pub fn embed_target() -> LlmTarget {
     }
 }
 
+/// 是否接入内置额度模型（纯函数；`chat` / `proactive` / `diary` 三处调用点共用）。
+///
+/// - 内置额度模式（1）：恒接入，内置作为自定义平台之后的兜底；
+/// - BYOK 模式（2）：**仅当没有任何自带 Key 来源**时才接入。M6 把默认模式设为
+///   BYOK，但全新库既无自定义平台、三档 main 也无 Key，若不兜底则编排链为空、
+///   对话直接落到本地兜底话术——表现为「`.env` 配好了内置凭据，请求大模型却走不通」。
+///
+/// 不改数据库里的用户设置，只影响本次请求的编排链构成。
+pub fn should_use_builtin(quota: i64, has_custom: bool, has_main_key: bool) -> bool {
+    quota == crate::config::QUOTA_MODE_EMBEDDED || (!has_custom && !has_main_key)
+}
+
 /// 构建编排链（纯函数：输入行数据 + 轮询参数 → 有序目标列表）。
 pub fn build_chain(input: &ChainInput<'_>) -> ModelChain {
     let mut targets: Vec<LlmTarget> = Vec::new();
@@ -331,6 +343,17 @@ mod tests {
     use super::*;
     use crate::db::models::{LlmTierValue, TieredValue};
     use crate::llm::client::MockLlmClient;
+
+    // 回归：M6 默认额度模式是 BYOK，全新库无自定义平台 / 三档 Key，
+    // 若不兜底接入内置模型，编排链为空、对话直接落本地话术。
+    #[test]
+    fn builtin_fallback_when_byok_has_no_key_source() {
+        assert!(should_use_builtin(1, false, false), "内置额度模式恒接入");
+        assert!(should_use_builtin(1, true, true), "内置额度模式不受自带 Key 影响");
+        assert!(should_use_builtin(2, false, false), "BYOK 但无任何自带 Key → 内置兜底，避免空链");
+        assert!(!should_use_builtin(2, true, false), "BYOK 有自定义平台 → 不消耗内置额度");
+        assert!(!should_use_builtin(2, false, true), "BYOK 有 legacy main Key → 不消耗内置额度");
+    }
 
     fn tier(url: &str, model: &str) -> LlmTierValue {
         LlmTierValue {

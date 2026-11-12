@@ -81,17 +81,18 @@ pub async fn proactive_generate(
         let quota = app_settings::get_quota_mode(&conn)?;
         let pet = pet_states::get(&conn)?;
         let embedded = quota == crate::config::QUOTA_MODE_EMBEDDED;
-        // 内置额度模式才接入内置模型兜底；BYOK 模式仅自定义 + 三档
-        let builtin =
-            if embedded { default_model_settings::list_available_llm(&conn)? } else { Vec::new() };
-        (
-            tiered,
-            embedded,
-            pet.relationship_level,
-            pet.pet_name,
-            custom_model_settings::list_enabled_llm(&conn)?,
-            builtin,
-        )
+        let custom = custom_model_settings::list_enabled_llm(&conn)?;
+        // 与 chat / diary 同口径：BYOK 但无任何自带 Key 时用内置额度兜底，避免空链。
+        let builtin = if router::should_use_builtin(
+            quota,
+            !custom.is_empty(),
+            !tiered.main.api_key.is_empty(),
+        ) {
+            default_model_settings::list_available_llm(&conn)?
+        } else {
+            Vec::new()
+        };
+        (tiered, embedded, pet.relationship_level, pet.pet_name, custom, builtin)
     };
 
     let tsundere = tsundere.unwrap_or(false);

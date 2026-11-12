@@ -38,12 +38,15 @@ impl DefaultModelRow {
 }
 
 /// 可用且类型为 LLM 的内置模型（编排链数据源；按 id 顺序）。
+///
+/// `api_key <> ''` 过滤未注入凭据的行：M6 种子只留空占位，构建期未注入时
+/// 若仍入链会带空 `Bearer` 发请求（401），并被 `is_configured()` 误判为可用。
 pub fn list_available_llm(conn: &Connection) -> Result<Vec<DefaultModelRow>, AppError> {
     let mut stmt = conn
         .prepare(
             "SELECT id, name, type, base_url, models, api_key, is_can_use
              FROM default_model_settings
-             WHERE is_can_use = 1 AND type = 1
+             WHERE is_can_use = 1 AND type = 1 AND api_key <> ''
              ORDER BY id ASC",
         )
         .map_err(AppError::from)?;

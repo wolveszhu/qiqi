@@ -179,10 +179,14 @@ pub async fn generate_for_date(app: &tauri::AppHandle, date: &str) -> Result<boo
         let conn = state.db.lock().map_err(|e| AppError::Db(format!("获取数据库连接失败: {e}")))?;
         let tiered = crate::db::repositories::app_settings::get_tiered(&conn)?;
         let quota = crate::db::repositories::app_settings::get_quota_mode(&conn)?;
-        let embedded = quota == crate::config::QUOTA_MODE_EMBEDDED;
-        // 与主对话同构：自定义（用户自配，优先）始终入链；内置仅在「内置额度」模式兜底
+        // 与主对话同构：自定义（用户自配，优先）始终入链；内置额度模式、或 BYOK
+        // 但无任何自带 Key 来源时接入内置兜底（统一走 router 纯函数）。
         let custom = crate::db::repositories::custom_model_settings::list_enabled_llm(&conn)?;
-        let builtin = if embedded {
+        let builtin = if router::should_use_builtin(
+            quota,
+            !custom.is_empty(),
+            !tiered.main.api_key.is_empty(),
+        ) {
             crate::db::repositories::default_model_settings::list_available_llm(&conn)?
         } else {
             Vec::new()

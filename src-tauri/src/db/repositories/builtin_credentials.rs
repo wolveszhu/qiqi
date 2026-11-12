@@ -16,9 +16,58 @@
 
 use rusqlite::Connection;
 
-use super::{builtin_translate_providers, default_model_settings, translate_settings};
+use super::{
+    app_settings, builtin_translate_providers, default_model_settings, translate_settings,
+};
 use crate::config;
 use crate::error::AppError;
+
+/// 启动诊断：只输出「是否配置 / 计数」，**绝不回显任何凭据值**。
+///
+/// 用于定位「`.env` 配了却请求不通」这类问题：一眼区分是注入没生效、
+/// 启动播种没写入库，还是额度模式把内置模型挡在编排链之外。
+fn log_status(conn: &Connection) {
+    let injected = [
+        config::ZHIPU_API_KEY,
+        config::SILICONFLOW_API_KEY,
+        config::BAIDU_TRANSLATE_APPID,
+        config::BAIDU_TRANSLATE_SECRET,
+        config::XFYUN_APPID,
+        config::XFYUN_API_SECRET,
+        config::XFYUN_API_KEY,
+    ]
+    .iter()
+    .filter(|v| v.is_some())
+    .count();
+    let llm_ready: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM default_model_settings
+             WHERE is_can_use = 1 AND type = 1 AND api_key <> ''",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let translate_ready: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM builtin_translate_providers
+             WHERE app_id <> '' AND api_secret <> ''
+               AND (provider_id <> 'xfyun' OR api_key <> '')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let quota = app_settings::get_quota_mode(conn).unwrap_or(0);
+    eprintln!(
+        "[qiqi] 内置凭据诊断: 构建期注入 {injected}/7 | 内置LLM(有Key)={llm_ready} | \
+         内置翻译(凭据齐全)={translate_ready} | 额度模式={quota} (1=内置额度/2=BYOK)"
+    );
+    if injected > 0 && llm_ready == 0 {
+        eprintln!("[qiqi] 警告: 构建期已注入凭据但库内无可用内置模型，请检查启动播种是否执行");
+    }
+    if quota == crate::config::QUOTA_MODE_BYOK {
+        eprintln!("[qiqi] 提示: 当前 BYOK 模式；无自定义平台/三档 Key 时会自动用内置额度兜底");
+    }
+}
 
 /// 把构建期注入的凭据同步到 M6 / M12 / M13 三处内置表（幂等，每次启动执行）。
 ///
@@ -55,5 +104,6 @@ pub fn sync(conn: &Connection) -> Result<(), AppError> {
         config::XFYUN_API_SECRET.unwrap_or(""),
         config::XFYUN_API_KEY.unwrap_or(""),
     )?;
+    log_status(conn);
     Ok(())
 }

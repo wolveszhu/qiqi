@@ -8,7 +8,9 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::connection::{Db, init_with_key, register_vec_extension};
-use crate::db::repositories::{builtin_translate_providers, translate_settings};
+use crate::db::repositories::{
+    builtin_translate_providers, default_model_settings, translate_settings,
+};
 
 /// 固定测试密钥（64 hex，同生产 32 字节 hex 形态）。
 const TEST_KEY: &str = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
@@ -19,6 +21,10 @@ const TEST_KEY: &str = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF01234567
 /// 单测无法设置编译期环境变量，故在此显式补齐，让"内置服务可用"相关的选路 /
 /// 额度 / 脱敏断言继续验证业务逻辑；这些值绝不出现在生产库或仓库凭据里。
 fn seed_fixture_credentials(conn: &Connection) {
+    // 内置 LLM 两行：list_available_llm 会过滤空 Key，夹具必须补齐才能验证编排链。
+    default_model_settings::set_api_key(conn, "智谱", "fixture-zhipu-key").expect("播种智谱 Key");
+    default_model_settings::set_api_key(conn, "硅基流动", "fixture-silicon-key")
+        .expect("播种硅基流动 Key");
     translate_settings::seed_builtin(conn, Some("fixture-appid"), Some("fixture-secret"))
         .expect("播种内置凭据");
     builtin_translate_providers::update_credentials(
