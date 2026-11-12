@@ -14,7 +14,7 @@
  * 纪律（规范 §6 / §I）：单个 Ticker；帧内零 `new`；PIXI 实例由普通变量持有，绝不进响应式。
  */
 
-import { Application, Assets, Container, Sprite, type Texture } from "pixi.js";
+import { Application, Assets, Container, Rectangle, Sprite, Texture } from "pixi.js";
 
 import type { HitRegion, IPetRenderer, PetAction } from "./IPetRenderer";
 import type { CustomAvatarConfig } from "./customAvatarRegistry";
@@ -22,12 +22,59 @@ import { SNAP_SHOW_RATIO_DEFAULT, type SnapEdge } from "../utils/edgeSnap";
 import { ensureValidHitRegion } from "./PetRendererBase";
 import { breathScales, dampedRecovery, jellyImpulse, rotatedHitRegion } from "./physics";
 
+/**
+ * 量取「实际不透明内容」包围盒（忽略透明留白）。
+ *
+ * 用户导入的 PNG 常有大量透明边距，若按整图最长边缩放，可见角色会远小于画布、
+ * 视觉上比内置猫小。量出内容盒后按「内容最长边」缩放，角色才与内置观感一致。
+ * 全透明 / 无法读取像素（跨域等）时返回 null，调用方退化为整图。
+ */
+function computeContentBounds(
+  src: CanvasImageSource,
+  w: number,
+  h: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (w <= 0 || h <= 0) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(src, 0, 0);
+  let data: Uint8ClampedArray;
+  try {
+    data = ctx.getImageData(0, 0, w, h).data;
+  } catch {
+    return null; // tainted canvas 等：退化为整图
+  }
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
+    for (let x = 0; x < w; x++) {
+      if (data[row + x * 4 + 3] > 16) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
 export class CustomSpriteRenderer implements IPetRenderer {
-  /** 自适应基准：scale=1 时图片最长边在屏幕上的**固定像素**，与窗口/预览舞台尺寸解耦。
-   *  取值锚定内置代码猫的显示高度（coreHeight 154 × PET_SCALE 0.6 ≈ 92px），使自定义形象
-   *  在 150px 桌宠窗口与更大的设置预览舞台里都和内置猫同等大小（旧实现按窗口短边比例缩放，
-   *  预览舞台比桌宠窗口大，自定义形象就被放大到比猫大，重新导入后依然不一致）。 */
-  private static readonly TARGET_LONG_EDGE_PX = 92;
+  /** 内置代码猫的显示基准高度（coreHeight 154 × PET_SCALE 0.6 ≈ 92px），作为自定义形象对齐锚点。 */
+  private static readonly BUILTIN_REF_PX = 92;
+  /** 自定义形象相对内置的放大倍率：+10%，让导入角色视觉上比内置大一圈。 */
+  private static readonly SIZE_MULT = 1.1;
+  /** 自适应基准：scale=1 时「不透明内容」最长边在屏幕上的固定像素（已含 +10% 放大），
+   *  与窗口/预览舞台尺寸解耦。按内容而非整图归一，可抵消 PNG 透明留白导致的「看起来偏小」。 */
+  private static readonly TARGET_CONTENT_PX =
+    CustomSpriteRenderer.BUILTIN_REF_PX * CustomSpriteRenderer.SIZE_MULT;
 
   /** 固定配置（导入时由注册表注入；滑杆微调走 in-memory 更新后重建）。 */
   private cfg: CustomAvatarConfig;
@@ -39,6 +86,9 @@ export class CustomSpriteRenderer implements IPetRenderer {
   /** 图片自然尺寸（纹理加载后填充）。 */
   private naturalW = 1;
   private naturalH = 1;
+  /** 不透明内容包围盒尺寸（量取后填充；命中区/吸附直径据此计算，避免把透明留白算进去）。 */
+  private contentW = 1;
+  private contentH = 1;
 
   /** 自适应基准缩放（mount 时按图片与舞台尺寸算出；`cfg.scale` 是其上的倍率）。 */
   private fitScale = 1;
@@ -100,13 +150,36 @@ export class CustomSpriteRenderer implements IPetRenderer {
     this.naturalW = texture.width;
     this.naturalH = texture.height;
 
-    // 用户图片尺寸不可控（几百到几千像素）：按「最长边 = 固定 TARGET_LONG_EDGE_PX」归一，
-    // cfg.scale 作为倍率。固定像素（非窗口比例）保证自定义形象与内置猫在任何窗口/预览尺寸下
-    // 大小一致——旧实现按窗口短边比例缩放，预览舞台比桌宠窗口大，自定义形象就被放大失真。
-    this.fitScale =
-      CustomSpriteRenderer.TARGET_LONG_EDGE_PX / Math.max(this.naturalW, this.naturalH);
+    // 量取不透明内容包围盒：按「内容最长边 = 固定 TARGET_CONTENT_PX（含 +10%）」归一，
+    // 角色才与内置猫对齐且不显小；再裁切成子纹理，使锚点（圆盘中心）落在内容中心，
+    // 边缘吸附旋转中心正确。cfg.scale 作为其上倍率。固定像素（非窗口比例）保证自定义形象
+    // 在 150px 桌宠窗口与更大的设置预览舞台里大小一致。
+    const bounds = computeContentBounds(
+      texture.source.resource as CanvasImageSource,
+      this.naturalW,
+      this.naturalH,
+    );
+    let drawTex: Texture;
+    let cw: number;
+    let ch: number;
+    if (bounds) {
+      cw = bounds.w;
+      ch = bounds.h;
+      drawTex = new Texture({
+        source: texture.source,
+        frame: new Rectangle(bounds.x, bounds.y, bounds.w, bounds.h),
+      });
+    } else {
+      cw = this.naturalW;
+      ch = this.naturalH;
+      drawTex = texture;
+    }
+    this.contentW = cw;
+    this.contentH = ch;
 
-    const sprite = new Sprite(texture);
+    this.fitScale = CustomSpriteRenderer.TARGET_CONTENT_PX / Math.max(cw, ch);
+
+    const sprite = new Sprite(drawTex);
     sprite.anchor.set(this.cfg.anchorX, this.cfg.anchorY); // 锚点 = 圆盘中心
     sprite.position.set(0, 0); // 锚点落在 body 原点
     sprite.scale.set(this.fitScale * this.cfg.scale); // 自适应 × 用户倍率
@@ -214,7 +287,7 @@ export class CustomSpriteRenderer implements IPetRenderer {
     // 改锚点平移——圆盘中心推到距贴边一侧边线 (showRatio − 0.5)·直径 处
     // （showRatio=0.5 → 圆心恰在边线上，半个圆留在窗口内）。
     this.sleepTarget = side === "right" ? -Math.PI / 2 : Math.PI / 2;
-    const d = Math.max(this.naturalW, this.naturalH) * this.fitScale * this.cfg.scale;
+    const d = Math.max(this.contentW, this.contentH) * this.fitScale * this.cfg.scale;
     const inset = (showRatio - 0.5) * d;
     // body.position 是 petRoot 局部坐标（原点=舞台中心）：目标窗口 X − 舞台中心 X
     this.sleepXT = side === "right" ? this.screenW / 2 - inset : inset - this.screenW / 2;
@@ -235,10 +308,11 @@ export class CustomSpriteRenderer implements IPetRenderer {
    * 同向兜底）。呼吸/果冻缩放（±3%/1.15）不反映，与基类口径一致。
    */
   getHitRegion(): HitRegion {
-    // 与 mount 的精灵缩放同源：自适应基准 × 用户倍率（否则命中区与视觉错位）
+    // 与 mount 的精灵缩放同源：自适应基准 × 用户倍率（否则命中区与视觉错位）。
+    // 用内容尺寸（已裁掉透明留白），命中区贴合可见角色而非整图包围盒。
     const s = this.fitScale * this.cfg.scale;
-    const w = this.naturalW * s;
-    const h = this.naturalH * s;
+    const w = this.contentW * s;
+    const h = this.contentH * s;
     const app = this.app;
     if (!app) {
       return this.fillRegion(0, 0, this.screenW, this.screenH);
