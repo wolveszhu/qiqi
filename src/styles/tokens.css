@@ -23,6 +23,7 @@
   --matcha-soft: #eaf1df; /* 主色浅底 */
   --peach: #ff9e5e; /* 点缀：蜜桃橙 */
   --peach-soft: #ffebdb;
+  --peach-deep: #e8742f; /* 点缀深：蜜桃橙加深，强调/危险按钮底色（弹窗删除按钮等） */
   --butter: #ffd98a; /* 点缀：奶油黄 */
   --blush: #f5aeb9; /* 点缀：腮红粉 */
 
