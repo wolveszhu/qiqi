@@ -23,6 +23,7 @@ import {
   deleteCustomAvatar,
   importCustomAvatar,
   readCustomAvatar,
+  renameCustomAvatar,
 } from "../../../api/customAvatar";
 import { listRenderers } from "../../../renderer/factory";
 import {
@@ -30,6 +31,7 @@ import {
   loadCustomAvatars,
   listCustomConfigs,
   removeCustomConfig,
+  updateCustomConfigInMemory,
   uuidFromFullId,
 } from "../../../renderer/customAvatarRegistry";
 import { SNAP_SHOW_RATIO_MAX, SNAP_SHOW_RATIO_MIN } from "../../../utils/edgeSnap";
@@ -75,6 +77,7 @@ const OPTIONS = computed(() => [
       emoji: meta?.emoji ?? "🐾",
       image: undefined,
       deletable: false,
+      renamable: false,
     };
   }),
   ...customList.value.map((c) => ({
@@ -85,6 +88,7 @@ const OPTIONS = computed(() => [
     emoji: undefined,
     image: c.dataUrl,
     deletable: true,
+    renamable: true,
   })),
 ]);
 
@@ -237,6 +241,20 @@ async function deleteAvatar(fullId: string): Promise<void> {
   }
 }
 
+/** 重命名自定义形象：落库 + 注册表即时刷新（画廊/预览名字同步）。 */
+async function renameAvatar(fullId: string, newName: string): Promise<void> {
+  const uuid = uuidFromFullId(fullId);
+  if (!uuid) return;
+  try {
+    await renameCustomAvatar(uuid, newName);
+    updateCustomConfigInMemory(uuid, { name: newName });
+    syncCustomList();
+    pushToast(t("avatar.renameOk"));
+  } catch (e: unknown) {
+    pushToast(e instanceof Error ? e.message : t("common.saveFailed"), "error");
+  }
+}
+
 onMounted(async (): Promise<void> => {
   savedName.value = petStore.petName;
   // 先填充自定义形象注册表，再读激活态——否则 custom:<uuid> 在画廊/预览里查不到配置
@@ -285,15 +303,18 @@ onUnmounted((): void => {
       <div class="pet-grid">
         <PetOptionCard
           v-for="o in OPTIONS"
+          :id="o.fullId"
           :key="o.id"
           :name="o.name"
           :sub="o.sub"
           :emoji="o.emoji"
           :image="o.image"
           :deletable="o.deletable"
+          :renamable="o.renamable"
           :selected="petStore.activeRenderer === o.id"
           @select="selectRenderer(o.id)"
           @delete="deleteAvatar(o.fullId)"
+          @rename="renameAvatar"
         />
         <PetOptionCard
           :name="t('avatar.importTitle')"
