@@ -96,6 +96,10 @@ export abstract class PetRendererBase implements IPetRenderer {
   private headG: Container | null = null;
   /** 边缘吸附休眠态（形象外移半窗宽 + 命中区取可见半边）。 */
   private edgeSleep = false;
+  /** 当前吸附边（resize 后用于重放休眠姿态，避免 pet 从边缘"弹出"）。 */
+  private snapEdge: SnapEdge | null = null;
+  /** 当前吸附露出比例（resize 后重放用）。 */
+  private snapRatio = SNAP_SHOW_RATIO_DEFAULT;
 
   // ---- 子类几何缓存（mount 时取一次；避免每帧调用抽象方法） ----
   private coreLeft = 0;
@@ -304,6 +308,9 @@ export abstract class PetRendererBase implements IPetRenderer {
       this.centerY = app.screen.height / 2;
       root.position.set(this.centerX, this.centerY);
       this.updateHitRegion();
+      // resize 后按新尺寸重放休眠姿态：否则 head 位置仍按旧 centerX 计算，
+      // pet 会偏移出边缘（"弹出"），且命中区与渲染错位 → 点击穿透。见 setEdgeSleep。
+      if (this.snapEdge) this.setEdgeSleep(true, this.snapEdge, this.snapRatio);
     });
   };
 
@@ -404,6 +411,12 @@ export abstract class PetRendererBase implements IPetRenderer {
     const head = this.headG;
     if (!head) return;
     this.edgeSleep = sleeping;
+    if (sleeping && side) {
+      this.snapEdge = side;
+      this.snapRatio = showRatio;
+    } else {
+      this.snapEdge = null;
+    }
     if (this.tailG) this.tailG.visible = !sleeping; // 躺姿下尾巴收起
 
     // 顺时针（贴左，头朝屏幕内）为 +π/2；逆时针（贴右）为 −π/2。

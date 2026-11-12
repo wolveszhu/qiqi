@@ -206,6 +206,10 @@ export class CustomSpriteRenderer implements IPetRenderer {
       this.screenW = app.screen.width;
       this.screenH = app.screen.height;
       root.position.set(this.screenW / 2, this.screenH / 2);
+      this.updateTransforms();
+      // resize 后按新尺寸重放休眠姿态：否则 sleepXT 仍按旧 screenW 计算，
+      // pet 会偏移出边缘（"弹出"），且命中区与渲染错位 → 点击穿透。见 setEdgeSleep。
+      if (this.lastSide) this.setEdgeSleep(true, this.lastSide, this.lastRatio);
     });
   };
 
