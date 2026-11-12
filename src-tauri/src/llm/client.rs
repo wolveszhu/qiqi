@@ -148,6 +148,22 @@ fn describe_http_error(body: &str) -> String {
     }
 }
 
+/// reqwest 错误的完整诊断链（顶层文案 + `source()` 逐层原因）。
+///
+/// reqwest 对 body 解码类失败只显示 "error decoding response body"，根因
+/// （h2 流被重置 / chunked 损坏 / 连接截断）藏在 source 链里——逐层拼接，
+/// 让额度库错误记录与回落链日志能直接定位。
+fn reqwest_err(e: &reqwest::Error) -> String {
+    let mut msg = e.to_string();
+    let mut src = std::error::Error::source(e);
+    while let Some(s) = src {
+        msg.push_str(" | cause: ");
+        msg.push_str(&s.to_string());
+        src = s.source();
+    }
+    msg
+}
+
 /// 流式事件：文本增量、流末用量帧（`stream_options.include_usage` 触发）或流结束。
 #[derive(Debug, Clone, PartialEq)]
 pub enum StreamEvent {
@@ -217,7 +233,11 @@ impl ReqwestLlmClient {
                 .timeout(std::time::Duration::from_secs(5))
                 .build()
                 .unwrap_or_default(),
-            stream_http: builder().build().unwrap_or_default(),
+            // SSE 是为 HTTP/1.1 chunked 设计的长流。reqwest 默认协商 h2，而硅基流动
+            // 推理模型的长流（思考内容随流下发、单次可达数百 KB）在 h2 下实测报
+            // `error decoding response body`（curl/PowerShell 走 1.1 均完整收完 326KB）
+            // ——强制 1.1 规避；智谱等厂商走 1.1 亦完全兼容。
+            stream_http: builder().http1_only().build().unwrap_or_default(),
             embedding_dim,
         }
     }
@@ -264,7 +284,7 @@ impl LlmClient for ReqwestLlmClient {
         )
         .await
         .map_err(|_| AppError::Llm("等待模型响应超时（30s 未收到首字节）".into()))?
-        .map_err(|e| AppError::Llm(format!("HTTP {e}")))?;
+        .map_err(|e| AppError::Llm(reqwest_err(&e)))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -301,7 +321,7 @@ impl LlmClient for ReqwestLlmClient {
                         },
                         Ok(Some(Err(e))) => {
                             return Some((
-                                Err(AppError::Llm(format!("流读取失败: {e}"))),
+                                Err(AppError::Llm(format!("流读取失败: {}", reqwest_err(&e)))),
                                 (bytes, buffer),
                             ));
                         },
@@ -341,7 +361,7 @@ impl LlmClient for ReqwestLlmClient {
             .json(&serde_json::json!({ "model": target.model, "input": texts }))
             .send()
             .await
-            .map_err(|e| AppError::Llm(format!("HTTP {e}")))?;
+            .map_err(|e| AppError::Llm(reqwest_err(&e)))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -403,15 +423,19 @@ pub fn next_sse_event(buffer: &mut String) -> Option<StreamEvent> {
                 return Some(StreamEvent::Done);
             }
             if let Ok(frame) = serde_json::from_str::<SseFrame>(payload) {
-                // 流末用量帧（include_usage：choices 为空 + usage 有值）——不再丢弃，
-                // 额度记账以此为准（缺失时调用方端侧估算兜底）
-                if let Some(usage) = frame.usage {
-                    return Some(StreamEvent::Usage(TokenUsage {
-                        prompt_tokens: usage.prompt_tokens,
-                        completion_tokens: usage.completion_tokens,
-                    }));
-                }
-                if let Some(delta) = frame.choices.into_iter().next().and_then(|c| c.delta.content)
+                // 用量帧判定（include_usage 规范：choices 为空 + usage 有值）。
+                // 关键（2026-11-12 修复）：硅基流动在**每个 chunk** 都带累计 usage
+                // （choices 非空，Qwen3.5-4B 实测）——原实现见 usage 就返回 Usage，
+                // 正文 delta 被全部吞掉（表现为气泡空、无回复）。
+                if frame.choices.is_empty() {
+                    if let Some(usage) = frame.usage {
+                        return Some(StreamEvent::Usage(TokenUsage {
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                        }));
+                    }
+                } else if let Some(delta) =
+                    frame.choices.into_iter().next().and_then(|c| c.delta.content)
                 {
                     return Some(StreamEvent::Delta(delta));
                 }
@@ -573,6 +597,24 @@ mod tests {
             "data: [DONE]\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"never\"}}]}\n\n",
         );
         assert_eq!(next_sse_event(&mut buffer), Some(StreamEvent::Done));
+    }
+
+    /// 回归（2026-11-12）：硅基流动**每个 chunk** 都带累计 usage（choices 非空），
+    /// choices 非空的帧必须继续返回 Delta；用量帧只在 choices 为空时返回。
+    #[test]
+    fn sse_per_chunk_usage_keeps_deltas() {
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":0}}\n\n\
+                   data: {\"choices\":[{\"delta\":{\"content\":\"好\"}}],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":2}}\n\n\
+                   data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":5}}\n\n\
+                   data: [DONE]\n\n";
+        assert_eq!(
+            collect(sse),
+            vec![
+                StreamEvent::Delta("你".into()),
+                StreamEvent::Delta("好".into()),
+                StreamEvent::Usage(TokenUsage { prompt_tokens: 11, completion_tokens: 5 }),
+            ]
+        );
     }
 
     #[test]
