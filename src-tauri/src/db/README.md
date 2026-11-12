@@ -236,9 +236,12 @@ MSI 重装不会删除 `app_data_dir`，开发机上验证发布包时必须先�
 
 - **变量清单**：见仓库根 `.env.example`（7 个 `QIQI_*`，CI 配同名
   Repository secrets，本地用 `.env` / 进程环境变量，`.gitignore` 已忽略）。
+  `build.rs` 会自动读取仓库根 `.env`（**进程环境优先**），并声明
+  `rerun-if-changed=../.env` + `rerun-if-env-changed`——**轮换密钥后改 `.env`
+  即触发 Rust 重编译**，无需 `cargo clean`；否则 rustc 会复用编入旧 Key 的产物。
 - **降级**：未注入时写空串，内置额度 / 内置翻译通道降级为「未配置」，
-  用户自填 BYOK 不受影响；启动播种**无条件覆盖**，存量库里已轮换作废的
-  旧明文会被清掉，不会残留失效 Key。
+  用户自填 BYOK 不受影响；启动播种**无条件覆盖**（每次启动执行），存量库里
+  已轮换作废的旧明文会被清掉，不会残留失效 Key，也无需手动改数据库。
 - **守卫**：`release_data_guard.rs` 断言凭据与构建期注入值一致（未注入即为
   空），断言信息不回显凭据值；`verify-release-data.mjs` 专项扫描迁移 SQL
   的凭据字面量（4 类平台格式），命中即阻断发布。
