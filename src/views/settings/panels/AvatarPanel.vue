@@ -92,6 +92,18 @@ const OPTIONS = computed(() => [
   })),
 ]);
 
+/**
+ * 预览区名称跟随当前选中形象：内置取 i18n 名称、自定义取注册表名称。
+ *
+ * 与卡片 `:selected` 共用 OPTIONS 及同一 id 匹配条件，切换/重命名/删除形象后
+ * 自动同步；未知或注册表尚未加载完的 id 回落内置猫（对齐 createRenderer 回落策略）。
+ */
+const activeAvatarName = computed(
+  () =>
+    OPTIONS.value.find((o) => o.id === petStore.activeRenderer)?.name ??
+    t("avatar.catName"),
+);
+
 const savedName = ref(petStore.petName);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -295,7 +307,7 @@ onUnmounted((): void => {
     <AppCard :title="t('avatar.preview')">
       <div class="preview-card">
         <PreviewStage :renderer-id="petStore.activeRenderer" />
-        <div class="preview-card__name">{{ petStore.petName }}</div>
+        <div class="preview-card__name">{{ activeAvatarName }}</div>
         <div class="preview-card__badges">
           <span class="preview-card__badge">{{ t("avatar.badgeJelly") }}</span>
           <span class="preview-card__badge">{{ t("avatar.badgeClickThrough") }}</span>
