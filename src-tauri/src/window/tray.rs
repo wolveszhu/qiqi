@@ -44,7 +44,7 @@ pub fn build_tray(app: &App, locale: &str) -> Result<(), AppError> {
     let handle = app.handle().clone();
     TrayIconBuilder::with_id("qiqi-main")
         .icon(icon)
-        .tooltip("Qiqi")
+        .tooltip("七七")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
