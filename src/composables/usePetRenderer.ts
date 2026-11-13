@@ -73,8 +73,12 @@ export function setIdleMode(enabled: boolean): void {
 }
 
 /**
- * 边缘吸附休眠视觉（D4.4）：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），
- * 并按 `showRatio` 决定露出圆盘的比例；唤醒恢复原状。
+ * 边缘吸附视觉：形象整体旋转 90° 躺下（左=顺时针 / 右=逆时针），
+ * 并按 `showRatio` 决定露出圆盘的比例；拖离边缘恢复原状。
+ *
+ * 姿态变化会立即改变命中区，此处**同步补报一次**：旧实现只等 500ms 低频定时器，
+ * 期间 Rust 仍持唤醒态矩形，贴边半圆处被判「未命中」→ 整窗穿透
+ * （首启首次吸附必现；切换形象因重建后立即补报才自愈）。
  */
 export function setEdgeSleep(
   sleeping: boolean,
@@ -82,6 +86,7 @@ export function setEdgeSleep(
   showRatio: number = SNAP_SHOW_RATIO_DEFAULT,
 ): void {
   renderer?.setEdgeSleep?.(sleeping, side, showRatio);
+  reportHitRegion();
 }
 
 export function lookAt(x: number, y: number): void {

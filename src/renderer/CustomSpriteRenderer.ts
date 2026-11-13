@@ -193,6 +193,27 @@ export class CustomSpriteRenderer implements IPetRenderer {
   }
 
   /**
+   * 姿态/命中区计算前强制同步舞台尺寸（同 `PetRendererBase.syncViewport`）。
+   *
+   * `screenW/screenH` 是 mount 时缓存，而 `getHitRegion()` 现读 `app.screen`；
+   * PIXI `resizeTo` 异步生效且首启无 window resize 事件时两者会长期不一致，
+   * 首次吸附用旧 screenW 算 sleepXT 会把形象推出边缘、命中区与视觉错位 → 点击穿透。
+   */
+  private syncViewport(): void {
+    const app = this.app;
+    const root = this.root;
+    if (!app || !root) return;
+    app.resize();
+    const w = app.screen.width;
+    const h = app.screen.height;
+    if (w <= 0 || h <= 0) return;
+    if (w === this.screenW && h === this.screenH) return;
+    this.screenW = w;
+    this.screenH = h;
+    root.position.set(w / 2, h / 2);
+  }
+
+  /**
    * 窗口尺寸变化 → 同步 resize 后重新居中（同 PetRendererBase.relayout：
    * PIXI `resizeTo` 经 ResizeObserver → ticker 异步生效，显式 `app.resize()`
    * 防止命中区按旧 `app.screen` 上报）。
@@ -278,6 +299,7 @@ export class CustomSpriteRenderer implements IPetRenderer {
     side: SnapEdge | null = null,
     showRatio = SNAP_SHOW_RATIO_DEFAULT,
   ): void {
+    this.syncViewport(); // sleepXT 与命中区都依赖当前舞台尺寸，先同步再计算
     this.lastSide = side;
     this.lastRatio = showRatio;
     if (!sleeping || !side) {
@@ -327,8 +349,12 @@ export class CustomSpriteRenderer implements IPetRenderer {
     // 旧实现把 sleepX 塞进 left，导致旋转中心错算、命中区跑到窗口顶部一条带，
     // 可见形象在贴边侧却点击穿透、拖不出来。此处旋转中心随吸附平移同步移动，命中区
     // 才与视觉一致（露出的半边正好落在窗口内）。
-    const rotCenterX = app.screen.width / 2 + this.sleepX;
-    const rotCenterY = app.screen.height / 2 + this.sleepY;
+    // 旋转中心与裁切窗口统一取**实时** app.screen：mount 时缓存的 screenW/H
+    // 在首启可能过期，混用会让命中区跑到窗口外（穿透死锁）。见 syncViewport。
+    const winW = app.screen.width;
+    const winH = app.screen.height;
+    const rotCenterX = winW / 2 + this.sleepX;
+    const rotCenterY = winH / 2 + this.sleepY;
     const region = rotatedHitRegion(
       rotCenterX,
       rotCenterY,
@@ -337,16 +363,16 @@ export class CustomSpriteRenderer implements IPetRenderer {
       -this.cfg.anchorX * w,
       -this.cfg.anchorY * h,
       this.sleepAngle,
-      this.screenW,
-      this.screenH,
+      winW,
+      winH,
     );
     const valid = ensureValidHitRegion(
       region.x,
       region.y,
       region.width,
       region.height,
-      this.screenW,
-      this.screenH,
+      winW,
+      winH,
     );
     return this.fillRegion(valid.x, valid.y, valid.width, valid.height);
   }

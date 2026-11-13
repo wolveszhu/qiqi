@@ -33,4 +33,27 @@ describe("ensureValidHitRegion", () => {
       height: 240,
     });
   });
+
+  it("宽高为正但整体落在窗口外 → 回退整窗（2026-11-13 首启回归）", () => {
+    // 首启 app.screen 缓存停在 240 时，贴右会裁出 x≈190..240 的矩形；
+    // 真实窗口只有 0..150，Rust is_valid() 只查宽高会放行 → 恒判未命中 → 穿透死锁。
+    const fullWindow = { x: 0, y: 0, width: 150, height: 150 };
+    expect(ensureValidHitRegion(190, 10, 50, 50, 150, 150)).toEqual(fullWindow);
+    expect(ensureValidHitRegion(-80, 10, 50, 50, 150, 150)).toEqual(fullWindow);
+  });
+
+  it("部分越界 → 裁到窗口内，保留可见区域", () => {
+    expect(ensureValidHitRegion(120, 10, 60, 50, 150, 150)).toEqual({
+      x: 120,
+      y: 10,
+      width: 30,
+      height: 50,
+    });
+    expect(ensureValidHitRegion(-20, -10, 60, 50, 150, 150)).toEqual({
+      x: 0,
+      y: 0,
+      width: 40,
+      height: 40,
+    });
+  });
 });

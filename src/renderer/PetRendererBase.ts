@@ -29,9 +29,13 @@ const CANVAS_SIZE = 240;
 /**
  * 贴边休眠命中区裁切结果的**有效性兜底**（纯函数，单测覆盖）。
  *
- * 裁切退化为 0 或负值（贴边比例 / 旋转参数边界）时回退整窗：绝不上报无效命中区，
+ * 裁切退化为 0/负值、或矩形**完全落在窗口之外**时回退整窗：绝不上报无效命中区，
  * 否则 Rust 穿透状态机会把桌宠锁在「整窗穿透」里，用户再也点不醒
  * （`click_through.rs::is_over_pet` 另有同向兜底，此处是上报端双保险）。
+ *
+ * 为什么必须查越界：`HitRegion::is_valid()` 只校验宽高 >0，若首启尺寸缓存过期，
+ * 一个宽高为正、但 x/y 整体在真实窗口外的矩形会被判为有效，鼠标永远命中不到 →
+ * 恒 `over_pet=false` → 整窗穿透（2026-11-13 首次吸附回归）。部分越界则裁到窗口内。
  */
 export function ensureValidHitRegion(
   left: number,
@@ -41,10 +45,18 @@ export function ensureValidHitRegion(
   windowWidth: number,
   windowHeight: number,
 ): HitRegion {
-  if (width > 0 && height > 0) {
-    return { x: left, y: top, width, height };
+  const full = { x: 0, y: 0, width: windowWidth, height: windowHeight };
+  if (!(width > 0 && height > 0) || !(windowWidth > 0 && windowHeight > 0)) {
+    return full;
   }
-  return { x: 0, y: 0, width: windowWidth, height: windowHeight };
+  const x0 = Math.max(0, left);
+  const y0 = Math.max(0, top);
+  const x1 = Math.min(windowWidth, left + width);
+  const y1 = Math.min(windowHeight, top + height);
+  const clippedW = x1 - x0;
+  const clippedH = y1 - y0;
+  if (clippedW <= 0 || clippedH <= 0) return full;
+  return { x: x0, y: y0, width: clippedW, height: clippedH };
 }
 
 /** 动画常量（两套形象共用；集中定义，防散落魔法数）。 */
@@ -264,21 +276,18 @@ export abstract class PetRendererBase implements IPetRenderer {
       // 旋转 90° → 宽高互换：半宽 = coreHeight/2，半高 = coreWidth/2
       const halfW = (this.coreHeight / 2) * this.petScale;
       const halfH = (this.coreWidth / 2) * this.petScale;
-      // 只报朝屏幕内、落在窗口内的那半边（其余溢出窗口不可见）
+      // 只报朝屏幕内、落在窗口内的那半边（其余溢出窗口不可见）。
+      // 裁切上界取**实时** app.screen：centerX*2 是 mount 时缓存，首启可能过期
+      // （syncViewport 会刷新，此处再用真实值兜一层，防越界命中区导致穿透死锁）。
+      const winW = this.app?.screen.width ?? this.centerX * 2;
+      const winH = this.app?.screen.height ?? this.centerY * 2;
       const left = Math.max(0, cx - halfW);
-      const right = Math.min(this.centerX * 2, cx + halfW);
+      const right = Math.min(winW, cx + halfW);
       const top = Math.max(0, cy - halfH);
-      const bottom = Math.min(this.centerY * 2, cy + halfH);
+      const bottom = Math.min(winH, cy + halfH);
       const width = Math.max(0, right - left);
       const height = Math.max(0, bottom - top);
-      const region = ensureValidHitRegion(
-        left,
-        top,
-        width,
-        height,
-        this.centerX * 2,
-        this.centerY * 2,
-      );
+      const region = ensureValidHitRegion(left, top, width, height, winW, winH);
       // 逐字段赋值而非替换对象：`getHitRegion()` 复用同一对象，外部可能已持有引用。
       this.hitRegion.x = region.x;
       this.hitRegion.y = region.y;
@@ -290,6 +299,30 @@ export abstract class PetRendererBase implements IPetRenderer {
     this.hitRegion.y = this.centerY + this.coreTop * this.petScale;
     this.hitRegion.width = this.coreWidth * this.petScale;
     this.hitRegion.height = this.coreHeight * this.petScale;
+  }
+
+  /**
+   * 姿态/命中区计算前强制同步舞台尺寸（2026-11-13 首启吸附回归）。
+   *
+   * PIXI `resizeTo` 经 ResizeObserver → ticker 异步生效，`mount()` 中 `await app.init()`
+   * 后立刻读到的 `app.screen` 可能是容器布局稳定前的旧值；此后若没有 `window.resize`
+   * 事件，`centerX/centerY` 会一直停在旧值。首次吸附时 `setEdgeSleep` 用 `centerX*2`
+   * 当窗口宽，会把形象推出边缘并让 `updateHitRegion` 裁出越界矩形 → 整窗穿透；
+   * 切换形象因重新 `mount()` 取到正确尺寸才自愈。此处显式 `app.resize()` 同步一次，
+   * 不再依赖异步 ResizeObserver 或恰好发生的 resize 事件。
+   */
+  private syncViewport(): void {
+    const app = this.app;
+    const root = this.petRoot;
+    if (!app || !root) return;
+    app.resize();
+    const w = app.screen.width;
+    const h = app.screen.height;
+    if (w <= 0 || h <= 0) return;
+    if (w / 2 === this.centerX && h / 2 === this.centerY) return;
+    this.centerX = w / 2;
+    this.centerY = h / 2;
+    root.position.set(this.centerX, this.centerY);
   }
 
   /**
@@ -410,6 +443,7 @@ export abstract class PetRendererBase implements IPetRenderer {
   ): void {
     const head = this.headG;
     if (!head) return;
+    this.syncViewport(); // 位置与命中区都依赖当前舞台尺寸，先同步再计算
     this.edgeSleep = sleeping;
     if (sleeping && side) {
       this.snapEdge = side;
