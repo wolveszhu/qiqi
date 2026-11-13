@@ -53,6 +53,7 @@ vi.mock("../../state/settingsStore", () => ({
     snapSleepEnabled: true,
     snapShowRatio: 0.5,
     sleepSnap: false,
+    snapSilent: false,
   },
   applyDndLocal: vi.fn(),
   applySnapshot: vi.fn(),

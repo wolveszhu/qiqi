@@ -97,8 +97,8 @@ function lastInteractionMs(): number | null {
 function tick(): void {
   const now = Date.now();
   rollDayIfNeeded(now);
-  // D4.4 边缘吸附休眠：主动引擎 skip（正交勿扰，内存态）
-  if (settingsStore.sleepSnap) return;
+  // D4.5 贴边静默：仅「已吸附 + 静默开关开启」时跳过主动引擎；单纯吸附不静默
+  if (settingsStore.snapSilent) return;
 
   const anchorIndex = hitAnchorIndex(now);
   const ctx: ProactiveCtx = {

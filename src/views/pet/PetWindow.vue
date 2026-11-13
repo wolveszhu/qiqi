@@ -29,19 +29,35 @@ import {
   startDrag,
 } from "../../api/window";
 import { getTyped } from "../../api/settings";
-import { detectSnapEdge, type SnapEdge } from "../../utils/edgeSnap";
+import { detectSnapEdge, resolveSnapDecision, type SnapEdge } from "../../utils/edgeSnap";
 
 const unlisteners: UnlistenFn[] = [];
 const isDragging = ref(false);
+/** 已贴边吸附（系统级默认行为，与静默开关无关；true = 躺倒露出中）。 */
 const sleepSnap = ref(false);
-/** 当前贴边侧（休眠中改比例时复用；null = 未吸附）。 */
+/** 当前贴边侧（吸附中改比例时复用；null = 未吸附）。 */
 let snapEdge: SnapEdge | null = null;
 
 // ---- E2.3① 待机降帧：PIXI maxFPS 单一真源（probeIdle || sleepSnap → 30fps，否则 60fps）----
 let probeIdle = false;
 function refreshIdleFps(): void {
-  // 入睡(C6 idle)或吸附休眠(D4)任一成立即降帧；唤醒交互即时回升 60fps
+  // 入睡(C6 idle)或贴边吸附(D4)任一成立即降帧；拖离边缘即时回升 60fps
   setIdleMode(probeIdle || sleepSnap.value);
+}
+
+/**
+ * 切换贴边静默态（免打扰）：仅在状态真正变化时广播 Rust 并结算衰减锚点。
+ *
+ * 吸附本身是常开的视觉/位置行为，是否免打扰由「贴边静默」开关单独决定；
+ * 早退避免开关关闭时误调 `sleepDecay("exit")` 赦免衰减天数。
+ */
+function setSilent(next: boolean): void {
+  if (settingsStore.snapSilent === next) return;
+  settingsStore.snapSilent = next;
+  void setSleepMode(next).catch((e: unknown) => console.warn("[pet] 静默态广播失败", e));
+  void sleepDecay(next ? "enter" : "exit").catch((e: unknown) =>
+    console.warn("[pet] 静默衰减结算失败", e),
+  );
 }
 
 // ---- 主链路接线（E1a：此前三个 composable 未在窗口 A 实例化，MVP 链路断裂） ----
@@ -50,7 +66,7 @@ usePetRenderer();
  * 形象重建完成后重放用户可见状态。
  *
  * 新渲染器是"出厂态"：躺倒姿态与降帧标志都会丢，若不重放，
- * 换个形象会顺手把吸附休眠中的桌宠**叫醒**。
+ * 换个形象会顺手把已吸附的桌宠姿态**复位**。
  */
 onRendererRebuilt((): void => {
   if (sleepSnap.value && snapEdge) {
@@ -74,7 +90,7 @@ useSystemProbe({
 
 // 气泡数据源（窗口 A 单气泡覆盖式）：**只显示主动话术**——
 // 对话的流式回复已迁到窗口 B「对话」Tab，A 不再显示（用户决策）。
-// 休眠态**不再**显示 💤 气泡（用户决策）：贴边后即半个形象静默躺着。
+// 贴边静默时主动引擎 skip，故无气泡；单纯吸附（开关关闭）照常显示主动话术。
 const bubbleText = computed(() => proactiveBubble.text);
 const bubbleStreaming = computed(() => proactiveBubble.isStreaming);
 const bubbleVisible = computed(() => bubbleText.value.length > 0);
@@ -97,8 +113,8 @@ watch(
  * 切换 Tab 与聚焦由 B 自己完成。
  */
 async function openChatInSettings(): Promise<void> {
-  // D4.4：休眠期间屏蔽对话入口（双击 / Ctrl+Shift+P 均不打开对话 Tab）
-  if (sleepSnap.value) return;
+  // D4.5：仅贴边静默期屏蔽对话入口（双击 / Ctrl+Shift+P）；单纯吸附不限制
+  if (settingsStore.snapSilent) return;
   try {
     await show("settings");
     await emit("window:chat:open", {});
@@ -114,7 +130,7 @@ function onAction(name: string): void {
   else if (name === "wake") playAction("stretch");
 }
 
-// ---- D4.4 拖拽 → 边缘吸附休眠（仅在开关开启时触发）----
+// ---- D4.5 拖拽 → 边缘吸附（系统默认常开）；静默由开关单独控制 ----
 // 风险#12 深修：系统拖拽（start_dragging）接管鼠标事件后，WebView 会在**拖拽开始瞬间**
 // 收到一个"捕获丢失型" pointerup（此时按键未松开），且松手后**不再有** pointerup
 // （Windows 模态拖拽循环吞掉）。因此不能靠 pointerup 判定拖拽结束：
@@ -132,36 +148,25 @@ async function onDragEnd(): Promise<void> {
   try {
     const { x, y, width, height, monitor } = await getOuterPosition();
     const edge = detectSnapEdge({ x, y, width, height }, monitor);
-    // 进入休眠：开关开启 + 命中左右边缘（用户决策：上下不吸附）
-    if (edge && settingsStore.snapSleepEnabled) {
+    // 吸附是系统级默认行为：命中左右边缘即贴边躺倒，与静默开关无关（用户决策 2026-11-13）。
+    const decision = resolveSnapDecision(edge, settingsStore.snapSleepEnabled);
+    if (decision.snap && edge) {
       await snapToEdge(edge);
       snapEdge = edge;
       sleepSnap.value = true;
       settingsStore.sleepSnap = true;
       setEdgeSleep(true, edge, settingsStore.snapShowRatio); // 整体躺下：左=顺时针 / 右=逆时针
-      refreshIdleFps(); // 吸附休眠 → 待机帧率（E2.3①）
-      // 后台联动：广播 Rust 休眠态（日记静默）+ 衰减锚点（enter 先结算睡前累计）
-      void setSleepMode(true).catch((e: unknown) =>
-        console.warn("[pet] 休眠态广播失败", e),
-      );
-      void sleepDecay("enter").catch((e: unknown) =>
-        console.warn("[pet] 休眠衰减结算失败", e),
-      );
+      refreshIdleFps(); // 吸附 → 待机帧率（E2.3①）
+      setSilent(decision.silent); // 仅开关开启时进入免打扰
     } else if (sleepSnap.value) {
-      // 拖离边缘 → 唤醒（仅拖动唤醒，单击不唤醒）
+      // 拖离边缘 → 复原姿态（仅拖动可离开边缘，单击不处理）
       await restoreFromSnap();
       snapEdge = null;
       sleepSnap.value = false;
       settingsStore.sleepSnap = false;
-      setEdgeSleep(false); // 唤醒：旋转归零，恢复原姿态
+      setEdgeSleep(false); // 旋转归零，恢复原姿态
       refreshIdleFps(); // 拖离 → 恢复（仍受 probeIdle 影响）
-      // 后台联动：解除休眠态 + 衰减锚点前移（exit 赦免休眠天数，醒来再续）
-      void setSleepMode(false).catch((e: unknown) =>
-        console.warn("[pet] 休眠态解除失败", e),
-      );
-      void sleepDecay("exit").catch((e: unknown) =>
-        console.warn("[pet] 休眠衰减锚点前移失败", e),
-      );
+      setSilent(false);
     }
   } catch (e: unknown) {
     console.warn("[pet] 贴边检测失败（降级：不吸附）", e);
@@ -254,8 +259,8 @@ function onPointerDown(e: PointerEvent): void {
   pressX = e.clientX;
   pressY = e.clientY;
   dragStarted = false;
-  if (sleepSnap.value) {
-    // 休眠期：不抚摸、不互动（D4.4：仅拖动可唤醒）；仍注册拖拽监听以便拖离边缘
+  if (settingsStore.snapSilent) {
+    // 贴边静默期：不抚摸、不互动（仅拖动可离开边缘）；仍注册拖拽监听
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp, { once: true });
     return;
@@ -269,7 +274,7 @@ function onPointerDown(e: PointerEvent): void {
   window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
-/** 双击形象 → 打开窗口 B 的对话 Tab（休眠期屏蔽，见 openChatInSettings 守卫）。 */
+/** 双击形象 → 打开窗口 B 的对话 Tab（贴边静默期屏蔽，见 openChatInSettings 守卫）。 */
 function onDoubleClick(): void {
   void openChatInSettings();
 }
@@ -294,23 +299,24 @@ onMounted(async (): Promise<void> => {
       }
     }),
   );
-  // 窗口 B 改边缘吸附休眠开关 → A 同步（A 只在挂载时拉快照，其余全靠事件）
+  // 窗口 B 改贴边静默开关 → A 同步；已吸附时即时进入/解除免打扰（吸附本身不受影响）
   unlisteners.push(
     await listen<{ enabled: boolean }>("settings:snap_sleep:changed", (event) => {
       settingsStore.snapSleepEnabled = event.payload.enabled;
       if (settingsStore.snapshot) {
         settingsStore.snapshot.snapSleepEnabled = event.payload.enabled;
       }
+      setSilent(sleepSnap.value && event.payload.enabled);
     }),
   );
-  // 窗口 B 改吸附露出比例 → A 同步（休眠中改比例即时生效）
+  // 窗口 B 改吸附露出比例 → A 同步（吸附中改比例即时生效）
   unlisteners.push(
     await listen<{ ratio: number }>("settings:snap_ratio:changed", (event) => {
       settingsStore.snapShowRatio = event.payload.ratio;
       if (settingsStore.snapshot) {
         settingsStore.snapshot.snapShowRatio = event.payload.ratio;
       }
-      // 休眠中改比例即时生效（沿用当前贴边侧）
+      // 吸附中改比例即时生效（沿用当前贴边侧）
       if (sleepSnap.value && snapEdge) setEdgeSleep(true, snapEdge, event.payload.ratio);
     }),
   );
@@ -321,7 +327,7 @@ onMounted(async (): Promise<void> => {
       if (event.payload) petStore.activeRenderer = event.payload;
     }),
   );
-  // 窗口 A 首次挂载拉取设置快照（开关状态 snapSleepEnabled 依赖；窗口 B 才写快照）
+  // 窗口 A 首次挂载拉取设置快照（贴边静默开关初值依赖；窗口 B 才写快照）
   if (!settingsStore.snapshot) {
     void getTyped()
       .then(applySnapshot)
@@ -329,10 +335,10 @@ onMounted(async (): Promise<void> => {
         console.warn("[pet] 设置快照拉取失败（使用默认 true）", e);
       });
   }
-  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；对话已迁至 B；休眠期由 openChatInSettings 屏蔽）
+  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；贴边静默期由 openChatInSettings 屏蔽）
   unlisteners.push(
     await onChatToggle(() => {
-      if (sleepSnap.value) return;
+      if (settingsStore.snapSilent) return;
       void openChatInSettings();
     }),
   );

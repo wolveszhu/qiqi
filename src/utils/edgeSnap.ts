@@ -65,3 +65,25 @@ export function isSnapped(
 ): boolean {
   return detectSnapEdge(pos, monitor, threshold) !== null;
 }
+
+/** 一次拖拽结束后的贴边决策（吸附与静默两个正交结果）。 */
+export interface SnapDecision {
+  /** 是否贴边躺倒：系统级默认行为，只由是否命中边缘决定。 */
+  snap: boolean;
+  /** 是否进入免打扰：仅由「贴边静默」开关决定。 */
+  silent: boolean;
+}
+
+/**
+ * 贴边决策（D4.5 用户决策 2026-11-13）：**边缘吸附与静默开关解耦**。
+ *
+ * 吸附（位置贴边 + 躺倒 + 露出比例 + 降帧）是系统默认功能，无论开关开或关都生效；
+ * 开关只负责静默（不主动发消息、交互与后台任务暂停），不再作为吸附总闸。
+ */
+export function resolveSnapDecision(
+  edge: SnapEdge | null,
+  silentEnabled: boolean,
+): SnapDecision {
+  const snap = edge !== null;
+  return { snap, silent: snap && silentEnabled };
+}

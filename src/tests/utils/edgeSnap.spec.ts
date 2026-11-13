@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { detectSnapEdge, isSnapped, SNAP_THRESHOLD } from "../../utils/edgeSnap";
+import {
+  detectSnapEdge,
+  isSnapped,
+  resolveSnapDecision,
+  SNAP_THRESHOLD,
+} from "../../utils/edgeSnap";
 
 // 显示器 1920x1080 左上 (0,0)；窗口 150x150（常态贴合尺寸）
 const MON = { x: 0, y: 0, width: 1920, height: 1080 };
@@ -63,5 +68,21 @@ describe("isSnapped", () => {
   it("贴边为真、游离为假", () => {
     expect(isSnapped({ x: 5, y: 500, ...WIN }, MON)).toBe(true);
     expect(isSnapped({ x: 960, y: 540, ...WIN }, MON)).toBe(false);
+  });
+});
+
+describe("resolveSnapDecision（吸附常开，开关只管静默）", () => {
+  it("命中边缘 + 静默开关关 → 仍吸附，但不静默", () => {
+    expect(resolveSnapDecision("left", false)).toEqual({ snap: true, silent: false });
+    expect(resolveSnapDecision("right", false)).toEqual({ snap: true, silent: false });
+  });
+
+  it("命中边缘 + 静默开关开 → 吸附且进入免打扰", () => {
+    expect(resolveSnapDecision("left", true)).toEqual({ snap: true, silent: true });
+  });
+
+  it("未命中边缘 → 两者皆假，开关取值不影响", () => {
+    expect(resolveSnapDecision(null, true)).toEqual({ snap: false, silent: false });
+    expect(resolveSnapDecision(null, false)).toEqual({ snap: false, silent: false });
   });
 });

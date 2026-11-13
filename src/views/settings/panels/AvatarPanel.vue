@@ -187,7 +187,7 @@ async function saveName(v: string): Promise<void> {
   }
 }
 
-/** 边缘吸附休眠开关（type=3 持久化；保存后刷新快照并 toast）。 */
+/** 贴边静默开关（type=3 持久化；保存后刷新快照并 toast）。 */
 async function toggleSnapSleep(enabled: boolean): Promise<void> {
   try {
     await setSnapSleep(enabled);
@@ -202,7 +202,7 @@ async function toggleSnapSleep(enabled: boolean): Promise<void> {
 /**
  * 吸附态露出比例（type=3 持久化；拖动结束才落库）。
  *
- * 与「边缘吸附休眠」开关**正交**：开关关闭时同样可调整并落库，值在下次贴边时生效。
+ * 与「贴边静默」开关**正交**：开关关闭时同样可调整并落库，值在下次贴边时生效。
  * 后端 `settings_set_snap_ratio` 只做 clamp、不读开关；窗口 A 仅在休眠中即时重绘。
  */
 async function changeSnapRatio(v: number): Promise<void> {
@@ -358,7 +358,7 @@ onUnmounted((): void => {
             <div class="set-row__sub">{{ t("avatar.snapRatioSub") }}</div>
           </div>
           <div class="ratio-ctl">
-            <!-- 露出比例与上面的休眠开关互不依赖：休眠关闭时也可随时调整，
+            <!-- 露出比例与上面的贴边静默开关互不依赖：静默关闭时也可随时调整，
                  值持久化后在下次贴边时生效（后端保存不读开关状态）。 -->
             <input
               class="ratio-ctl__slider"
