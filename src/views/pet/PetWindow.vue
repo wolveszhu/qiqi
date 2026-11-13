@@ -10,6 +10,7 @@ import {
   setExpression,
   setIdleMode,
   setEdgeSleep,
+  forceRebuildCurrent,
   usePetRenderer,
 } from "../../composables/usePetRenderer";
 import { proactiveBubble, useProactive } from "../../composables/useProactive";
@@ -37,6 +38,8 @@ const isDragging = ref(false);
 const sleepSnap = ref(false);
 /** 当前贴边侧（吸附中改比例时复用；null = 未吸附）。 */
 let snapEdge: SnapEdge | null = null;
+/** 首次吸附的强制重建兜底只做一次（进程内）。 */
+let snapRendererWarmedUp = false;
 
 // ---- E2.3① 待机降帧：PIXI maxFPS 单一真源（probeIdle || sleepSnap → 30fps，否则 60fps）----
 let probeIdle = false;
@@ -146,6 +149,14 @@ async function onDragEnd(): Promise<void> {
     // 吸附是系统级默认行为：命中左右边缘即贴边躺倒，与静默开关无关（用户决策 2026-11-13）。
     const decision = resolveSnapDecision(edge, settingsStore.snapSleepEnabled);
     if (decision.snap && edge) {
+      console.warn("[snap] onDragEnd", {
+        edge,
+        x,
+        y,
+        width,
+        height,
+        ratio: settingsStore.snapShowRatio,
+      });
       await snapToEdge(edge);
       snapEdge = edge;
       sleepSnap.value = true;
@@ -153,6 +164,28 @@ async function onDragEnd(): Promise<void> {
       setEdgeSleep(true, edge, settingsStore.snapShowRatio); // 整体躺下：左=顺时针 / 右=逆时针
       refreshIdleFps(); // 吸附 → 待机帧率（E2.3①）
       setSilent(decision.silent); // 仅开关开启时停止主动话术
+
+      // 窗口 `set_position` 之后 WebView 布局 / PIXI `resizeTo`（ResizeObserver
+      // → ticker）异步生效，晚 1–2 帧。首次吸附紧接 await 就算姿态，用的是窗口
+      // 移动前的几何 → 形象被推出边缘、命中区越界；切换形象之所以自愈，是因为
+      // 重新 `mount()` 发生在布局稳定之后。这里在两帧后按稳定尺寸重放一次，
+      // 每次都由 syncViewport() 现取 app.screen 并立即补报命中区；守卫防止
+      // 期间已拖离边缘时把姿态又放回去。
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!sleepSnap.value || snapEdge !== edge) return;
+          setEdgeSleep(true, edge, settingsStore.snapShowRatio);
+        });
+      });
+
+      // 兜底：首次吸附按当前形象重建一次，走「切换形象」那条已验证正常的路径。
+      // 与上面的重放幂等，afterRebuild 会在新渲染器上再重放一次姿态。
+      if (!snapRendererWarmedUp) {
+        snapRendererWarmedUp = true;
+        void forceRebuildCurrent().catch((e: unknown) =>
+          console.warn("[snap] 首次吸附重建失败", e),
+        );
+      }
     } else if (sleepSnap.value) {
       // 拖离边缘 → 复原姿态（仅拖动可离开边缘，单击不处理）
       await restoreFromSnap();

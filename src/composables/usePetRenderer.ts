@@ -115,15 +115,15 @@ export function onRendererRebuilt(fn: (() => void) | null): void {
  *
  * 两条纪律：
  * - **幂等**：`id` 与当前一致直接返回——启动时 `applyPetState` 与 `pet:renderer:changed`
- *   事件都会改 store，重复重建只会闪一下；
+ *   事件都会改 store，重复重建只会闪一下；`force=true` 时跳过此判定（首启吸附兜底用）；
  * - **只让最后一次生效**：清空容器 + 代号比对，避免快速连切时旧的 `mount()` 后完成、
  *   把 canvas 叠在新形象上（预览舞台曾因此同时画出猫和狗）。
  *
  * 重建期间需停 hitRegion 上报并**清零 `lastRegionKey`**——否则残留旧矩形的指纹会命中
  * "变化才 invoke"的短路判定，导致新形象命中区迟迟不上报、穿透误判最久 500ms。
  */
-export async function rebuildRenderer(id: string): Promise<void> {
-  if (!id || id === currentId) return;
+export async function rebuildRenderer(id: string, force = false): Promise<void> {
+  if (!id || (!force && id === currentId)) return;
   const container = document.getElementById("pet-canvas");
   if (!container) return;
 
@@ -167,6 +167,19 @@ export async function rebuildRenderer(id: string): Promise<void> {
   afterRebuild?.();
 }
 
+/**
+ * 首启首次吸附兜底：按**当前**形象强制重建一次。
+ *
+ * 真机反馈（2026-11-13）：首次贴边会「形象弹出 + 点击穿透」，切换任意形象后
+ * 一切正常。`rebuildRenderer` 做的事（清空容器 → 重新 `mount()` 取稳定布局 →
+ * 清 `lastRegionKey` 立即补报 → `afterRebuild` 重放姿态）正是那条已验证路径，
+ * 这里在同一形象上复用它，只触发一次，避免每次吸附都重建。
+ */
+export async function forceRebuildCurrent(): Promise<void> {
+  const id = currentId;
+  if (id) await rebuildRenderer(id, true);
+}
+
 export function usePetRenderer(): UsePetRendererApi {
   onMounted(async () => {
     const container = document.getElementById("pet-canvas");
@@ -195,6 +208,10 @@ export function usePetRenderer(): UsePetRendererApi {
       return;
     }
     startHitRegionReporting();
+    // 与 rebuildRenderer 走**同一条尾流程**：若用户在启动挂载期间就已拖动贴边，
+    // setEdgeSleep 可能作用在尚未就绪的渲染器上；此处按最新 UI 态重放一次，
+    // 消除「首启吸附异常、切换形象（会调 afterRebuild）后正常」的路径差异。
+    afterRebuild?.();
   });
 
   /**

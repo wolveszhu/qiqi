@@ -461,14 +461,16 @@ export abstract class PetRendererBase implements IPetRenderer {
     const discDiameter = this.coreHeight * this.petScale;
     // 圆心目标（窗口局部）：露出比例 r → 圆心距贴边一侧边线 (r − 0.5)·直径
     const inset = (showRatio - 0.5) * discDiameter;
-    const targetWinX = sleeping
-      ? side === "right"
-        ? this.centerX * 2 - inset
-        : inset
-      : this.centerX;
-    const targetWinY = this.centerY + this.bodyCenterY * this.petScale; // 纵向保持拖放高度
+    // 目标窗口坐标一律取**实时** app.screen：上一轮只修了 updateHitRegion 的
+    // 裁切上界，这里仍用 centerX*2（mount 时缓存）——首启缓存过期时贴右会把
+    // 形象推到 x≈240（真实窗口仅 150），即真机反馈的「弹出」。
+    const winW = this.app?.screen.width ?? this.centerX * 2;
+    const winH = this.app?.screen.height ?? this.centerY * 2;
+    const targetWinX = sleeping ? (side === "right" ? winW - inset : inset) : winW / 2;
+    const targetWinY = winH / 2 + this.bodyCenterY * this.petScale; // 纵向保持拖放高度
 
-    // 换算到 petRoot 局部单位（父级缩放 scale）
+    // 换算到 petRoot 局部单位（父级缩放 scale）。减去 centerX/centerY 是与
+    // petRoot.position 对齐，不是拿缓存当窗口宽——二者相消后渲染位置恰为 targetWinX/Y。
     const targetX = (targetWinX - this.centerX) / this.petScale;
     const targetY = (targetWinY - this.centerY) / this.petScale;
     const cos = Math.cos(rotation);
@@ -478,6 +480,16 @@ export abstract class PetRendererBase implements IPetRenderer {
 
     this.setExpression("neutral");
     this.updateHitRegion();
+    // 首启吸附诊断：窗口几何、姿态与最终命中区一次打全，便于定位「弹出 + 穿透」。
+    console.warn("[snap] pose", {
+      side,
+      showRatio,
+      centerX: this.centerX,
+      centerY: this.centerY,
+      screen: this.app ? [this.app.screen.width, this.app.screen.height] : null,
+      head: [head.position.x, head.position.y],
+      hit: { ...this.hitRegion },
+    });
   }
 
   dispose(): void {

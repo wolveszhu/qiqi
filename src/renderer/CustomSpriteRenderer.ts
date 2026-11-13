@@ -318,6 +318,13 @@ export class CustomSpriteRenderer implements IPetRenderer {
     // body.position 是 petRoot 局部坐标（原点=舞台中心）：目标窗口 X − 舞台中心 X
     this.sleepXT = side === "right" ? this.screenW / 2 - inset : inset - this.screenW / 2;
     this.sleepYT = 0; // 锚点静止时即舞台中心，纵向保持不动
+    console.warn("[snap] sprite pose", {
+      side,
+      showRatio,
+      screenW: this.screenW,
+      screenH: this.screenH,
+      sleepXT: this.sleepXT,
+    });
   }
 
   setIdleMode(enabled: boolean): void {

@@ -35,6 +35,7 @@ vi.mock("../../composables/usePetRenderer", () => ({
   setExpression: vi.fn(),
   setIdleMode: vi.fn(),
   setEdgeSleep: vi.fn(),
+  forceRebuildCurrent: vi.fn(async () => {}),
   usePetRenderer: vi.fn(() => ({})),
 }));
 
