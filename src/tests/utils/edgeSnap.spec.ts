@@ -77,7 +77,7 @@ describe("resolveSnapDecision（吸附常开，开关只管静默）", () => {
     expect(resolveSnapDecision("right", false)).toEqual({ snap: true, silent: false });
   });
 
-  it("命中边缘 + 静默开关开 → 吸附且进入免打扰", () => {
+  it("命中边缘 + 静默开关开 → 吸附且只停主动话术", () => {
     expect(resolveSnapDecision("left", true)).toEqual({ snap: true, silent: true });
   });
 

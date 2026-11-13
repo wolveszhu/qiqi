@@ -18,7 +18,7 @@ export interface SettingsState {
   frequency: ProactiveFrequency;
   /** 已贴边吸附态（D4.5：内存态，系统级默认行为，与静默开关无关）。 */
   sleepSnap: boolean;
-  /** 贴边静默态（D4.5：内存态 = 已吸附 && 开关开启；主动引擎与交互门控读它）。 */
+  /** 贴边静默态（D4.5：内存态 = 已吸附 && 开关开启；**仅**主动引擎读它，用于跳过主动话术）。 */
   snapSilent: boolean;
   /** 贴边静默开关（type=3 持久化；历史键名 `snapSleepEnabled`，语义已收窄为仅静默）。 */
   snapSleepEnabled: boolean;

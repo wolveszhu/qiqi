@@ -10,7 +10,7 @@
  */
 
 import { mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PetWindow from "../../views/pet/PetWindow.vue";
 
@@ -47,7 +47,8 @@ vi.mock("../../composables/useAffection", () => ({ useAffection: vi.fn() }));
 vi.mock("../../composables/useSystemProbe", () => ({ useSystemProbe: vi.fn() }));
 
 vi.mock("../../state/petStore", () => ({ petStore: { activeRenderer: "code_cat" } }));
-vi.mock("../../state/settingsStore", () => ({
+/** 可在用例间改写内存态的 store 镜像（验证静默态不屏蔽交互）。 */
+const store = vi.hoisted(() => ({
   settingsStore: {
     snapshot: null,
     snapSleepEnabled: true,
@@ -55,6 +56,10 @@ vi.mock("../../state/settingsStore", () => ({
     sleepSnap: false,
     snapSilent: false,
   },
+}));
+
+vi.mock("../../state/settingsStore", () => ({
+  settingsStore: store.settingsStore,
   applyDndLocal: vi.fn(),
   applySnapshot: vi.fn(),
 }));
@@ -162,6 +167,37 @@ describe("PetWindow 主键交互不回归", () => {
     await Promise.resolve();
     expect(spies.show).toHaveBeenCalledWith("settings");
     expect(spies.emit).toHaveBeenCalledWith("window:chat:open", {});
+    w.unmount();
+  });
+});
+
+describe("D4.5 贴边静默只停主动话术", () => {
+  afterEach(() => {
+    store.settingsStore.snapSilent = false;
+  });
+
+  it("snapSilent=true → 双击对话与左键抚摸仍照常", async () => {
+    store.settingsStore.snapSilent = true;
+    const w = mount(PetWindow);
+    await Promise.resolve();
+    await w.get(".pet-root").trigger("dblclick");
+    await Promise.resolve();
+    expect(spies.show).toHaveBeenCalledWith("settings");
+    expect(spies.emit).toHaveBeenCalledWith("window:chat:open", {});
+
+    w.get(".pet-root").element.dispatchEvent(
+      new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+    );
+    expect(spies.playAction).toHaveBeenCalledWith("click");
+    expect(spies.settleAffection).toHaveBeenCalledWith({ kind: "petStroke" });
+    w.unmount();
+  });
+
+  it("挂载时复位历史遗留的后台休眠标志（日记/衰减不受静默影响）", async () => {
+    const { setSleepMode } = await import("../../api/window");
+    const w = mount(PetWindow);
+    await Promise.resolve();
+    expect(setSleepMode).toHaveBeenCalledWith(false);
     w.unmount();
   });
 });

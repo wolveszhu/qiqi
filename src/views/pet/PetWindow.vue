@@ -17,7 +17,7 @@ import { useAffection } from "../../composables/useAffection";
 import { useSystemProbe } from "../../composables/useSystemProbe";
 import { petStore } from "../../state/petStore";
 import { settingsStore, applyDndLocal, applySnapshot } from "../../state/settingsStore";
-import { settleAffection, sleepDecay } from "../../api/pet";
+import { settleAffection } from "../../api/pet";
 import { onChatToggle } from "../../api/probe";
 import {
   getOuterPosition,
@@ -46,18 +46,14 @@ function refreshIdleFps(): void {
 }
 
 /**
- * 切换贴边静默态（免打扰）：仅在状态真正变化时广播 Rust 并结算衰减锚点。
+ * 切换贴边静默态：**唯一效果是让主动引擎 skip（不主动发消息）**。
  *
- * 吸附本身是常开的视觉/位置行为，是否免打扰由「贴边静默」开关单独决定；
- * 早退避免开关关闭时误调 `sleepDecay("exit")` 赦免衰减天数。
+ * 用户决策（2026-11-13）：静默开启时对话、抚摸、快捷键、后台日记与好感度衰减
+ * 一律照常，故此处只写内存态，不再广播 Rust `sleep_mode` / 结算衰减锚点。
+ * 吸附本身是常开的系统默认行为，与静默完全无关。
  */
 function setSilent(next: boolean): void {
-  if (settingsStore.snapSilent === next) return;
   settingsStore.snapSilent = next;
-  void setSleepMode(next).catch((e: unknown) => console.warn("[pet] 静默态广播失败", e));
-  void sleepDecay(next ? "enter" : "exit").catch((e: unknown) =>
-    console.warn("[pet] 静默衰减结算失败", e),
-  );
 }
 
 // ---- 主链路接线（E1a：此前三个 composable 未在窗口 A 实例化，MVP 链路断裂） ----
@@ -113,8 +109,7 @@ watch(
  * 切换 Tab 与聚焦由 B 自己完成。
  */
 async function openChatInSettings(): Promise<void> {
-  // D4.5：仅贴边静默期屏蔽对话入口（双击 / Ctrl+Shift+P）；单纯吸附不限制
-  if (settingsStore.snapSilent) return;
+  // D4.5：贴边静默只停主动话术，用户主动的对话入口（双击 / 快捷键）始终可用
   try {
     await show("settings");
     await emit("window:chat:open", {});
@@ -157,7 +152,7 @@ async function onDragEnd(): Promise<void> {
       settingsStore.sleepSnap = true;
       setEdgeSleep(true, edge, settingsStore.snapShowRatio); // 整体躺下：左=顺时针 / 右=逆时针
       refreshIdleFps(); // 吸附 → 待机帧率（E2.3①）
-      setSilent(decision.silent); // 仅开关开启时进入免打扰
+      setSilent(decision.silent); // 仅开关开启时停止主动话术
     } else if (sleepSnap.value) {
       // 拖离边缘 → 复原姿态（仅拖动可离开边缘，单击不处理）
       await restoreFromSnap();
@@ -259,12 +254,7 @@ function onPointerDown(e: PointerEvent): void {
   pressX = e.clientX;
   pressY = e.clientY;
   dragStarted = false;
-  if (settingsStore.snapSilent) {
-    // 贴边静默期：不抚摸、不互动（仅拖动可离开边缘）；仍注册拖拽监听
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp, { once: true });
-    return;
-  }
+  // 贴边静默不影响抚摸与拖拽（D4.5：只停主动话术）
   playAction("click");
   // 抚摸计分（M1 锚点④：点击猫身即抚摸+1，日上限 20；C5 内部结算与上限控制）
   void settleAffection({ kind: "petStroke" }).catch((e: unknown) =>
@@ -274,12 +264,17 @@ function onPointerDown(e: PointerEvent): void {
   window.addEventListener("pointerup", onPointerUp, { once: true });
 }
 
-/** 双击形象 → 打开窗口 B 的对话 Tab（贴边静默期屏蔽，见 openChatInSettings 守卫）。 */
+/** 双击形象 → 打开窗口 B 的对话 Tab（贴边静默期同样可用）。 */
 function onDoubleClick(): void {
   void openChatInSettings();
 }
 
 onMounted(async (): Promise<void> => {
+  // 旧版本静默会把 Rust `sleep_mode` 置位以暂停日记/衰减；新语义下后台任务照常。
+  // 启动时清一次历史遗留标志（该态为内存态，重启本就为 false，此处覆盖热更新场景）。
+  void setSleepMode(false).catch((e: unknown) =>
+    console.warn("[pet] 后台状态复位失败", e),
+  );
   // 兜底：capture 阶段拦截整窗右键，覆盖 .pet-root 之外的节点与运行时插入的
   // PIXI canvas（模板只挂在根元素，冒泡链一旦被改动就会漏）。
   // 仅 preventDefault、不 stopPropagation：不阻断其他事件，未来要在此窗口做
@@ -299,7 +294,7 @@ onMounted(async (): Promise<void> => {
       }
     }),
   );
-  // 窗口 B 改贴边静默开关 → A 同步；已吸附时即时进入/解除免打扰（吸附本身不受影响）
+  // 窗口 B 改贴边静默开关 → A 同步；已吸附时即时启停主动话术（吸附本身不受影响）
   unlisteners.push(
     await listen<{ enabled: boolean }>("settings:snap_sleep:changed", (event) => {
       settingsStore.snapSleepEnabled = event.payload.enabled;
@@ -335,10 +330,9 @@ onMounted(async (): Promise<void> => {
         console.warn("[pet] 设置快照拉取失败（使用默认 true）", e);
       });
   }
-  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；贴边静默期由 openChatInSettings 屏蔽）
+  // Ctrl+Shift+P → 打开窗口 B 的对话 Tab（D1；贴边静默期同样可用）
   unlisteners.push(
     await onChatToggle(() => {
-      if (settingsStore.snapSilent) return;
       void openChatInSettings();
     }),
   );
