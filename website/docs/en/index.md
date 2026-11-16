@@ -18,9 +18,11 @@ layout: page
   { emoji: '🪟', title: 'Dual-window Pet', desc: 'A transparent, always-on-top pet layer plus a self-drawn settings panel living quietly in your screen corner.' },
   { emoji: '🍮', title: 'Jelly Physics', desc: 'Q-bouncy on click, breathing while idle, stretchy on drag — a healing, tactile feel.' },
   { emoji: '💗', title: 'Affection Growth', desc: 'Four relationship tiers from Stranger to Bond; the more you interact, the closer it gets.' },
-  { emoji: '🧠', title: 'AI Chat & Memory', desc: 'OpenAI-compatible streaming chat that quietly recalls what you have told it.' },
+  { emoji: '🧠', title: 'AI Chat & Memory', desc: 'Streaming chat rendered word by word, with automatic fact and summary recall. Bring your own key or use the built-in trial quota.' },
   { emoji: '⏰', title: 'Proactive Moments', desc: 'Reaches out by time windows and context, and stays quiet while you work or game.' },
-  { emoji: '🐶', title: 'Switchable Avatars', desc: 'Built-in cat and dog avatars, swappable; custom avatars planned ahead.' }
+  { emoji: '🐶', title: 'Switchable Avatars', desc: 'Built-in cat, dog and custom PNG avatars, swappable in one click; the preview name follows the selected avatar.' },
+  { emoji: '🧲', title: 'Edge Snap & Silence', desc: 'Drag to the left or right edge to lie down against it (always on). Snap Silence only stops proactive messages — everything else continues.' },
+  { emoji: '📖', title: 'Selection Translation', desc: 'Select on-screen text to translate instantly, with locally managed translation credentials.' }
 ]" />
 
 ## Why Qiqi
