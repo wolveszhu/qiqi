@@ -63,7 +63,7 @@ export default defineConfig({
       {
         name: "keywords",
         content:
-          "七七,桌宠,桌面宠物,数字生命,AI桌宠,虚拟宠物,桌面伙伴,电脑桌宠,Windows桌宠,二次元桌宠,本地加密,好感度,记忆,主动互动,果冻物理,Tauri,陪伴",
+          "七七,桌宠,桌面宠物,数字生命,AI桌宠,虚拟宠物,桌面伙伴,电脑桌宠,Windows桌宠,二次元桌宠,本地加密,好感度,记忆,主动互动,果冻物理,边缘吸附,贴边静默,划词翻译,自定义形象,Tauri,陪伴",
       },
     ],
     ["meta", { name: "application-name", content: "七七" }],
