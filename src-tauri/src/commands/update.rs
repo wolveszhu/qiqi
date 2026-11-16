@@ -53,7 +53,7 @@ pub struct UpdateInfo {
     pub download_url: Option<String>,
 }
 
-/// 当前应用版本（编译期注入；发版须与 `tauri.conf.json` 的 `version` 同步，二者当前均为 0.1.0）。
+/// 当前应用版本（编译期注入；发版须与 `tauri.conf.json` 的 `version` 同步，二者当前均为 0.1.1）。
 fn current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
