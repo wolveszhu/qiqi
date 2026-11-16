@@ -31,7 +31,7 @@ base64 = "0.22"
 # 自定义形象导入：PNG 解码/编码 + 纯色底自动透明化（仅 png codec，控制体积）
 image = { version = "0.25", default-features = false, features = ["png"] }
 # C2 探针：Win32 GetCursorPos（系统能力一律 Rust 侧，rule.md §5）
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Com", "Win32_UI_Accessibility"] }
 # C4 对话管道：异步运行时（Tauri async_runtime 即 tokio）+ OpenAI 兼容 HTTP/SSE
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }

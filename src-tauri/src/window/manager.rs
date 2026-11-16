@@ -85,12 +85,12 @@ pub fn move_translator(app: &AppHandle, x: i32, y: i32, compact: bool) -> Result
 
 /// 隐藏浮窗（关闭按钮 / Esc / 点击外部；窗口不销毁）。
 ///
-/// 这是所有收起路径的统一入口；工具条消失只结束手势捕获状态，
-/// **剪贴板里的选中词原样保留**——用户可能只是想复制这个词而不是翻译它。
+/// 这是所有收起路径的统一入口；工具条消失只清内存选区槽，
+/// **剪贴板从未被探测/取词链路读写**（2026-11-16 零污染改造）。
 pub fn hide_translator(app: &AppHandle) -> Result<(), AppError> {
     translator_window(app)?.hide().map_err(AppError::from)?;
     crate::probe::selection::clear_translator_bounds();
-    crate::probe::selection::clear_gesture_clipboard();
+    crate::probe::selection::clear_gesture_selection();
     Ok(())
 }
 

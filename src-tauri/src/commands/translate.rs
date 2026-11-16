@@ -55,8 +55,8 @@ pub fn translate_settings_save(
     service::save_settings(&conn, payload)
 }
 
-/// 用户点击小图标后取词（UIA 待接入；当前为剪贴板法）。
-/// 工具条显示期间直接复用手势探测留在剪贴板里的选中文本，不再重复注入 `Ctrl+C`。
+/// 用户点「翻译」后取词：从手势阶段 UIA 只读缓存的内存槽取文本，
+/// 不读写剪贴板、不注入按键（2026-11-16 零污染改造）。
 #[tauri::command]
 pub fn translate_capture_selection(
     selection_key: String,
@@ -78,7 +78,7 @@ pub fn translate_copy_result(text: String) -> Result<(), AppError> {
 #[tauri::command]
 pub fn translate_popup_show(x: i32, y: i32, compact: bool, app: AppHandle) -> Result<(), AppError> {
     if !compact {
-        crate::probe::selection::clear_gesture_clipboard();
+        crate::probe::selection::clear_gesture_selection();
     }
     crate::window::manager::show_translator(&app, x, y, compact)
 }
