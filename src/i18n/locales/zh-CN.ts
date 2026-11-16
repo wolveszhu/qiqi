@@ -34,10 +34,11 @@ export default {
   translate: {
     toolbar: {
       label: "翻译选中文本",
-      hint: "点击后取词并翻译",
+      hint: "点击后取词并翻译；划词不会改变你的剪贴板",
       translate: "翻译",
       copy: "复制",
       selectionCopied: "选中文本已复制",
+      unavailable: "当前窗口无法读取选区，请手动复制后使用",
       close: "关闭工具条",
     },
     popup: {

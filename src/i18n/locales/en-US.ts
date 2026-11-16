@@ -44,10 +44,12 @@ export default {
   translate: {
     toolbar: {
       label: "Translate selection",
-      hint: "Click to capture and translate",
+      hint: "Click to capture and translate; selecting text never changes your clipboard",
       translate: "Translate",
       copy: "Copy",
       selectionCopied: "Selection copied",
+      unavailable:
+        "Selection is unavailable in this window. Copy the text manually and try again.",
       close: "Close toolbar",
     },
     popup: {

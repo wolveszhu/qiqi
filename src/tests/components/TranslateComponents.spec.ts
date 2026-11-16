@@ -60,6 +60,12 @@ describe("SelectionToolbar", () => {
     expect(en.text()).toContain("Translate");
     expect(en.text()).toContain("Copy");
   });
+
+  it("提示文案明确划词不改变剪贴板（中英成对）", () => {
+    expect(i18n.global.t("translate.toolbar.hint")).toContain("剪贴板");
+    i18n.global.locale.value = "en-US";
+    expect(i18n.global.t("translate.toolbar.hint")).toContain("clipboard");
+  });
 });
 
 describe("TranslationPopup", () => {

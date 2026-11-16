@@ -89,8 +89,13 @@ async function configHint(): Promise<string> {
 
 /** 统一的错误反馈出口：按 kind 本地化，config 额外给出可行动提示。 */
 async function reportError(e: unknown): Promise<void> {
-  if (normalizeError(e).kind === "config") {
+  const kind = normalizeError(e).kind;
+  if (kind === "config") {
     pushToast(await configHint(), "error");
+    return;
+  }
+  if (kind === "probe") {
+    pushToast(t("translate.toolbar.unavailable"), "error");
     return;
   }
   pushToast(localizedError(e), "error");
