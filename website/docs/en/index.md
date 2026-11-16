@@ -22,7 +22,7 @@ layout: page
   { emoji: '⏰', title: 'Proactive Moments', desc: 'Reaches out by time windows and context, and stays quiet while you work or game.' },
   { emoji: '🐶', title: 'Switchable Avatars', desc: 'Built-in cat, dog and custom PNG avatars, swappable in one click; the preview name follows the selected avatar.' },
   { emoji: '🧲', title: 'Edge Snap & Silence', desc: 'Drag to the left or right edge to lie down against it (always on). Snap Silence only stops proactive messages — everything else continues.' },
-  { emoji: '📖', title: 'Selection Translation', desc: 'Select on-screen text to translate instantly, with locally managed translation credentials.' }
+  { emoji: '📖', title: 'Selection Translation', desc: 'Select on-screen text to translate instantly — your clipboard is never touched; translation credentials are managed locally.' }
 ]" />
 
 ## Why Qiqi

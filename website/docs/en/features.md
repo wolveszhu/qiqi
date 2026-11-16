@@ -10,7 +10,7 @@ Qiqi is more than an icon — it is a digital life living on your desktop. Here 
   { emoji: '⏰', title: 'Proactive Moments', image: '/screens/wurao.png', desc: 'Qiqi reaches out by time windows (e.g. good-morning 08:30–09:30) rather than exact alarms, and senses the foreground process — staying politely silent while you code or game.' },
   { emoji: '🐶', title: 'Switchable Avatars', image: '/screens/xingxiang.png', desc: 'Built-in cat and dog avatars plus custom PNG avatars you can import, rename and delete, all swappable in one click. The name under the preview follows the selected avatar.' },
   { emoji: '🧲', title: 'Edge Snap & Snap Silence', desc: 'Drag to the left or right edge and Qiqi lies down against it — an always-on system behaviour. Snap Silence only stops proactive messages: double-click chat, petting, background diary and affection decay all continue as usual. The reveal ratio is adjustable from 30% to 80% at any time.' },
-  { emoji: '📖', title: 'Selection Translation', desc: 'Select text on screen to translate it instantly. Translation credentials are built in and managed on the Rust side, independent of chat credentials.' },
+  { emoji: '📖', title: 'Selection Translation', desc: 'Select text on screen to translate it instantly. Text is read through UI Automation only — never via your clipboard or injected keystrokes. If a selection can’t be read (e.g. in a terminal), no toolbar appears and you get an actionable hint. Translation credentials are built in and independent of chat credentials.' },
   { emoji: '🔍', title: 'Web Search', image: '/screens/llm.png', desc: 'Optionally call web search to enrich real-time answers, keeping Qiqi both personal and up to date.' }
 ]" />
 

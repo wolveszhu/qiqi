@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.2 · 2026-11-16
+
+- 📖 Selection translation now reads selected text through UI Automation only: gesture probing and capture never write to or clear your clipboard, and never inject keystrokes. Text, images and files you already copied stay untouched.
+- 🛡️ In windows where selections can't be read (terminals, remote desktop, custom-drawn UI), the toolbar no longer appears and an actionable hint is shown. The toolbar's Copy button remains — only you decide what goes to the clipboard.
+
 ## v0.1.1 · 2026-11-16
 
 - 🧲 Edge snapping is now a system default: drag to the left or right edge to lie down against it, regardless of any switch.

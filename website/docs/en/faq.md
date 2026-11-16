@@ -36,7 +36,7 @@ Open Settings → Avatar to switch between the built-in cat, dog and any importe
 
 ### Does selection translation need extra setup?
 
-No. Select text on screen and use the toolbar to translate it. Translation credentials are built in and managed on the Rust side; chat and translation use separate credential chains.
+No. Select text on screen and use the toolbar to translate it. Translation credentials are built in and managed on the Rust side; chat and translation use separate credential chains. Selecting text never changes your clipboard — anything you already copied (text, images or files) stays intact. The toolbar's Copy button still lets you copy the selected text on purpose.
 
 ### How do I quit the app?
 
