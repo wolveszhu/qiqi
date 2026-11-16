@@ -6,8 +6,8 @@ Qiqi's design philosophy is simple: **your data belongs to you, and only to you.
 
 - **Local first**: all memories, conversations, fact summaries, and settings live in a SQLite database on your machine.
 - **Full-database encryption**: the database is encrypted with SQLCipher (full AES), with the key held by your system credentials.
-- **Keys never shipped**: the API key required for AI chat is stored only via local encryption — never written in plaintext to frontend code, local storage, or any config file.
-- **No networking by default**: except for AI chat you initiate and optional web search, Qiqi sends nothing outward.
+- **Keys never shipped**: the AI chat API key and built-in service credentials are managed on the Rust side and stored only via local encryption — never written in plaintext to frontend code, local storage, or any config file. Chat and selection translation use separate credential chains.
+- **No networking by default**: except for AI chat you initiate, selection translation and optional web search, Qiqi sends nothing outward.
 - **No active screenshots**: the MVP never adopts active screenshot capabilities that could touch screen privacy.
 
 ## About the project
