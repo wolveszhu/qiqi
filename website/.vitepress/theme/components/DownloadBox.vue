@@ -2,7 +2,7 @@
 import { ref, onMounted } from "vue";
 
 // 只读联动：从构建期拷贝的 /latest.json 读取版本与下载链接，绝不回写。
-const version = ref("0.1.1");
+const version = ref("0.1.2");
 const notes = ref("");
 const downloadUrl = ref("https://github.com/wolveszhu/qiqi/releases/latest");
 const loading = ref(true);

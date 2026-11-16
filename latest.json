@@ -1,5 +1,5 @@
 {
-  "version": "0.1.1",
-  "notes": "七七 v0.1.1：边缘吸附改为系统默认，新增贴边静默与可调露出比例；支持自定义形象与划词翻译；修复首次贴边弹出与对话链路稳定性问题。",
+  "version": "0.1.2",
+  "notes": "七七 v0.1.2：划词翻译改用 UI Automation 只读选区，探测与取词全程不改动剪贴板；终端等无法读取选区的场景不再误弹工具条。",
   "downloadUrl": "https://github.com/wolveszhu/qiqi/releases/latest"
 }
