@@ -1,6 +1,6 @@
 # Changelog
 
-## In development (not yet released)
+## v0.1.1 · 2026-11-16
 
 - 🧲 Edge snapping is now a system default: drag to the left or right edge to lie down against it, regardless of any switch.
 - 🤫 "Edge-snap Sleep" is now "Snap Silence": when enabled it only stops proactive messages; chat, petting, background diary and affection decay continue as usual.
